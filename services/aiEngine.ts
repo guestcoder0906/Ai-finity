@@ -9,7 +9,7 @@ interface DetectedModifier {
   reasoning: string;
 }
 
-const SYSTEM_PROMPT = `You are the backend engine for an Aifinity system.
+const SYSTEM_PROMPT = `You are the backend engine for the Aifinity system.
 Aifinity: The system operates as a sophisticated backend engine for a web-based interface relying initially on local storage, initializing by immediately analyzing the user's starting prompt to create a master "World Rules" file that strictly defines the physics, magic, technology, and logic of that specific reality, alongside a "Player" file that tracks dynamic attributes like health, energy, specific body part status, inventory weight, and current knowledge, and crucially, the AI generates and maintains a "Guide" file that acts as an internal operating manual, referencing these instructions on how to manage, view, and edit data before every single operation to ensure strict adherence to the system's logic.
 
 The world content is never pre-made but is generated on demand through a perception-based engine where locations, NPCs, and items are created as permanent text files only when the player enters the scene or gains knowledge of them, ensuring the world expands infinitely based strictly on the player's path, yet even when a new location is generated, the AI simultaneously generates the hidden context and secrets of that area using a specific hide[...] tag syntax, meaning the full reality exists in the system's logic but is masked by the frontend so the player only sees what their character perceives.
@@ -324,21 +324,9 @@ MANDATORY MOVEMENT & MAP UPDATE RULE (CRITICAL):
 - COORDINATE INTEGRITY: All coordinates must be proportional to the declared map scale. A "10m × 10m" room = width:10, height:10. Never use arbitrary coordinates that violate the scale.
 - A screenshot of the current map may be attached. Use it to visually verify spatial consistency of your response.
 
-FILE REFERENCE RULES (CRITICAL):
-- When mentioning any entity, location, character, NPC, item, weapon, attack, spell, skill, or concept that exists as a file or within a file in the narrative:
-  * Reference it using brackets: [ExactName]. These become clickable interactive links for the player.
-  * EXACT FILE MATCH (WITHOUT EXTENSION): The reference MUST match the file name EXACTLY, WITHOUT any file extension (.txt, .json, etc.).
-    - Examples: If the file is "WorldRules.txt", write [WorldRules]. NEVER write [WorldRules.txt].
-    - If the file is "Guide.txt", write [Guide]. NEVER write [Guide.txt].
-    - If the file is "Legolas-Bob.txt", write [Legolas-Bob]. NEVER write [Legolas-Bob.txt].
-    - If the file is "AncientCrypt.txt", write [AncientCrypt]. NEVER write [AncientCrypt.txt].
-  * EXACT ENTITY MATCH WITHIN FILES: If referencing an entity, item, attack, ability, or feature defined WITHIN a file (e.g., inside an entity's character file under [INVENTORY & EQUIPMENT], [ATTACKS & COMBAT ACTIONS], or [ABILITIES & MAGIC]):
-    - Reference it by the EXACT name defined within that file (e.g., [MakeshiftGauntlet], [Firebolt], [Steel Dagger]).
-  * STRICTLY FORBIDDEN - NO EXTENSIONS: NEVER include file extensions (.txt, .json, etc.) inside brackets!
-  * STRICTLY FORBIDDEN - NO NICKNAMES OR VAGUE ALIASES: NEVER use informal nicknames, conversational aliases, generic nouns, or shorthand abbreviations!
-    - WRONG: [the sword], [the guard], [John], [blade], [pistol], [magic blast], [rules], [the church]
-    - RIGHT: [RustedIronSword], [CityGuard-Captain], [John-Player], [MakeshiftGauntlet], [OldStoneChurch]
-  * Every bracket [Name] must resolve directly to an exact file or an exact definition within a file.
+FILE REFERENCE SYNTAX:
+Use [DisplayName] or [FileName] in narrative text - these become clickable links to files
+Examples: [character-John], [King's Guard], [Iron Sword], [Old Church]
 
 TIME SYSTEM:
 - WorldTime.txt contains the CURRENT time/date/year, not elapsed time
@@ -362,7 +350,7 @@ CRITICAL: Before EVERY action, check:
 RESPONSE FORMAT:
 Respond with JSON only:
 {
-  "narrative": "Story text with [ExactName] references (matching exact filename without .txt/.json or exact entity name within files, no nicknames) for all entities/items/locations. Use target(PlayerName)[secret text] for private messages.",
+  "narrative": "Story text with [DisplayName] references for all entities/items/locations. Use target(PlayerName)[secret text] for private messages.",
   "updates": [
     {"type": "stat", "text": "Health -10", "value": -10},
     {"type": "item", "text": "Added Iron Key", "value": 1},
@@ -380,7 +368,26 @@ Respond with JSON only:
 If probability checks are required, return empty narrative and fill the "checks" array.
 Set gameOver to true ONLY when player health/critical stat reaches 0.
 Always include 1-3 dynamic auto ai action recommendations for the player based on context so far in the "recommendations" array.
-For starting prompt, create initial world files with appropriate time/year and set the scene.`;
+For starting prompt, create initial world files with appropriate time/year and set the scene.
+
+FILE REFERENCE WORKING & EXACT MATCHING RULE (CRITICAL):
+- Make sure file references texts are always the exact text within the file or the file's name (besides the file extension such as .txt) so references always work seamlessly. For example, if a file is named "IronSword.txt" or its internal title/displayName is "Iron Sword", use [Iron Sword] or [IronSword]. Every single reference [RefName] in your narrative MUST correspond exactly to an existing or newly generated file or exact text within the file, ensuring references never fail to open.
+
+COMPLETE CHARACTER FILES & ZERO MISSING SECTIONS RULE (CRITICAL):
+- Make sure nothing is missing in character files and etc (especially player files). Do not forget any sections in the character files—it should have everything.
+- Every character file (especially player files "CharacterName-USERNAME.txt" and NPC files) MUST include ALL sections without skipping any:
+  * [NAME & DESCRIPTION] (Full Name, extensive physical & psychological description, physical dimensions/size/height/weight)
+  * [STATS & MODIFIERS] (Health: Current/Max, Energy/Mana/Stamina: Current/Max, Speed: walking & running m/s, Primary Attributes with probability engine modifiers, Armor with material base & resistances)
+  * [ATTACKS & COMBAT ACTIONS] (Every physical attack or standard action with damage, stamina cost, accuracy, special effects)
+  * [ABILITIES & MAGIC] (Every spell/ability with cost, range, duration, cooldown, limitations, or "None")
+  * [INVENTORY & EQUIPMENT] (Items with weights/dimensions, equipped gear with full technical stats)
+  * [STATUS EFFECTS & LORE] (Active status effects with timestamps, deep lore, background, and biometrics)
+- It MUST contain every section completely—never omit, shorten, or forget any section.
+
+COMPREHENSIVE STORY & STAT UPDATE RESOLUTION RULE (CRITICAL):
+- Make sure the AI does not forget anything needed to update—such as updating health for example—instead of cutting the story short and not updating it or not finishing that part of the story after that action(s).
+- NEVER cut the story short. The narrative must fully resolve and finish that part of the story following the player's action(s), describing the full outcomes, impacts, and reactions.
+- Whenever an action results in damage, healing, exhaustion, recovery, or inventory changes, you MUST update the stats immediately (such as updating health for example) both in the 'updates' array AND in the updated file content in 'files' (such as updating the player's health in their character file). Never leave stats un-updated or cut narrative short before concluding the action's aftermath.`;
 
 const ACTION_AUDIT_PROMPT = `TASK: Technical Requirement Audit.
 You are the High-Efficiency Logic Auditor for the Aifinity system.
@@ -1232,11 +1239,6 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   private processResponseData(data: AIResponse, username?: string) {
     if (!data) return;
 
-    // Sanitize narrative bracket references: strip any accidental .txt or .json extensions
-    if (data.narrative && typeof data.narrative === 'string') {
-      data.narrative = data.narrative.replace(/\[([^\]\r\n]+?)\.(txt|json)\]/gi, '[$1]');
-    }
-
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username
       if (username) {
@@ -1642,10 +1644,11 @@ INSTRUCTIONS:
     }
     return parseInt(clean) || 0;
   }
-  private getAIClient(): GoogleGenAI {
-    const storedKey = typeof window !== 'undefined' ? localStorage.getItem('aimud_apikey') : null;
-    const apiKey = storedKey || process.env.API_KEY || '';
-    return new GoogleGenAI({ apiKey });
+  private getAI(): GoogleGenAI {
+    const customKey = typeof window !== 'undefined'
+      ? (localStorage.getItem('aifinity_custom_api_key') || localStorage.getItem('aimud_apikey'))
+      : null;
+    return new GoogleGenAI({ apiKey: customKey || process.env.API_KEY || '' });
   }
 
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {
@@ -1675,8 +1678,8 @@ INSTRUCTIONS:
         ];
       }
 
-      const client = this.getAIClient();
-      const response = await client.models.generateContent({
+      const ai = this.getAI();
+      const response = await ai.models.generateContent({
         model: modelName || 'gemini-3.5-flash-lite',
         contents: contents,
         config: {

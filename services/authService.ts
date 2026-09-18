@@ -1,761 +1,652 @@
-export interface UserAccount {
-  username: string; // 2-20 alphanumeric characters
-  passwordHash: string;
-  createdAt: number;
-  email?: string; // Optional attached email for recovery & password reset
-  googleId?: string; // Optional Google identifier/email if linked with Google
-}
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  signOut as fbSignOut,
+  onAuthStateChanged,
+  User as FirebaseUser
+} from 'firebase/auth';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs
+} from 'firebase/firestore';
+import { auth, googleProvider, db } from './firebase';
 
-export interface AuthSession {
-  type: 'registered' | 'guest';
-  username?: string; // If registered
-  guestName?: string; // If guest who set their name (base name, e.g. "Shadow")
-  guestNumber?: number; // Random 1-9999 assigned for unset guest in multiplayer
-}
+export type UserTier = 'free' | 'adventurer' | 'legendary';
+export type UserRole = 'user' | 'mod' | 'admin';
 
-export interface RecoveryRequest {
-  code: string;
-  expiresAt: number;
-  email: string;
+export interface UserProfile {
+  uid: string;
+  email: string | null;
   username: string;
+  authProvider: 'password' | 'google';
+  createdAt: string;
+  tier?: UserTier;
+  role?: UserRole;
+  showGlowingName?: boolean;
+  hasInfiniteActions?: boolean;
+  canSaveMultipleAdventures?: boolean;
+  canPostCommunityAdventures?: boolean;
+  actionCredits?: number;
+  dailyActionsUsed?: number;
+  dailyActionsDate?: string;
+  subscriptionExpiresAt?: string | null;
+  modActionsGrantedToday?: number;
+  modActionsGrantedDate?: string;
 }
 
-const STORAGE_KEY_ACCOUNTS = 'aifinity_accounts';
-const STORAGE_KEY_SESSION = 'aifinity_current_session';
-const STORAGE_KEY_GUEST_NAME = 'aifinity_guest_name';
-const STORAGE_KEY_CLAIMED_GUEST_NAMES = 'aifinity_claimed_guest_names';
-const STORAGE_KEY_GUEST_NUM = 'aifinity_guest_mp_number';
+/**
+ * Checks if user is default Admin (Chloe: chloe.a.alba.1@gmail.com or username Chloe)
+ */
+export function isDefaultAdmin(email?: string | null, username?: string | null): boolean {
+  if (email && email.trim().toLowerCase() === 'chloe.a.alba.1@gmail.com') return true;
+  if (username && username.trim().toLowerCase() === 'chloe') return true;
+  return false;
+}
 
-// Reserved system names
-const RESERVED_NAMES = new Set(['player', 'guest', 'admin', 'system', 'host', 'aifinity', 'root']);
+/**
+ * Ensures defaults for roles, celestial glowing names, and admin infinite actions
+ */
+export function enrichUserProfileWithDefaults(profile: UserProfile): UserProfile {
+  if (isDefaultAdmin(profile.email, profile.username)) {
+    profile.role = 'admin';
+    profile.hasInfiniteActions = true;
+    profile.canSaveMultipleAdventures = true;
+    profile.canPostCommunityAdventures = true;
+    if (profile.showGlowingName === undefined) {
+      profile.showGlowingName = true;
+    }
+  } else {
+    if (!profile.role) profile.role = 'user';
+    if (profile.showGlowingName === undefined && (profile.role === 'admin' || profile.role === 'mod')) {
+      profile.showGlowingName = true;
+    }
+  }
+  return profile;
+}
 
-// Word lists for autofill username generator (adjective + noun + optional number)
-const ADJECTIVES = [
-  'Golden', 'Silver', 'Howling', 'Silent', 'Crimson', 'Azure', 'Swift', 'Shadow',
-  'Ancient', 'Mystic', 'Iron', 'Brave', 'Storm', 'Wild', 'Frost', 'Solar',
-  'Lunar', 'Echo', 'Astral', 'Vivid', 'Cyber', 'Neon', 'Thunder', 'Crystal',
-  'Ghost', 'Emerald', 'Ruby', 'Obsidian', 'Radiant', 'Starlight'
-];
+export interface GuestProfile {
+  guestId: string;
+  rawGuestName: string | null; // e.g. "ShadowRunner"
+  displayGuestName: string;   // e.g. "ShadowRunner (Guest)" or "Player"
+}
 
-const NOUNS = [
-  'Table', 'Bird', 'Knight', 'Wolf', 'Falcon', 'Dragon', 'Ranger', 'Blade',
-  'Fox', 'Tiger', 'Hawk', 'Shield', 'Crown', 'Wanderer', 'Hunter', 'Sage',
-  'Beacon', 'Forge', 'Raven', 'Viper', 'Golem', 'Rider', 'Sentinel', 'Keeper',
-  'Guardian', 'Phoenix', 'Archer', 'Sorcerer', 'Paladin', 'Nomad'
-];
+// Username format validation: 2-20 characters, only letters and numbers
+export function validateUsernameFormat(name: string): { valid: boolean; error?: string } {
+  if (!name || name.trim().length === 0) {
+    return { valid: false, error: 'Username is required.' };
+  }
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 20) {
+    return { valid: false, error: 'Username must be between 2 and 20 characters.' };
+  }
+  if (!/^[a-zA-Z0-9]+$/.test(trimmed)) {
+    return { valid: false, error: 'Username can only contain letters and numbers.' };
+  }
+  return { valid: true };
+}
 
-class AuthService {
-  private accounts: UserAccount[] = [];
-  private session: AuthSession = { type: 'guest' };
-  private claimedGuestNames: Set<string> = new Set();
-  private listeners: Array<() => void> = [];
-  private recoveryRequests: Map<string, RecoveryRequest> = new Map();
+// Generates random unique-style usernames like GoldenTable86, Bird872, HowlingKnight
+export function generateRandomUsername(): string {
+  const prefixes = [
+    'Golden', 'Bird', 'Howling', 'Silver', 'Shadow', 'Mystic', 'Swift', 'Iron',
+    'Storm', 'Crimson', 'Azure', 'Solar', 'Lunar', 'Cyber', 'Frost', 'Thunder',
+    'Blaze', 'Silent', 'Wild', 'Astral', 'Crystal', 'Night', 'Star', 'Emerald'
+  ];
+  const nouns = [
+    'Table', 'Bird', 'Knight', 'Dragon', 'Falcon', 'Wolf', 'Mage', 'Tiger',
+    'Blade', 'Rogue', 'Hunter', 'Viper', 'Ghost', 'Raven', 'Titan', 'Phoenix',
+    'Spark', 'Hawk', 'Fox', 'Archer', 'Shield', 'Sentinel', 'Warrior'
+  ];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const noun = nouns[Math.floor(Math.random() * nouns.length)];
 
-  constructor() {
-    this.loadState();
+  const style = Math.random();
+  let result = '';
+  if (style < 0.4) {
+    // e.g., GoldenTable86
+    const num = Math.floor(Math.random() * 90) + 10;
+    result = `${prefix}${noun}${num}`;
+  } else if (style < 0.7) {
+    // e.g., Bird872
+    const num = Math.floor(Math.random() * 900) + 100;
+    result = `${prefix}${num}`;
+  } else {
+    // e.g., HowlingKnight
+    result = `${prefix}${noun}`;
   }
 
-  private loadState() {
-    if (typeof window === 'undefined') return;
+  if (result.length > 20) {
+    result = result.substring(0, 20);
+  }
+  return result;
+}
 
-    // Load registered accounts
-    try {
-      const storedAccs = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
-      if (storedAccs) {
-        this.accounts = JSON.parse(storedAccs);
+// Persistent Guest ID generator
+export function getOrCreateGuestId(): string {
+  let guestId = localStorage.getItem('aifinity_guest_id');
+  if (!guestId) {
+    guestId = 'guest_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+    localStorage.setItem('aifinity_guest_id', guestId);
+  }
+  return guestId;
+}
+
+// Check if a guest name is active or taken
+export async function isGuestNameActive(guestName: string): Promise<boolean> {
+  const lower = guestName.trim().toLowerCase();
+  try {
+    const userDoc = await getDoc(doc(db, 'usernames', lower));
+    if (userDoc.exists()) return true;
+    const guestDoc = await getDoc(doc(db, 'guest_names', lower));
+    return guestDoc.exists();
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function reserveGuestName(guestName: string, guestId: string): Promise<boolean> {
+  const res = await setGuestName(guestName, null, guestId);
+  return res.success;
+}
+
+// Check if a registered username is taken
+export async function isUsernameTaken(username: string, currentGuestId?: string): Promise<boolean> {
+  const lower = username.trim().toLowerCase();
+  try {
+    // Check in registered usernames
+    const userDoc = await getDoc(doc(db, 'usernames', lower));
+    if (userDoc.exists()) return true;
+
+    // Check in active guest names
+    const guestDoc = await getDoc(doc(db, 'guest_names', lower));
+    if (guestDoc.exists()) {
+      const data = guestDoc.data();
+      const guestId = currentGuestId || localStorage.getItem('aifinity_guest_id') || localStorage.getItem('aimud_guest_id');
+      // If this name was reserved by this current guest session, they can transition it to their registered account!
+      if (guestId && data?.guestId === guestId) {
+        return false;
       }
-    } catch (e) {
-      console.error('Failed to load accounts from localStorage', e);
-      this.accounts = [];
+      return true;
     }
 
-    // Load claimed guest names
-    try {
-      const storedGuests = localStorage.getItem(STORAGE_KEY_CLAIMED_GUEST_NAMES);
-      if (storedGuests) {
-        const list: string[] = JSON.parse(storedGuests);
-        this.claimedGuestNames = new Set(list.map(s => s.toLowerCase()));
-      }
-    } catch (e) {
-      console.error('Failed to load claimed guest names', e);
-      this.claimedGuestNames = new Set();
+    return false;
+  } catch (err) {
+    console.warn('Error checking username availability:', err);
+    return false;
+  }
+}
+
+// Check if guest name can be claimed by current guest
+export async function isGuestNameAvailable(guestName: string, currentGuestId: string): Promise<boolean> {
+  const lower = guestName.trim().toLowerCase();
+  try {
+    // Check if registered by an account
+    const userDoc = await getDoc(doc(db, 'usernames', lower));
+    if (userDoc.exists()) return false;
+
+    // Check if claimed by another guest
+    const guestDoc = await getDoc(doc(db, 'guest_names', lower));
+    if (guestDoc.exists()) {
+      const data = guestDoc.data();
+      // If claimed by same guest, it is allowed
+      if (data?.guestId === currentGuestId) return true;
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Error checking guest name availability:', err);
+    return true;
+  }
+}
+
+// Claim or update guest name
+export async function setGuestName(
+  newGuestName: string,
+  oldGuestName: string | null,
+  guestId: string
+): Promise<{ success: boolean; error?: string }> {
+  const validation = validateUsernameFormat(newGuestName);
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+
+  const newLower = newGuestName.trim().toLowerCase();
+  const available = await isGuestNameAvailable(newGuestName, guestId);
+  if (!available) {
+    return { success: false, error: 'That name is already taken by another user or guest.' };
+  }
+
+  try {
+    // Release old name if different
+    if (oldGuestName && oldGuestName.trim().toLowerCase() !== newLower) {
+      await deleteDoc(doc(db, 'guest_names', oldGuestName.trim().toLowerCase())).catch(() => {});
     }
 
-    // Load active session (if user logged in before, their login saves)
+    // Reserve new name
+    await setDoc(doc(db, 'guest_names', newLower), {
+      guestId,
+      displayName: newGuestName.trim(),
+      nameLower: newLower,
+      claimedAt: new Date().toISOString()
+    });
+
+    localStorage.setItem('aifinity_guest_name', newGuestName.trim());
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to claim guest name in Firestore:', err);
+    return { success: false, error: err.message || 'Failed to reserve guest name.' };
+  }
+}
+
+// Clear guest name
+export async function clearGuestName(guestName: string | null, guestId: string): Promise<void> {
+  if (guestName) {
     try {
-      const storedSession = localStorage.getItem(STORAGE_KEY_SESSION);
-      if (storedSession) {
-        const parsed = JSON.parse(storedSession);
-        if (parsed.type === 'registered' && parsed.username) {
-          const acc = this.accounts.find(
-            a => a.username.toLowerCase() === parsed.username.toLowerCase()
-          );
-          if (acc) {
-            this.session = {
-              type: 'registered',
-              username: acc.username
-            };
-            return;
+      await deleteDoc(doc(db, 'guest_names', guestName.trim().toLowerCase())).catch(() => {});
+    } catch (e) {}
+  }
+  localStorage.removeItem('aifinity_guest_name');
+}
+
+// In-memory cache for profiles currently being created or fetched to avoid race conditions
+let activeProfileCache: Record<string, UserProfile> = {};
+
+// Register user with email/password
+export async function registerWithEmail(
+  email: string,
+  pass: string,
+  username: string
+): Promise<{ user?: UserProfile; error?: string }> {
+  const validation = validateUsernameFormat(username);
+  if (!validation.valid) {
+    return { error: validation.error };
+  }
+
+  const taken = await isUsernameTaken(username);
+  if (taken) {
+    return { error: 'Username is already taken. Please choose another.' };
+  }
+
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    const uid = cred.user.uid;
+    const lower = username.trim().toLowerCase();
+    const cleanEmail = (cred.user.email || email).trim();
+    const emailLower = cleanEmail.toLowerCase();
+
+    const profile: UserProfile = enrichUserProfileWithDefaults({
+      uid,
+      email: cleanEmail,
+      username: username.trim(),
+      authProvider: 'password',
+      createdAt: new Date().toISOString()
+    });
+
+    // Populate active cache immediately so auth state listener immediately finds the profile
+    activeProfileCache[uid] = profile;
+
+    // Save profile, unique username reservation, and email index in Firestore
+    await Promise.all([
+      setDoc(doc(db, 'users', uid), profile),
+      setDoc(doc(db, 'usernames', lower), {
+        uid,
+        username: username.trim(),
+        createdAt: new Date().toISOString()
+      }),
+      setDoc(doc(db, 'emails', emailLower), {
+        uid,
+        email: cleanEmail,
+        createdAt: new Date().toISOString()
+      })
+    ]);
+
+    // Clean up temporary guest claim if any
+    try {
+      await deleteDoc(doc(db, 'guest_names', lower));
+    } catch {
+      // Non-blocking
+    }
+
+    return { user: profile };
+  } catch (err: any) {
+    let msg = err.message || 'Registration failed.';
+    if (err.code === 'auth/email-already-in-use') {
+      msg = 'An account with this email already exists.';
+    } else if (err.code === 'auth/weak-password') {
+      msg = 'Password should be at least 6 characters.';
+    } else if (err.code === 'auth/invalid-email') {
+      msg = 'Please enter a valid email address.';
+    }
+    return { error: msg };
+  }
+}
+
+// Login with email/password
+export async function loginWithEmail(
+  email: string,
+  pass: string
+): Promise<{ user?: UserProfile; error?: string; accountNotFound?: boolean }> {
+  try {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      return { error: 'Please enter your email.' };
+    }
+    if (!pass) {
+      return { error: 'Please enter your password.' };
+    }
+
+    const emailLower = cleanEmail.toLowerCase();
+
+    // Check if account exists first in Firestore emails or users collection
+    let accountExists = false;
+    try {
+      const emailDoc = await getDoc(doc(db, 'emails', emailLower));
+      if (emailDoc.exists()) {
+        accountExists = true;
+      } else {
+        const q1 = query(collection(db, 'users'), where('email', '==', cleanEmail));
+        const snap1 = await getDocs(q1);
+        if (!snap1.empty) {
+          accountExists = true;
+        } else {
+          const q2 = query(collection(db, 'users'), where('email', '==', emailLower));
+          const snap2 = await getDocs(q2);
+          if (!snap2.empty) {
+            accountExists = true;
           }
         }
       }
-    } catch (e) {
-      console.error('Failed to restore session', e);
+    } catch (checkErr) {
+      // Proceed to auth attempt if Firestore lookup fails
     }
 
-    // Default to guest
-    const savedGuestName = localStorage.getItem(STORAGE_KEY_GUEST_NAME) || undefined;
-    if (savedGuestName) {
-      this.claimedGuestNames.add(savedGuestName.toLowerCase());
-    }
-
-    let guestNumber: number | undefined;
-    const storedGuestNum = localStorage.getItem(STORAGE_KEY_GUEST_NUM);
-    if (storedGuestNum) {
-      const parsedNum = parseInt(storedGuestNum, 10);
-      if (!isNaN(parsedNum) && parsedNum >= 1 && parsedNum <= 9999) {
-        guestNumber = parsedNum;
-      }
-    }
-    if (!guestNumber) {
-      guestNumber = Math.floor(Math.random() * 9999) + 1;
-      localStorage.setItem(STORAGE_KEY_GUEST_NUM, guestNumber.toString());
-    }
-
-    this.session = {
-      type: 'guest',
-      guestName: savedGuestName,
-      guestNumber: guestNumber
-    };
-  }
-
-  private saveAccounts() {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(this.accounts));
-  }
-
-  private saveClaimedGuests() {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(
-      STORAGE_KEY_CLAIMED_GUEST_NAMES,
-      JSON.stringify(Array.from(this.claimedGuestNames))
-    );
-  }
-
-  private saveSession() {
-    if (typeof window === 'undefined') return;
-    if (this.session.type === 'registered' && this.session.username) {
-      localStorage.setItem(
-        STORAGE_KEY_SESSION,
-        JSON.stringify({ type: 'registered', username: this.session.username })
-      );
-    } else {
-      localStorage.removeItem(STORAGE_KEY_SESSION);
-    }
-  }
-
-  public subscribe(listener: () => void): () => void {
-    this.listeners.push(listener);
-    return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    };
-  }
-
-  private notify() {
-    this.listeners.forEach(l => l());
-  }
-
-  public getSession(): AuthSession {
-    return { ...this.session };
-  }
-
-  public isLoggedIn(): boolean {
-    return this.session.type === 'registered' && !!this.session.username;
-  }
-
-  /**
-   * Username validation for registered account:
-   * - 2-20 characters
-   * - letters and numbers only
-   * - not taken yet
-   */
-  public validateUsername(rawUsername: string): { valid: boolean; error?: string } {
-    const trimmed = rawUsername.trim();
-    if (trimmed.length < 2) {
-      return { valid: false, error: 'Username must be at least 2 characters long.' };
-    }
-    if (trimmed.length > 20) {
-      return { valid: false, error: 'Username must not exceed 20 characters.' };
-    }
-    if (!/^[a-zA-Z0-9]+$/.test(trimmed)) {
-      return { valid: false, error: 'Username can only contain letters and numbers.' };
-    }
-    const lower = trimmed.toLowerCase();
-    if (RESERVED_NAMES.has(lower)) {
-      return { valid: false, error: `"${trimmed}" is a reserved system name.` };
-    }
-    if (this.accounts.some(a => a.username.toLowerCase() === lower)) {
-      return { valid: false, error: 'This username is already taken.' };
-    }
-    if (this.claimedGuestNames.has(lower)) {
-      return { valid: false, error: 'This name is currently claimed by an active guest.' };
-    }
-    return { valid: true };
-  }
-
-  /**
-   * Validate email format (optional, valid if empty)
-   */
-  public validateEmail(rawEmail: string): { valid: boolean; error?: string } {
-    const trimmed = rawEmail.trim();
-    if (!trimmed) return { valid: true };
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmed)) {
-      return { valid: false, error: 'Please enter a valid email address.' };
-    }
-    return { valid: true };
-  }
-
-  /**
-   * Check if an email is already attached to another account
-   */
-  public isEmailTaken(rawEmail: string, excludeUsername?: string): boolean {
-    const lower = rawEmail.trim().toLowerCase();
-    if (!lower) return false;
-    return this.accounts.some(
-      a => a.email && a.email.toLowerCase() === lower && (!excludeUsername || a.username.toLowerCase() !== excludeUsername.toLowerCase())
-    );
-  }
-
-  /**
-   * Guest name validation:
-   * - 2-20 characters
-   * - letters and numbers only
-   * - can't set their guest name the same as another active guest (even if offline)
-   * - can't conflict with registered account username
-   */
-  public validateGuestName(rawGuestName: string): { valid: boolean; error?: string } {
-    const trimmed = rawGuestName.trim();
-    if (trimmed.length < 2) {
-      return { valid: false, error: 'Guest name must be at least 2 characters long.' };
-    }
-    if (trimmed.length > 20) {
-      return { valid: false, error: 'Guest name must not exceed 20 characters.' };
-    }
-    if (!/^[a-zA-Z0-9]+$/.test(trimmed)) {
-      return { valid: false, error: 'Guest name can only contain letters and numbers.' };
-    }
-    const lower = trimmed.toLowerCase();
-    if (RESERVED_NAMES.has(lower)) {
-      return { valid: false, error: `"${trimmed}" is a reserved system name.` };
-    }
-
-    // Check if it's already claimed by ANOTHER guest
-    const currentGuestBase = this.session.guestName?.toLowerCase();
-    if (this.claimedGuestNames.has(lower) && lower !== currentGuestBase) {
-      return { valid: false, error: 'This guest name is already taken by another guest.' };
-    }
-
-    // Check if registered account has this username
-    if (this.accounts.some(a => a.username.toLowerCase() === lower)) {
-      return { valid: false, error: 'This name belongs to a registered account.' };
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Generates a random unique username (e.g. GoldenTable86, Bird872, HowlingKnight)
-   * that is guaranteed to be 2-20 alphanumeric characters and not taken yet.
-   */
-  public generateUniqueUsername(): string {
-    for (let attempts = 0; attempts < 100; attempts++) {
-      const mode = Math.random();
-      let candidate = '';
-
-      if (mode < 0.4) {
-        // Pattern 1: Adjective + Noun + 2-digit number (e.g. GoldenTable86)
-        const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-        const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-        const num = Math.floor(Math.random() * 90) + 10; // 10-99
-        candidate = `${adj}${noun}${num}`;
-      } else if (mode < 0.7) {
-        // Pattern 2: Noun + 3-digit number (e.g. Bird872)
-        const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-        const num = Math.floor(Math.random() * 900) + 100; // 100-999
-        candidate = `${noun}${num}`;
-      } else {
-        // Pattern 3: Adjective + Noun (e.g. HowlingKnight)
-        const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-        const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-        candidate = `${adj}${noun}`;
+    try {
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      const userDoc = await getDoc(doc(db, 'users', cred.user.uid));
+      if (userDoc.exists()) {
+        const profile = enrichUserProfileWithDefaults(userDoc.data() as UserProfile);
+        activeProfileCache[cred.user.uid] = profile;
+        return { user: profile };
       }
 
-      if (candidate.length <= 20 && this.validateUsername(candidate).valid) {
-        return candidate;
+      // Fallback if profile document wasn't found in Firestore
+      const fallbackProfile: UserProfile = enrichUserProfileWithDefaults({
+        uid: cred.user.uid,
+        email: cred.user.email,
+        username: (cred.user.displayName || cred.user.email?.split('@')[0] || 'Player').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20),
+        authProvider: 'password',
+        createdAt: new Date().toISOString()
+      });
+      activeProfileCache[cred.user.uid] = fallbackProfile;
+      return { user: fallbackProfile };
+    } catch (authErr: any) {
+      // If Firebase explicitly reports user-not-found, OR if our lookup showed account does not exist:
+      if (
+        authErr.code === 'auth/user-not-found' ||
+        (!accountExists && (authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password'))
+      ) {
+        return {
+          error: "No account found with this email. Please enter your desired username and password to create your account.",
+          accountNotFound: true
+        };
       }
-    }
-
-    // Fallback guaranteed unique
-    const fallbackNum = Math.floor(Math.random() * 8999) + 1000;
-    return `Player${fallbackNum}`;
-  }
-
-  /**
-   * Register a new user account with optional email and Google ID
-   */
-  public register(
-    username: string,
-    password: string,
-    email?: string,
-    googleId?: string
-  ): { success: boolean; error?: string } {
-    const trimmed = username.trim();
-    const validation = this.validateUsername(trimmed);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-
-    if (!password || password.length < 4) {
-      return { success: false, error: 'Password must be at least 4 characters long.' };
-    }
-
-    let cleanEmail: string | undefined = undefined;
-    if (email && email.trim()) {
-      const emailTrimmed = email.trim();
-      const emailValidation = this.validateEmail(emailTrimmed);
-      if (!emailValidation.valid) {
-        return { success: false, error: emailValidation.error };
+      if (authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
+        return { error: 'Invalid password for this account. Please try again.' };
       }
-      if (this.isEmailTaken(emailTrimmed)) {
-        return { success: false, error: 'This email is already attached to another account.' };
+      if (authErr.code === 'auth/too-many-requests') {
+        return { error: 'Too many unsuccessful attempts. Please try again later.' };
       }
-      cleanEmail = emailTrimmed;
+      return { error: authErr.message || 'Login failed.' };
     }
-
-    // Simple robust hash representation for storage
-    const passwordHash = btoa(encodeURIComponent(password));
-
-    const newAccount: UserAccount = {
-      username: trimmed,
-      passwordHash,
-      createdAt: Date.now(),
-      email: cleanEmail,
-      googleId: googleId?.trim() || undefined
-    };
-
-    this.accounts.push(newAccount);
-    this.saveAccounts();
-
-    // Auto-login upon registration
-    this.session = {
-      type: 'registered',
-      username: newAccount.username
-    };
-    this.saveSession();
-    this.notify();
-
-    return { success: true };
+  } catch (err: any) {
+    let msg = err.message || 'Login failed.';
+    return { error: msg };
   }
+}
 
-  /**
-   * Log into an existing account (supports username or attached email)
-   */
-  public login(usernameOrEmail: string, password: string): { success: boolean; error?: string } {
-    const trimmed = usernameOrEmail.trim();
-    const lower = trimmed.toLowerCase();
-    const acc = this.accounts.find(
-      a => a.username.toLowerCase() === lower || (a.email && a.email.toLowerCase() === lower)
-    );
-
-    if (!acc) {
-      return { success: false, error: 'Account not found. Please check your username/email or sign up.' };
-    }
-
-    const expectedHash = btoa(encodeURIComponent(password));
-    if (acc.passwordHash !== expectedHash) {
-      return { success: false, error: 'Incorrect password. Please try again.' };
-    }
-
-    this.session = {
-      type: 'registered',
-      username: acc.username
-    };
-    this.saveSession();
-    this.notify();
-
-    return { success: true };
+// Record payment transaction in Firestore under user document
+export async function recordPaymentTransaction(
+  uid: string,
+  transaction: {
+    id: string;
+    amount: number;
+    itemName: string;
+    itemType: 'pack' | 'tier';
+    paymentMethod: string;
+    status: 'completed' | 'failed';
+    createdAt: string;
   }
-
-  /**
-   * Log in with Google automatically if account exists;
-   * otherwise indicates that user is new and needs manual password setup.
-   */
-  public loginWithGoogle(googleEmail: string): {
-    success: boolean;
-    isNewUser?: boolean;
-    username?: string;
-    googleEmail: string;
-    error?: string;
-  } {
-    const cleanEmail = googleEmail.trim().toLowerCase();
-    if (!cleanEmail) {
-      return { success: false, googleEmail: '', error: 'Invalid Google email' };
-    }
-
-    // Check for existing account by googleId or attached email
-    const acc = this.accounts.find(
-      a => (a.googleId && a.googleId.toLowerCase() === cleanEmail) ||
-           (a.email && a.email.toLowerCase() === cleanEmail)
-    );
-
-    if (acc) {
-      // Link googleId if not yet set
-      if (!acc.googleId) {
-        acc.googleId = cleanEmail;
-        this.saveAccounts();
-      }
-
-      // Log in automatically!
-      this.session = {
-        type: 'registered',
-        username: acc.username
-      };
-      this.saveSession();
-      this.notify();
-
-      return {
-        success: true,
-        isNewUser: false,
-        username: acc.username,
-        googleEmail: cleanEmail
-      };
-    }
-
-    // New Google user: requires setting up password manually
-    return {
-      success: false,
-      isNewUser: true,
-      googleEmail: cleanEmail
-    };
-  }
-
-  /**
-   * Link Google account to currently logged in account
-   */
-  public linkGoogleAccount(googleEmail: string): { success: boolean; error?: string } {
-    if (this.session.type !== 'registered' || !this.session.username) {
-      return { success: false, error: 'You must be logged in to link a Google account.' };
-    }
-    const cleanEmail = googleEmail.trim().toLowerCase();
-    const existing = this.accounts.find(
-      a => a.username.toLowerCase() !== this.session.username?.toLowerCase() &&
-           ((a.googleId && a.googleId.toLowerCase() === cleanEmail) || (a.email && a.email.toLowerCase() === cleanEmail))
-    );
-    if (existing) {
-      return { success: false, error: 'This Google account is already linked to another user.' };
-    }
-
-    const currentAcc = this.getCurrentAccount();
-    if (!currentAcc) return { success: false, error: 'Current account not found.' };
-
-    currentAcc.googleId = cleanEmail;
-    if (!currentAcc.email) {
-      currentAcc.email = cleanEmail;
-    }
-    this.saveAccounts();
-    this.notify();
-    return { success: true };
-  }
-
-  /**
-   * Request password recovery / reset code for an account (by username or email)
-   */
-  public requestPasswordRecovery(identifier: string): {
-    success: boolean;
-    error?: string;
-    obfuscatedEmail?: string;
-    code?: string;
-    username?: string;
-  } {
-    const trimmed = identifier.trim().toLowerCase();
-    if (!trimmed) {
-      return { success: false, error: 'Please enter your username or registered email.' };
-    }
-
-    const acc = this.accounts.find(
-      a => a.username.toLowerCase() === trimmed || (a.email && a.email.toLowerCase() === trimmed)
-    );
-
-    if (!acc) {
-      return { success: false, error: 'No account found with this username or email.' };
-    }
-
-    if (!acc.email) {
-      return {
-        success: false,
-        error: `Account "${acc.username}" does not have a recovery email attached. Password recovery is only enabled for accounts with an attached email.`
-      };
-    }
-
-    // Generate 6-digit recovery code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins
-
-    this.recoveryRequests.set(acc.username.toLowerCase(), {
-      code,
-      expiresAt,
-      email: acc.email,
-      username: acc.username
+): Promise<void> {
+  try {
+    await setDoc(doc(db, 'users', uid, 'transactions', transaction.id), {
+      ...transaction,
+      userId: uid
     });
+  } catch (err) {
+    console.error('Failed to log payment transaction in Firestore:', err);
+  }
+}
 
-    // Obfuscate email for privacy: e.g. chloe.a.alba.1@gmail.com -> ch***1@gmail.com
-    const [userPart, domainPart] = acc.email.split('@');
-    const obfuscated = userPart.length <= 2 
-      ? `${userPart[0]}*@${domainPart}`
-      : `${userPart.slice(0, 2)}***${userPart.slice(-1)}@${domainPart}`;
+// Google Sign-in with Firebase
+export async function loginWithGoogle(): Promise<{
+  user?: UserProfile;
+  needsUsername?: boolean;
+  googleUser?: FirebaseUser;
+  error?: string;
+}> {
+  try {
+    const cred = await signInWithPopup(auth, googleProvider);
+    const uid = cred.user.uid;
 
-    return {
-      success: true,
-      obfuscatedEmail: obfuscated,
-      code, // returned so the client can display dispatch notification / copy code
-      username: acc.username
-    };
+    const userDoc = await getDoc(doc(db, 'users', uid));
+    if (userDoc.exists()) {
+      const profile = enrichUserProfileWithDefaults(userDoc.data() as UserProfile);
+      activeProfileCache[uid] = profile;
+      if (isDefaultAdmin(profile.email, profile.username) && (profile.role !== 'admin' || !profile.hasInfiniteActions)) {
+        await setDoc(doc(db, 'users', uid), {
+          role: 'admin',
+          hasInfiniteActions: true,
+          canSaveMultipleAdventures: true,
+          canPostCommunityAdventures: true,
+          showGlowingName: profile.showGlowingName !== undefined ? profile.showGlowingName : true
+        }, { merge: true }).catch(() => {});
+      }
+      return { user: profile };
+    }
+
+    // New Google user: always give the user the prompt to manually set their username and password first
+    return { needsUsername: true, googleUser: cred.user };
+  } catch (err: any) {
+    if (err.code === 'auth/popup-closed-by-user') {
+      return { error: 'Sign in popup closed.' };
+    }
+    return { error: err.message || 'Google sign in failed.' };
+  }
+}
+
+// Complete Google sign-in after manually setting a unique username and optional password
+export async function completeGoogleSignUp(
+  googleUser: FirebaseUser,
+  username: string,
+  optionalPassword?: string
+): Promise<{ user?: UserProfile; error?: string }> {
+  const validation = validateUsernameFormat(username);
+  if (!validation.valid) {
+    return { error: validation.error };
   }
 
-  /**
-   * Complete password reset using verified 6-digit recovery code
-   */
-  public resetPasswordWithCode(usernameOrEmail: string, code: string, newPassword: string): { success: boolean; error?: string } {
-    const trimmed = usernameOrEmail.trim().toLowerCase();
-    const acc = this.accounts.find(
-      a => a.username.toLowerCase() === trimmed || (a.email && a.email.toLowerCase() === trimmed)
-    );
-
-    if (!acc) {
-      return { success: false, error: 'Account not found.' };
-    }
-
-    const lowerUser = acc.username.toLowerCase();
-    const req = this.recoveryRequests.get(lowerUser);
-
-    if (!req) {
-      return { success: false, error: 'No active recovery request found. Please request a new code.' };
-    }
-
-    if (Date.now() > req.expiresAt) {
-      this.recoveryRequests.delete(lowerUser);
-      return { success: false, error: 'Recovery code has expired. Please request a new code.' };
-    }
-
-    if (req.code !== code.trim()) {
-      return { success: false, error: 'Invalid recovery code. Please check and try again.' };
-    }
-
-    if (!newPassword || newPassword.length < 4) {
-      return { success: false, error: 'New password must be at least 4 characters long.' };
-    }
-
-    acc.passwordHash = btoa(encodeURIComponent(newPassword));
-    this.saveAccounts();
-    this.recoveryRequests.delete(lowerUser);
-    this.notify();
-
-    return { success: true };
+  const taken = await isUsernameTaken(username);
+  if (taken) {
+    return { error: 'Username is already taken. Please choose another.' };
   }
 
-  /**
-   * Optionally attach or update email for current logged-in account
-   */
-  public attachEmail(email: string): { success: boolean; error?: string } {
-    if (this.session.type !== 'registered' || !this.session.username) {
-      return { success: false, error: 'You must be logged in to attach an email.' };
-    }
+  try {
+    const cleanEmail = (googleUser.email || '').trim();
+    const emailLower = cleanEmail.toLowerCase();
+    const lower = username.trim().toLowerCase();
 
-    const trimmed = email.trim();
-    if (!trimmed) {
-      return { success: false, error: 'Please enter an email address.' };
-    }
+    const profile: UserProfile = enrichUserProfileWithDefaults({
+      uid: googleUser.uid,
+      email: googleUser.email,
+      username: username.trim(),
+      authProvider: 'google',
+      createdAt: new Date().toISOString()
+    });
+    activeProfileCache[googleUser.uid] = profile;
 
-    const emailValidation = this.validateEmail(trimmed);
-    if (!emailValidation.valid) {
-      return { success: false, error: emailValidation.error };
-    }
+    await Promise.all([
+      setDoc(doc(db, 'users', googleUser.uid), profile),
+      setDoc(doc(db, 'usernames', lower), {
+        uid: googleUser.uid,
+        username: username.trim(),
+        createdAt: new Date().toISOString()
+      }),
+      emailLower ? setDoc(doc(db, 'emails', emailLower), {
+        uid: googleUser.uid,
+        email: cleanEmail,
+        createdAt: new Date().toISOString()
+      }) : Promise.resolve()
+    ]);
 
-    if (this.isEmailTaken(trimmed, this.session.username)) {
-      return { success: false, error: 'This email is already attached to another account.' };
-    }
-
-    const currentAcc = this.getCurrentAccount();
-    if (!currentAcc) return { success: false, error: 'Account not found.' };
-
-    currentAcc.email = trimmed;
-    this.saveAccounts();
-    this.notify();
-    return { success: true };
-  }
-
-  /**
-   * Remove attached email from current logged-in account
-   */
-  public removeAttachedEmail(): { success: boolean; error?: string } {
-    const currentAcc = this.getCurrentAccount();
-    if (!currentAcc) return { success: false, error: 'Account not found.' };
-
-    currentAcc.email = undefined;
-    this.saveAccounts();
-    this.notify();
-    return { success: true };
-  }
-
-  /**
-   * Get full account record for current session
-   */
-  public getCurrentAccount(): UserAccount | undefined {
-    if (this.session.type !== 'registered' || !this.session.username) return undefined;
-    return this.accounts.find(a => a.username.toLowerCase() === this.session.username?.toLowerCase());
-  }
-
-  /**
-   * Log out. Returns user to Guest mode.
-   */
-  public logout() {
-    this.session = {
-      type: 'guest',
-      guestName: localStorage.getItem(STORAGE_KEY_GUEST_NAME) || undefined,
-      guestNumber: parseInt(localStorage.getItem(STORAGE_KEY_GUEST_NUM) || '0', 10) || Math.floor(Math.random() * 9999) + 1
-    };
-    this.saveSession();
-    this.notify();
-  }
-
-  /**
-   * Set the guest's temporary name.
-   * Format: baseName, rendered as `${baseName} (Guest)`
-   */
-  public setGuestName(rawGuestName: string): { success: boolean; error?: string } {
-    const trimmed = rawGuestName.trim();
-    const validation = this.validateGuestName(trimmed);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-
-    // Free previous guest name from claimed set if any
-    if (this.session.guestName) {
-      this.claimedGuestNames.delete(this.session.guestName.toLowerCase());
-    }
-
-    this.claimedGuestNames.add(trimmed.toLowerCase());
-    this.saveClaimedGuests();
-
-    localStorage.setItem(STORAGE_KEY_GUEST_NAME, trimmed);
-
-    this.session = {
-      ...this.session,
-      guestName: trimmed
-    };
-    this.notify();
-
-    return { success: true };
-  }
-
-  /**
-   * Clears the guest's custom name back to unset.
-   */
-  public clearGuestName() {
-    if (this.session.guestName) {
-      this.claimedGuestNames.delete(this.session.guestName.toLowerCase());
-      this.saveClaimedGuests();
-    }
-    localStorage.removeItem(STORAGE_KEY_GUEST_NAME);
-    this.session = {
-      ...this.session,
-      guestName: undefined
-    };
-    this.notify();
-  }
-
-  /**
-   * Resolves the player's name for Singleplayer mode:
-   * - If registered: account's username
-   * - If guest with set name: `[GuestName] (Guest)`
-   * - If guest without set name: `Player`
-   */
-  public getSingleplayerName(): string {
-    if (this.session.type === 'registered' && this.session.username) {
-      return this.session.username;
-    }
-    if (this.session.guestName) {
-      return `${this.session.guestName} (Guest)`;
-    }
-    return 'Player';
-  }
-
-  /**
-   * Resolves the player's name for Multiplayer mode:
-   * - If registered: account's username
-   * - If guest with set name: `[GuestName] (Guest)`
-   * - If guest without set name: `guest#` (1-9999), unique among online players
-   */
-  public getMultiplayerName(existingPlayers: Array<{ username: string } | string> = []): string {
-    if (this.session.type === 'registered' && this.session.username) {
-      return this.session.username;
-    }
-    if (this.session.guestName) {
-      return `${this.session.guestName} (Guest)`;
-    }
-
-    // Extract numbers of current online guests: e.g. "guest491" -> 491
-    const usedGuestNums = new Set<number>();
-    for (const p of existingPlayers) {
-      const u = typeof p === 'string' ? p : p.username;
-      const match = /^guest(\d+)$/i.exec(u);
-      if (match) {
-        usedGuestNums.add(parseInt(match[1], 10));
+    // Optional account password update if the user manually specified a password
+    if (optionalPassword && optionalPassword.length >= 6) {
+      try {
+        const { updatePassword } = await import('firebase/auth');
+        await updatePassword(googleUser, optionalPassword);
+      } catch (pwErr) {
+        console.warn('Could not set optional password on Google user:', pwErr);
       }
     }
 
-    let myNum = this.session.guestNumber;
-    if (!myNum || usedGuestNums.has(myNum)) {
-      // Find an unused random number between 1 and 9999
-      for (let i = 0; i < 1000; i++) {
-        const candidate = Math.floor(Math.random() * 9999) + 1;
-        if (!usedGuestNums.has(candidate)) {
-          myNum = candidate;
-          break;
-        }
-      }
-      if (!myNum) myNum = 1;
-      this.session.guestNumber = myNum;
-      localStorage.setItem(STORAGE_KEY_GUEST_NUM, myNum.toString());
+    // Clean up temporary guest claim if any
+    try {
+      await deleteDoc(doc(db, 'guest_names', lower));
+    } catch {
+      // Non-blocking
     }
 
-    return `guest${myNum}`;
+    return { user: profile };
+  } catch (err: any) {
+    return { error: err.message || 'Failed to complete Google account setup.' };
   }
+}
 
-  /**
-   * Get list of all registered accounts (read-only copy)
-   */
-  public getAccounts(): UserAccount[] {
-    return [...this.accounts];
+// Log out
+export async function logOut(): Promise<void> {
+  activeProfileCache = {};
+  await fbSignOut(auth);
+}
+
+// Fetch user profile from Firestore by UID
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  if (activeProfileCache[uid]) {
+    const cached = enrichUserProfileWithDefaults(activeProfileCache[uid]);
+    if (isDefaultAdmin(cached.email, cached.username) && (cached.role !== 'admin' || !cached.hasInfiniteActions)) {
+      cached.role = 'admin';
+      cached.hasInfiniteActions = true;
+      cached.canSaveMultipleAdventures = true;
+      cached.canPostCommunityAdventures = true;
+    }
+    return cached;
   }
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      const profile = enrichUserProfileWithDefaults(snap.data() as UserProfile);
+      activeProfileCache[uid] = profile;
+      if (isDefaultAdmin(profile.email, profile.username) && (profile.role !== 'admin' || !profile.hasInfiniteActions)) {
+        await setDoc(doc(db, 'users', uid), {
+          role: 'admin',
+          hasInfiniteActions: true,
+          canSaveMultipleAdventures: true,
+          canPostCommunityAdventures: true,
+          showGlowingName: profile.showGlowingName !== undefined ? profile.showGlowingName : true
+        }, { merge: true }).catch(() => {});
+      }
+      return profile;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
-  /**
-   * Get public profile descriptor
-   */
-  public getProfileInfo() {
-    const currentAcc = this.getCurrentAccount();
-    return {
-      isLoggedIn: this.isLoggedIn(),
-      username: this.session.username,
-      email: currentAcc?.email,
-      isGoogleLinked: !!currentAcc?.googleId,
-      guestName: this.session.guestName,
-      isGuestNameSet: !!this.session.guestName,
-      singleplayerName: this.getSingleplayerName(),
-      multiplayerName: this.getMultiplayerName()
+export function updateCachedProfile(uid: string, updates: Partial<UserProfile>): void {
+  if (activeProfileCache[uid]) {
+    activeProfileCache[uid] = {
+      ...activeProfileCache[uid],
+      ...updates
     };
   }
 }
 
-export const authService = new AuthService();
+// Listen to auth state changes
+export function subscribeToAuth(callback: (user: UserProfile | null, loading: boolean) => void) {
+  return onAuthStateChanged(auth, async (fbUser) => {
+    if (fbUser) {
+      let profile = await getUserProfile(fbUser.uid);
+      if (!profile) {
+        // Retry with delays to allow Firestore writes to settle
+        for (let i = 0; i < 3; i++) {
+          await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+          profile = await getUserProfile(fbUser.uid);
+          if (profile) break;
+        }
+      }
+      if (profile) {
+        callback(profile, false);
+      } else {
+        // Construct fallback user profile so user is never reported as null when authenticated
+        const fallback: UserProfile = enrichUserProfileWithDefaults({
+          uid: fbUser.uid,
+          email: fbUser.email,
+          username: (fbUser.displayName || fbUser.email?.split('@')[0] || 'Player').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20) || 'Player',
+          authProvider: (fbUser.providerData[0]?.providerId === 'google.com' ? 'google' : 'password'),
+          createdAt: new Date().toISOString()
+        });
+        activeProfileCache[fbUser.uid] = fallback;
+        callback(fallback, false);
+      }
+    } else {
+      activeProfileCache = {};
+      callback(null, false);
+    }
+  });
+}
+
+// Generate unique Guest# between 1-9999 for multiplayer guests who haven't set their name
+export function generateUniqueGuestMultiplayerName(existingPlayerNames: string[] = []): string {
+  const existingNumbers = new Set<number>();
+  for (const name of existingPlayerNames) {
+    const match = name.match(/^Guest(\d+)$/i);
+    if (match) {
+      existingNumbers.add(parseInt(match[1], 10));
+    }
+  }
+
+  // Find an unused number from 1 to 9999
+  let candidate = Math.floor(Math.random() * 9999) + 1;
+  let attempts = 0;
+  while (existingNumbers.has(candidate) && attempts < 1000) {
+    candidate = Math.floor(Math.random() * 9999) + 1;
+    attempts++;
+  }
+  return `Guest${candidate}`;
+}
+
+// Update partial user profile in Firestore
+export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, updates, { merge: true });
+  } catch (err) {
+    console.error('Failed to update user profile:', err);
+  }
+}

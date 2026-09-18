@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { AIEngine } from './services/aiEngine';
 import { FileSystem } from './services/fileSystem';
 import { NarrativeEntry, UpdateItem } from './types';
@@ -8,16 +8,28 @@ import NarrativeWindow from './components/NarrativeWindow';
 import InputArea from './components/InputArea';
 import Modal from './components/Modal';
 import MainMenu from './components/MainMenu';
-import WelcomePage from './components/WelcomePage';
-import AuthModal from './components/AuthModal';
-import PricingModal from './components/PricingModal';
-import SavedAdventuresModal from './components/SavedAdventuresModal';
-import CommunityAdventures from './components/CommunityAdventures';
 import { MultiplayerService } from './services/multiplayer';
 import { SuggestionGenerator } from './services/suggestionGenerator';
-import { authService, AuthSession } from './services/authService';
-import { actionQuotaService, ActionQuotaState, SavedAdventure } from './services/actionQuotaService';
-import { User, Zap, Bookmark, Share2, Crown } from 'lucide-react';
+import WelcomePage from './components/WelcomePage';
+import AuthModal from './components/AuthModal';
+import GuestNameModal from './components/GuestNameModal';
+import MarketModal from './components/MarketModal';
+import ActionLimitModal from './components/ActionLimitModal';
+import GuestWelcomeModal from './components/GuestWelcomeModal';
+import AdventuresModal from './components/AdventuresModal';
+import CommunityAdventuresModal from './components/CommunityAdventuresModal';
+import AccountModal from './components/AccountModal';
+import GoldenName from './components/GoldenName';
+import {
+  UserProfile,
+  subscribeToAuth,
+  logOut,
+  getOrCreateGuestId,
+  generateUniqueGuestMultiplayerName
+} from './services/authService';
+import { ActionLimitService, ActionStatus } from './services/actionLimitService';
+import { SavedAdventure, CommunityAdventure } from './services/adventuresService';
+import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
 const fileSystem = new FileSystem();
@@ -42,13 +54,23 @@ function parseActiveWorldTime(rawTime: string | null): string {
 
 function App() {
   const [narrative, setNarrative] = useState<NarrativeEntry[]>(() => {
-    const saved = localStorage.getItem('aimud_narrative');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('aimud_narrative');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   });
   const [files, setFiles] = useState<string[]>([]);
   const [updates, setUpdates] = useState<UpdateItem[]>(() => {
-    const saved = localStorage.getItem('aimud_updates');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('aimud_updates');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   });
   const [isProcessing, setIsProcessing] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -62,17 +84,7 @@ function App() {
     const saved = localStorage.getItem('aimud_autoRecommendationsEnabled');
     return saved !== null ? JSON.parse(saved) : true;
   });
-  const [initialAIGeneration, setInitialAIGeneration] = useState<string>(() => {
-    return localStorage.getItem('aimud_initial_generation') || '';
-  });
   const [syncCount, setSyncCount] = useState(0);
-
-  // Pricing, Quota & Adventures Modals state
-  const [quotaState, setQuotaState] = useState<ActionQuotaState>(() => actionQuotaService.getQuotaState());
-  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
-  const [pricingInitialTab, setPricingInitialTab] = useState<'pricing' | 'apiKey' | 'subscriptions'>('pricing');
-  const [highlightActionExhausted, setHighlightActionExhausted] = useState(false);
-  const [isSavedAdventuresModalOpen, setIsSavedAdventuresModalOpen] = useState(false);
 
   // Multiplayer state
   const [gameMode, setGameMode] = useState<'singleplayer' | 'multiplayer'>(() => {
@@ -86,92 +98,131 @@ function App() {
   const [username, setUsername] = useState<string>(() => {
     return localStorage.getItem('aimud_username') || '';
   });
-
-  // Authentication & Guest State
-  const [authSession, setAuthSession] = useState<AuthSession>(() => authService.getSession());
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<'login' | 'signup' | 'guest'>('login');
-
-  useEffect(() => {
-    const unsubAuth = authService.subscribe(() => {
-      setAuthSession(authService.getSession());
-    });
-    const unsubQuota = actionQuotaService.subscribe(() => {
-      setQuotaState(actionQuotaService.getQuotaState());
-    });
-    return () => {
-      unsubAuth();
-      unsubQuota();
-    };
-  }, []);
-
-  // Compute name resolution for singleplayer and multiplayer
-  const onlineGuestNames = roomState?.players?.map((p: any) => p.username) || [];
-  const singleplayerName = authService.getSingleplayerName();
-  const multiplayerName = authService.getMultiplayerName(onlineGuestNames);
-  const effectiveUsername = gameMode === 'singleplayer' ? singleplayerName : (username || multiplayerName);
-
   const processingCountRef = useRef(0);
   const [showCharacterCreation, setShowCharacterCreation] = useState(false);
   const [characterDescription, setCharacterDescription] = useState('');
   const mapPanelRef = useRef<MapPanelHandle>(null);
 
-  const updateProcessing = (delta: number) => {
-    processingCountRef.current = Math.max(0, processingCountRef.current + delta);
-    setIsProcessing(processingCountRef.current > 0);
-  };
+  // Authentication & Guest state
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [guestId, setGuestId] = useState<string>(() => getOrCreateGuestId());
+  const [guestName, setGuestName] = useState<string | null>(() => {
+    return localStorage.getItem('aifinity_guest_name');
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalInitialTab, setAuthModalInitialTab] = useState<'login' | 'signup'>('signup');
+  const [isGuestNameModalOpen, setIsGuestNameModalOpen] = useState(false);
 
-  // Route / Welcome page state ('game' | 'welcome' | 'community')
-  const [currentRoute, setCurrentRoute] = useState<'game' | 'welcome' | 'community'>(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      if (path === '/welcome' || hash === '#/welcome' || path.startsWith('/welcome')) {
-        return 'welcome';
+  // Guest welcome prompt state (prompt on first visit unless user set "Don't show again")
+  const [isGuestWelcomeOpen, setIsGuestWelcomeOpen] = useState(() => {
+    try {
+      return localStorage.getItem('aimud_hide_guest_welcome') !== 'true';
+    } catch (e) {
+      return true;
+    }
+  });
+
+  // Action Limits & Monetization state
+  const [actionStatus, setActionStatus] = useState<ActionStatus>(() => ActionLimitService.getActionStatus(null, guestId));
+  const [isMarketOpen, setIsMarketOpen] = useState(false);
+  const [marketInitialTab, setMarketInitialTab] = useState<'packs' | 'subscriptions' | 'apikey'>('packs');
+  const [isActionLimitModalOpen, setIsActionLimitModalOpen] = useState(false);
+
+  // Adventures & Community state
+  const [isAdventuresModalOpen, setIsAdventuresModalOpen] = useState(false);
+  const [isCommunityModalOpen, setIsCommunityModalOpen] = useState(false);
+  const [adventureToShare, setAdventureToShare] = useState<SavedAdventure | null>(null);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+
+  const refreshActionStatus = useCallback(() => {
+    setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
+  }, [currentUser, guestId]);
+
+  // Listen to Firebase Auth state for automatic persistent login
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((user) => {
+      setCurrentUser(user);
+      setActionStatus(ActionLimitService.getActionStatus(user, guestId));
+      if (user) {
+        setIsGuestWelcomeOpen(false);
+        setIsActionLimitModalOpen(false);
       }
-      if (path === '/community' || hash === '#/community' || path.startsWith('/community')) {
-        return 'community';
+    });
+    return () => unsubscribe();
+  }, [guestId]);
+
+  // Synchronize actionStatus immediately whenever currentUser or guestId changes
+  useEffect(() => {
+    setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
+  }, [currentUser, guestId]);
+
+  // Singleplayer naming rule:
+  // - If logged in: account's username
+  // - If guest with custom name: `${guestName} (Guest)`
+  // - If guest without custom name: 'Player'
+  const effectiveSingleplayerName = useMemo(() => {
+    if (currentUser) return currentUser.username;
+    if (guestName) return `${guestName} (Guest)`;
+    return 'Player';
+  }, [currentUser, guestName]);
+
+  // Multiplayer naming rule:
+  // - If logged in: account's username
+  // - If guest with custom name: `${guestName} (Guest)`
+  // - If guest without custom name: Guest# (1-9999, unique to active players in room)
+  const getMultiplayerUsername = useCallback((existingPlayers: any[] = []) => {
+    if (currentUser) return currentUser.username;
+    if (guestName) return `${guestName} (Guest)`;
+    const existingNames = existingPlayers.map((p: any) => p.username || '');
+    return generateUniqueGuestMultiplayerName(existingNames);
+  }, [currentUser, guestName]);
+
+  // Active game username depending on gameMode
+  const activeGameUsername = gameMode === 'multiplayer' ? (username || getMultiplayerUsername(roomState?.players || [])) : effectiveSingleplayerName;
+
+  // Route state for /welcome and /
+  const [currentPath, setCurrentPath] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      if (path === '/welcome' || hash === '#/welcome' || hash === '#welcome') {
+        return '/welcome';
       }
     }
-    return 'game';
+    return window.location.pathname || '/';
   });
 
   useEffect(() => {
-    const handlePopState = () => {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      if (path === '/welcome' || hash === '#/welcome' || path.startsWith('/welcome')) {
-        setCurrentRoute('welcome');
-      } else if (path === '/community' || hash === '#/community' || path.startsWith('/community')) {
-        setCurrentRoute('community');
+    const handleLocationChange = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      if (path === '/welcome' || hash === '#/welcome' || hash === '#welcome') {
+        setCurrentPath('/welcome');
       } else {
-        setCurrentRoute('game');
+        setCurrentPath(path);
       }
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
-  const navigateTo = (route: 'game' | 'welcome' | 'community') => {
-    if (route === 'welcome') {
-      window.history.pushState(null, '', '/welcome');
-      setCurrentRoute('welcome');
-    } else if (route === 'community') {
-      window.history.pushState(null, '', '/community');
-      setCurrentRoute('community');
-    } else {
-      window.history.pushState(null, '', '/');
-      setCurrentRoute('game');
+  const handleEnterGame = () => {
+    if (window.location.pathname === '/welcome') {
+      window.history.pushState({}, '', '/');
     }
+    if (window.location.hash.includes('welcome')) {
+      window.location.hash = '';
+    }
+    setCurrentPath('/');
   };
 
-  const handleEnterFromWelcome = (scenarioPrompt?: string) => {
-    navigateTo('game');
-    if (scenarioPrompt) {
-      setTimeout(() => {
-        handleAction(scenarioPrompt);
-      }, 100);
-    }
+  const updateProcessing = (delta: number) => {
+    processingCountRef.current = Math.max(0, processingCountRef.current + delta);
+    setIsProcessing(processingCountRef.current > 0);
   };
 
   const isHost = roomState?.hostUsername === username;
@@ -210,18 +261,20 @@ function App() {
         roomStateRef.current = state;
         setNarrative(state.narrative || []);
         setUpdates(state.updates || []);
-        if (state.recommendations && Array.isArray(state.recommendations)) {
-          setRecommendations(state.recommendations);
-        }
+        setWorldTime(state.worldTime || '');
+        setRecommendations(state.recommendations || []);
         syncFiles();
 
-        const myUsername = (localStorage.getItem('aimud_username') || effectiveUsername).toLowerCase();
-        const me = state.players?.find((p: any) => p.username.toLowerCase() === myUsername);
-        const myCharacterFileExists = fileSystem.list().some(f => {
+        // Check if we need to show character creation
+        const myName = localStorage.getItem('aimud_username');
+        const me = state.players?.find((p: any) => p.username?.toLowerCase() === myName?.toLowerCase());
+        const myUsername = me?.username?.toLowerCase();
+
+        // Find if any file matches CharacterName-username.txt
+        const myCharacterFileExists = Object.keys(state.fileSystemState?.files || {}).some(f => {
           const lowerF = f.toLowerCase();
           return (
-            lowerF.endsWith('.txt') &&
-            (
+            myUsername && (
               lowerF.endsWith(`-${myUsername}.txt`) ||
               lowerF.endsWith(`_${myUsername}.txt`) ||
               lowerF.endsWith(` ${myUsername}.txt`) ||
@@ -276,118 +329,147 @@ function App() {
         // Host creates character for new player
         updateProcessing(1);
         try {
-          const result = await aiEngine.createCharacter(newUsername, description);
-          if (result) {
-            const newNarrative = [
-              ...(roomStateRef.current?.narrative || []),
-              { id: Date.now().toString(), text: `[Character Created]: ${newUsername} enters the world.\n${result.narrative || ''}`, type: 'system' as const }
-            ];
-            const safeUpdates = Array.isArray(result.updates) ? result.updates : [];
-            const newUpdates = [...safeUpdates, ...(roomStateRef.current?.updates || [])].slice(0, 50);
-
-            ms.syncState({
-              fileSystemState: fileSystem.exportState(),
-              narrative: newNarrative,
-              updates: newUpdates,
-              recommendations: result.recommendations || [],
-              gameState: 'playing',
-              worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
-              turnProcessed: true
-            });
-          }
+          const prompt = `Create a highly detailed and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".\n\nCRITICAL: Check your context. If a character file for player "${newUsername}" (ending in "-${newUsername}.txt") ALREADY EXISTS, you MUST update that specific file and NOT create a new one. Do not create duplicates. Return the character file AND update "CurrentMap.json" to place the new player at the appropriate starting location. DO NOT modify, empty, or delete ANY OTHER existing files (do not use null).`;
+          await aiEngine.processAction(prompt);
+          ms.syncState({
+            fileSystemState: fileSystem.exportState(),
+            worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt'))
+          });
         } finally {
           updateProcessing(-1);
         }
       },
-      (kickedUser) => {
-        const currentMyUser = localStorage.getItem('aimud_username') || effectiveUsername;
-        if (kickedUser.toLowerCase() === currentMyUser.toLowerCase()) {
-          alert('You have been removed from the session by the host.');
-          handleLeaveGame();
+      () => {
+        // Kicked
+        alert('You have been kicked from the session.');
+        if (multiplayerService) {
+          multiplayerService.leaveRoom();
+          setMultiplayerService(null);
         }
+        clearSession();
+      },
+      () => {
+        // Adventure deleted
+        alert('The host has deleted the adventure.');
+        if (multiplayerService) {
+          multiplayerService.leaveRoom();
+          setMultiplayerService(null);
+        }
+        clearSession();
       }
     );
     setMultiplayerService(ms);
     return ms;
   };
 
-  useEffect(() => {
-    syncFiles();
-
-    // Check if there was an active multiplayer session in localStorage
-    const savedRoomId = localStorage.getItem('aimud_roomId');
-    const savedGameMode = localStorage.getItem('aimud_gameMode');
-    const savedUsername = localStorage.getItem('aimud_username');
-
-    if (savedGameMode === 'multiplayer' && savedRoomId && savedUsername) {
-      const ms = initMultiplayerService();
-      ms.reconnect(savedRoomId, savedUsername).catch(err => {
-        console.error("Failed to auto-reconnect to room", err);
-        clearSession();
-      });
-    } else {
-      const hasFiles = fileSystem.list().length > 0;
-      if (hasFiles) {
-        setIsInitialized(true);
-      }
-    }
-  }, []);
-
-  const clearSession = () => {
-    localStorage.removeItem('aimud_roomId');
-    localStorage.removeItem('aimud_gameMode');
-    localStorage.removeItem('aimud_username');
-    setGameMode('singleplayer');
-    setRoomState(null);
-    setUsername('');
-    const hasFiles = fileSystem.list().length > 0;
-    setIsInitialized(hasFiles);
-    syncFiles();
-  };
-
-  const handleHostGame = async (user: string) => {
+  const handleJoinGame = async (roomId: string, joinUsername?: string) => {
+    const effectiveJoin = currentUser ? currentUser.username : (joinUsername || getMultiplayerUsername(roomState?.players || []));
+    setUsername(effectiveJoin);
+    localStorage.setItem('aimud_username', effectiveJoin);
     const ms = initMultiplayerService();
     try {
-      const actualUser = user || effectiveUsername;
-      setUsername(actualUser);
-      localStorage.setItem('aimud_username', actualUser);
-      localStorage.setItem('aimud_gameMode', 'multiplayer');
-
-      const room = await ms.hostRoom(actualUser);
-      localStorage.setItem('aimud_roomId', room.id);
-      setGameMode('multiplayer');
-      setShowMultiplayerModal(null);
-      setIsInitialized(false);
-      fileSystem.clear();
-      setNarrative([{
-        id: 'host_init',
-        text: `Room created! Code: ${room.id}. Enter an opening scenario prompt to initialize the world for all players.`,
-        type: 'system'
-      }]);
-      syncFiles();
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message || "Failed to host multiplayer room");
-    }
-  };
-
-  const handleJoinGame = async (roomId: string, user: string) => {
-    const ms = initMultiplayerService();
-    try {
-      const actualUser = user || effectiveUsername;
-      setUsername(actualUser);
-      localStorage.setItem('aimud_username', actualUser);
-      localStorage.setItem('aimud_gameMode', 'multiplayer');
-
-      await ms.joinRoom(roomId, actualUser);
+      await ms.joinRoom(
+        roomId,
+        effectiveJoin,
+        currentUser ? { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName } : undefined
+      );
       localStorage.setItem('aimud_roomId', roomId);
       setGameMode('multiplayer');
       setShowMultiplayerModal(null);
-      setIsInitialized(true);
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message || "Failed to join multiplayer room");
+    } catch (err: any) {
+      alert(err.message || String(err));
     }
+  };
+
+  useEffect(() => {
+    localStorage.setItem('aimud_gameMode', gameMode);
+    if (gameMode === 'singleplayer') {
+      syncFiles();
+      if (fileSystem.list().length === 0) {
+        setNarrative([{
+          id: 'init',
+          text: 'Welcome to Aifinity. Enter a scenario prompt to begin (e.g., "A cyberpunk detective in Neo-Tokyo")',
+          type: 'system'
+        }]);
+      } else {
+        setIsInitialized(true);
+        setNarrative(prev => {
+          if (prev.length > 0 && prev[prev.length - 1].id.startsWith('resume')) {
+            return prev;
+          }
+          return [...prev, {
+            id: 'resume-' + Date.now(),
+            text: 'Session Resumed. Check logs for last state.',
+            type: 'system'
+          }];
+        });
+      }
+    } else if (gameMode === 'multiplayer' && !multiplayerService) {
+      // Try to restore multiplayer session
+      const savedRoomId = localStorage.getItem('aimud_roomId');
+      const savedUsername = currentUser ? currentUser.username : localStorage.getItem('aimud_username');
+      if (savedRoomId && savedUsername) {
+        handleJoinGame(savedRoomId, savedUsername);
+      } else {
+        setGameMode('singleplayer');
+      }
+    }
+
+    if (!isInitialized || (gameMode === 'multiplayer' && roomState?.gameState === 'waiting_for_world')) {
+      setRecommendations([]);
+    }
+  }, [gameMode, isInitialized, roomState?.gameState]);
+
+  const handleHostGame = async (hostUsername?: string) => {
+    const effectiveHost = currentUser ? currentUser.username : (hostUsername || getMultiplayerUsername([]));
+    setUsername(effectiveHost);
+    localStorage.setItem('aimud_username', effectiveHost);
+    const ms = initMultiplayerService();
+    fileSystem.clear();
+    const roomId = await ms.createRoom(
+      effectiveHost,
+      currentUser ? { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName } : undefined
+    );
+    localStorage.setItem('aimud_roomId', roomId);
+    setGameMode('multiplayer');
+    setShowMultiplayerModal(null);
+    setNarrative([{
+      id: 'init',
+      text: `Hosting Room: ${roomId}. Enter world description to start adventure....`,
+      type: 'system'
+    }]);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logOut();
+      setCurrentUser(null);
+      setActionStatus(ActionLimitService.getActionStatus(null, guestId));
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
+  const clearSession = () => {
+    fileSystem.clear();
+    setNarrative([{
+      id: 'init',
+      text: 'You left the session. Enter a scenario prompt to begin.',
+      type: 'system'
+    }]);
+    setUpdates([]);
+    setRecommendations([]);
+    setGameOver(false);
+    setIsInitialized(false);
+    setExpandedFile(null);
+    setShowCharacterCreation(false);
+    setRoomState(null);
+    syncFiles();
+    localStorage.removeItem('aimud_narrative');
+    localStorage.removeItem('aimud_updates');
+    localStorage.removeItem('aimud_recommendations');
+    localStorage.removeItem('aimud_roomId');
+    setGameMode('singleplayer');
   };
 
   const handleLeaveGame = async () => {
@@ -398,33 +480,62 @@ function App() {
     clearSession();
   };
 
-  const handleAction = async (text: string) => {
-    // 1. Quota Verification & Consumption
-    const quotaCheck = actionQuotaService.canPerformAction();
-    if (!quotaCheck.allowed) {
-      setHighlightActionExhausted(true);
-      setPricingInitialTab('pricing');
-      setIsPricingModalOpen(true);
-      setNarrative(prev => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          text: quotaCheck.reason === 'guest_limit_reached'
-            ? `[GUEST TRIAL LIMIT]: You have used all 3 free guest actions! Create a free account or log in to get 20 daily free actions (+10 Beta Tester Bonus), or play with your personal Gemini API key.`
-            : `[SYSTEM QUOTA LIMIT]: You have reached your daily free action limit. You can continue playing by entering your free Gemini API key, purchasing an action pack, or subscribing to an Adventurer/Legendary Pass.`,
-          type: 'system'
-        }
-      ]);
-      return;
+  const handleLoadAdventure = (adv: SavedAdventure) => {
+    fileSystem.clear();
+    if (adv.files) {
+      Object.entries(adv.files).forEach(([k, v]) => fileSystem.write(k, v));
     }
+    setNarrative(adv.narrative || []);
+    setIsInitialized(true);
+    setGameOver(false);
+    syncFiles();
+    localStorage.setItem('aimud_narrative', JSON.stringify(adv.narrative || []));
+    setExpandedFile(null);
+  };
 
-    // Consume 1 action
-    const consumed = actionQuotaService.consumeAction();
-    if (!consumed) {
-      setHighlightActionExhausted(true);
-      setIsPricingModalOpen(true);
+  const handlePlayCommunityAdventure = async (adv: CommunityAdventure) => {
+    if (adv.shareType === 'full' && adv.files && adv.narrative) {
+      fileSystem.clear();
+      Object.entries(adv.files).forEach(([k, v]) => fileSystem.write(k, v));
+      setNarrative(adv.narrative);
+      setIsInitialized(true);
+      setGameOver(false);
+      syncFiles();
+      localStorage.setItem('aimud_narrative', JSON.stringify(adv.narrative));
+      setExpandedFile(null);
+    } else if (adv.shareType === 'initial_generation' && adv.initialAiGeneration) {
+      fileSystem.clear();
+      if (adv.files) {
+        Object.entries(adv.files).forEach(([k, v]) => fileSystem.write(k, v));
+      }
+      const initialNarrative: NarrativeEntry[] = [
+        { id: Date.now() + '-user', text: adv.startingPrompt, type: 'user' },
+        { id: Date.now() + '-ai', text: adv.initialAiGeneration, type: 'ai' }
+      ];
+      setNarrative(initialNarrative);
+      setIsInitialized(true);
+      setGameOver(false);
+      syncFiles();
+      localStorage.setItem('aimud_narrative', JSON.stringify(initialNarrative));
+      setExpandedFile(null);
+    } else {
+      fileSystem.clear();
+      syncFiles();
+      setIsInitialized(false);
+      setGameOver(false);
+      setExpandedFile(null);
+      await handleAction(adv.startingPrompt);
+    }
+  };
+
+  const handleAction = async (text: string) => {
+    // Action Limit Verification
+    const actionRes = await ActionLimitService.consumeAction(currentUser, guestId);
+    if (!actionRes.allowed) {
+      setIsActionLimitModalOpen(true);
       return;
     }
+    refreshActionStatus();
 
     if (gameMode === 'singleplayer') {
       updateProcessing(1);
@@ -434,15 +545,11 @@ function App() {
       try {
         let result;
         if (!isInitialized) {
-          result = await aiEngine.initialize(text, singleplayerName);
+          result = await aiEngine.initialize(text, effectiveSingleplayerName);
           setIsInitialized(true);
-          if (result?.narrative) {
-            setInitialAIGeneration(result.narrative);
-            localStorage.setItem('aimud_initial_generation', result.narrative);
-          }
         } else {
           const mapScreenshot = await mapPanelRef.current?.captureScreenshot() || undefined;
-          result = await aiEngine.processAction(text, singleplayerName, mapScreenshot);
+          result = await aiEngine.processAction(text, effectiveSingleplayerName, mapScreenshot);
         }
 
         if (result) {
@@ -509,7 +616,7 @@ function App() {
       const isSinglePlayerSetup = gameMode === 'singleplayer' && !isInitialized;
       const isMultiplayerSetup = gameMode === 'multiplayer' && roomState?.gameState === 'waiting_for_world' && isHost;
 
-      if ((isSinglePlayerSetup || isMultiplayerSetup) && recommendations.length === 0) {
+      if ((isSinglePlayerSetup || isMultiplayerSetup) && (recommendations || []).length === 0) {
         if (isSinglePlayerSetup) {
           setRecommendations(SuggestionGenerator.generateSinglePlayer());
         } else {
@@ -517,7 +624,7 @@ function App() {
         }
       }
     }
-  }, [gameMode, isInitialized, roomState?.gameState, isHost, autoRecommendationsEnabled, showCharacterCreation, recommendations.length]);
+  }, [gameMode, isInitialized, roomState?.gameState, isHost, autoRecommendationsEnabled, showCharacterCreation, recommendations?.length || 0]);
 
   const handleReferenceClick = (ref: string) => {
     const filename = fileSystem.findFileByReference(ref);
@@ -545,152 +652,12 @@ function App() {
       localStorage.removeItem('aimud_narrative');
       localStorage.removeItem('aimud_updates');
       localStorage.removeItem('aimud_recommendations');
-      localStorage.removeItem('aimud_initial_generation');
-      setInitialAIGeneration('');
     }
     setIsResetModalOpen(false);
   };
 
-  // Saved adventure helper
-  const handleSaveCurrentAdventure = () => {
-    const userPrompt = narrative.find(n => n.type === 'user')?.text || '';
-    const title = userPrompt.slice(0, 60) || 'Unnamed Adventure';
-    const firstAi = initialAIGeneration || narrative.find(n => n.type === 'ai')?.text || '';
-    const adv: SavedAdventure = {
-      id: 'adv_' + Date.now(),
-      title,
-      savedAt: Date.now(),
-      scenarioPrompt: userPrompt || 'An epic adventure in Aifinity.',
-      fileSystemState: fileSystem.exportState(),
-      narrative: narrative,
-      updates: updates,
-      initialGeneration: firstAi,
-      worldTime: worldTime || parseActiveWorldTime(fileSystem.read('WorldTime.txt')) || 'Unknown'
-    };
-
-    const res = actionQuotaService.saveCurrentAdventure(adv);
-    if (!res.success) {
-      alert(res.error);
-      setIsPricingModalOpen(true);
-      setPricingInitialTab('subscriptions');
-    } else {
-      alert(`Adventure "${title}" saved successfully!`);
-      setIsSavedAdventuresModalOpen(false);
-    }
-  };
-
-  const handleLoadSavedAdventure = (adv: SavedAdventure) => {
-    if (adv.fileSystemState) {
-      fileSystem.importState(adv.fileSystemState);
-    }
-    if (adv.narrative) {
-      setNarrative(adv.narrative);
-    }
-    if (adv.initialGeneration) {
-      setInitialAIGeneration(adv.initialGeneration);
-      localStorage.setItem('aimud_initial_generation', adv.initialGeneration);
-    }
-    syncFiles();
-    setIsInitialized(true);
-    setIsSavedAdventuresModalOpen(false);
-    navigateTo('game');
-  };
-
-  const handleLoadFromCommunity = (prompt: string, fullState?: any) => {
-    if (fullState && fullState.fileSystemState) {
-      fileSystem.importState(fullState.fileSystemState);
-      if (fullState.narrative) {
-        setNarrative(fullState.narrative);
-      }
-      syncFiles();
-      setIsInitialized(true);
-    } else {
-      handleReset();
-      setTimeout(() => {
-        handleAction(prompt);
-      }, 150);
-    }
-    navigateTo('game');
-  };
-
-  // Remaining free actions calculation (guest: max 3 or less; registered: dailyAllowance)
-  const remainingFreeActions = quotaState.isGuest
-    ? Math.max(0, 3 - quotaState.guestActionsUsed)
-    : Math.max(0, quotaState.dailyAllowance - quotaState.dailyUsed);
-
-  // Router view
-  if (currentRoute === 'welcome') {
-    return (
-      <>
-        <WelcomePage
-          onEnterGame={handleEnterFromWelcome}
-          onOpenAuth={(tab) => {
-            setAuthModalTab(tab || 'login');
-            setIsAuthModalOpen(true);
-          }}
-          onOpenPricing={() => {
-            setPricingInitialTab('pricing');
-            setIsPricingModalOpen(true);
-          }}
-          onOpenCommunity={() => navigateTo('community')}
-        />
-        <AuthModal
-          isOpen={isAuthModalOpen}
-          onClose={() => setIsAuthModalOpen(false)}
-          initialTab={authModalTab}
-          onResetData={() => {
-            setIsAuthModalOpen(false);
-            setIsResetModalOpen(true);
-          }}
-        />
-        <PricingModal
-          isOpen={isPricingModalOpen}
-          onClose={() => {
-            setIsPricingModalOpen(false);
-            setHighlightActionExhausted(false);
-          }}
-          initialTab={pricingInitialTab}
-          highlightActionExhausted={highlightActionExhausted}
-        />
-      </>
-    );
-  }
-
-  if (currentRoute === 'community') {
-    const currentAdventureSnapshot: SavedAdventure | null = narrative.length > 0 ? {
-      id: 'current_active_adv',
-      title: narrative.find(n => n.type === 'user')?.text?.slice(0, 60) || 'Current Adventure',
-      savedAt: Date.now(),
-      scenarioPrompt: narrative.find(n => n.type === 'user')?.text || 'Current Active Adventure',
-      fileSystemState: fileSystem.exportState(),
-      narrative: narrative,
-      updates: updates,
-      initialGeneration: initialAIGeneration || narrative.find(n => n.type === 'ai')?.text || '',
-      worldTime: worldTime || parseActiveWorldTime(fileSystem.read('WorldTime.txt')) || 'Unknown'
-    } : null;
-
-    return (
-      <>
-        <CommunityAdventures
-          onLoadAdventure={handleLoadFromCommunity}
-          onOpenPricing={() => {
-            setPricingInitialTab('subscriptions');
-            setIsPricingModalOpen(true);
-          }}
-          onBackToGame={() => navigateTo('game')}
-          currentAdventure={currentAdventureSnapshot}
-        />
-        <PricingModal
-          isOpen={isPricingModalOpen}
-          onClose={() => {
-            setIsPricingModalOpen(false);
-            setHighlightActionExhausted(false);
-          }}
-          initialTab={pricingInitialTab}
-          highlightActionExhausted={highlightActionExhausted}
-        />
-      </>
-    );
+  if (currentPath === '/welcome') {
+    return <WelcomePage onEnterGame={handleEnterGame} />;
   }
 
   return (
@@ -701,9 +668,13 @@ function App() {
           onJoinGame={handleJoinGame}
           onCancel={() => setShowMultiplayerModal(null)}
           initialMode={showMultiplayerModal}
-          onOpenAuth={(tab) => {
-            setAuthModalTab(tab || 'login');
-            setIsAuthModalOpen(true);
+          defaultUsername={getMultiplayerUsername(roomState?.players || [])}
+          currentUser={currentUser}
+          guestName={guestName}
+          guestId={guestId}
+          onOpenMarket={(tab) => {
+            setMarketInitialTab(tab || 'packs');
+            setIsMarketOpen(true);
           }}
         />
       )}
@@ -762,7 +733,7 @@ function App() {
         setExpandedFile={setExpandedFile}
         gameMode={gameMode}
         roomState={roomState}
-        username={effectiveUsername}
+        username={activeGameUsername}
         onKickPlayer={(user) => {
           if (multiplayerService) {
             const userLower = user.toLowerCase();
@@ -791,81 +762,171 @@ function App() {
         onJoinClick={() => setShowMultiplayerModal('join')}
         syncCount={syncCount}
         mapPanelRef={mapPanelRef}
-        onOpenWelcome={() => navigateTo('welcome')}
-        onOpenAuth={(tab) => {
-          setAuthModalTab(tab || 'login');
-          setIsAuthModalOpen(true);
+        currentUser={currentUser}
+        guestName={guestName}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onOpenGuestName={() => setIsGuestNameModalOpen(true)}
+        onLogout={handleLogout}
+        onNavigateWelcome={() => {
+          window.history.pushState({}, '', '/welcome');
+          setCurrentPath('/welcome');
         }}
-        onOpenPricing={() => {
-          setPricingInitialTab('pricing');
-          setIsPricingModalOpen(true);
+        actionStatus={actionStatus}
+        onOpenMarket={(tab) => {
+          setMarketInitialTab(tab || 'packs');
+          setIsMarketOpen(true);
         }}
-        onOpenSavedAdventures={() => setIsSavedAdventuresModalOpen(true)}
-        onOpenCommunity={() => navigateTo('community')}
+        onOpenAccount={() => setIsAccountModalOpen(true)}
+        onOpenAdventures={() => setIsAdventuresModalOpen(true)}
+        onOpenCommunity={() => setIsCommunityModalOpen(true)}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
-        <div className="bg-neutral-900 border-b border-neutral-800 px-3 py-1.5 text-xs font-mono shadow-lg z-10 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            {/* Quick Account Profile Button */}
+        {/* Main Game Top Bar */}
+        <div className="bg-neutral-900 border-b border-neutral-800 px-3 py-2 text-xs font-mono shadow-lg z-10 flex justify-between items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Welcome Page Button on Main Game Page */}
             <button
+              id="welcome-page-top-btn"
               onClick={() => {
-                setAuthModalTab('login');
-                setIsAuthModalOpen(true);
+                window.history.pushState({}, '', '/welcome');
+                setCurrentPath('/welcome');
               }}
-              className="text-[11px] font-mono flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-950 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 transition-colors"
-              title="Manage Account / Guest Name"
+              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Go to Welcome Page"
             >
-              <User size={12} className={quotaState.monthlyPlan === 'infinite' ? 'text-amber-400 fill-amber-400/30' : authSession.type === 'registered' ? 'text-emerald-400' : 'text-amber-400'} />
-              <span className={`max-w-[110px] truncate ${quotaState.monthlyPlan === 'infinite' ? 'text-amber-300 font-bold drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]' : ''}`}>
-                {effectiveUsername}
-              </span>
+              <Compass size={13} className="text-blue-400" />
+              <span className="font-semibold">Welcome Page</span>
             </button>
 
-            {/* Quick Quota Pill */}
+            {/* Quick Navigation: Adventures, Community, Market */}
             <button
-              onClick={() => {
-                setPricingInitialTab('pricing');
-                setIsPricingModalOpen(true);
-              }}
-              className="text-[11px] font-mono flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 transition-colors"
-              title="View Action Quotas & Aifinity Market"
+              id="top-adventures-btn"
+              onClick={() => setIsAdventuresModalOpen(true)}
+              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="View and manage saved adventures"
             >
-              <Zap size={12} className={remainingFreeActions > 0 ? "text-amber-400" : "text-red-400"} />
-              <span className="hidden sm:inline text-neutral-400">Actions:</span>
-              <span className={remainingFreeActions > 0 ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
-                {quotaState.hasCustomKey ? 'Custom API Key' : quotaState.monthlyPlan === 'infinite' ? '∞ Infinite' : quotaState.isGuest ? `${remainingFreeActions}/3 (Guest)` : `${remainingFreeActions}/${quotaState.dailyAllowance}`}
-              </span>
-              {quotaState.purchasedBalance > 0 && !quotaState.hasCustomKey && quotaState.monthlyPlan !== 'infinite' && (
-                <span className="text-blue-400 text-[10px]">+{quotaState.purchasedBalance}</span>
+              <Bookmark size={13} className="text-blue-400" />
+              <span>Adventures</span>
+            </button>
+
+            <button
+              id="top-community-btn"
+              onClick={() => setIsCommunityModalOpen(true)}
+              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Browse community adventures"
+            >
+              <Globe size={13} className="text-emerald-400" />
+              <span>Community</span>
+            </button>
+
+            <button
+              id="top-market-btn"
+              onClick={() => {
+                setMarketInitialTab('packs');
+                setIsMarketOpen(true);
+              }}
+              className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/40 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Aifinity Market: Buy actions, upgrade tier, or connect custom API key"
+            >
+              <ShoppingCart size={13} className="text-amber-400" />
+              <span className="font-bold">Market</span>
+              {actionStatus?.isUnlimited ? (
+                <span className="text-[10px] bg-amber-500/20 text-amber-200 px-1.5 py-0.2 rounded font-sans flex items-center gap-0.5">
+                  <Zap size={9} /> Unlimited
+                </span>
+              ) : actionStatus?.isGuest ? (
+                <span className="text-[10px] bg-amber-950/70 border border-amber-800/60 text-amber-300 px-1.5 py-0.2 rounded font-sans">
+                  {actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3} Guest Free
+                </span>
+              ) : (
+                <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
+                  {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20} Free
+                  {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
+                </span>
               )}
             </button>
 
-            <span className="text-neutral-700 hidden md:inline">|</span>
-            <span className="text-blue-400 tracking-widest hidden md:inline">{worldTime || "TIME: UNKNOWN"}</span>
+            <span className="hidden sm:inline text-neutral-600">|</span>
+            <span className="text-blue-400 tracking-widest">{worldTime || "TIME: UNKNOWN"}</span>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              onClick={() => setIsSavedAdventuresModalOpen(true)}
-              className="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-neutral-950 hover:bg-neutral-800 text-emerald-300 border border-neutral-800 transition-colors"
-              title="Saved Adventures"
-            >
-              <Bookmark size={12} className="text-emerald-400" />
-              <span className="hidden sm:inline">Adventures</span>
-            </button>
-
-            <button
-              onClick={() => navigateTo('community')}
-              className="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-neutral-950 hover:bg-neutral-800 text-purple-300 border border-neutral-800 transition-colors"
-              title="Community Adventures"
-            >
-              <Share2 size={12} className="text-purple-400" />
-              <span className="hidden sm:inline">Community</span>
-            </button>
-
+          <div className="flex items-center gap-2">
             {gameMode === 'multiplayer' && roomState && (
-              <span className="text-emerald-400 text-[11px]">Room: {roomState.id}</span>
+              <span className="text-emerald-400 text-[11px]">
+                Room: {roomState.id} | {(roomState.players || []).filter((p: any) => p.status === 'active').length} Players
+              </span>
+            )}
+
+            {currentUser ? (
+              <div className="flex items-center gap-2 bg-neutral-950 px-2.5 py-1 rounded border border-neutral-700 text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <GoldenName
+                  name={currentUser.username}
+                  role={currentUser.role}
+                  showGlowingName={currentUser.showGlowingName}
+                  isGolden={currentUser.tier === 'legendary'}
+                  className="font-bold text-white"
+                />
+                <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-semibold ${
+                  currentUser.tier === 'legendary'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5'
+                    : currentUser.tier === 'adventurer'
+                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                      : 'bg-neutral-800 text-neutral-400'
+                }`}>
+                  {currentUser.tier === 'legendary' && <Crown size={9} />}
+                  {currentUser.tier || 'free'}
+                </span>
+                <button
+                  id="top-account-btn"
+                  onClick={() => setIsAccountModalOpen(true)}
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium border flex items-center gap-1 cursor-pointer transition-colors ${
+                    currentUser.role === 'admin'
+                      ? 'bg-sky-950/80 hover:bg-sky-900 border-cyan-400/60 text-cyan-300'
+                      : currentUser.role === 'mod'
+                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-400/60 text-amber-300'
+                      : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200'
+                  }`}
+                  title="Account Settings, Permissions & Profile"
+                >
+                  <User size={10} />
+                  <span>{currentUser.role === 'admin' ? 'Account (Admin)' : currentUser.role === 'mod' ? 'Account (Mod)' : 'Account'}</span>
+                </button>
+                <button
+                  id="top-logout-btn"
+                  onClick={handleLogout}
+                  className="text-neutral-400 hover:text-red-400 ml-0.5 text-[10px] underline cursor-pointer"
+                  title="Log out and return to Guest"
+                >
+                  Log Out
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 bg-neutral-950 px-2 py-1 rounded border border-neutral-800 text-[11px]">
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <span className="text-amber-300">
+                    {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
+                  </span>
+                  <button
+                    id="top-change-guest-name-btn"
+                    onClick={() => setIsGuestNameModalOpen(true)}
+                    className="text-neutral-400 hover:text-amber-300 ml-1 text-[10px] underline cursor-pointer"
+                    title="Change guest temporary name"
+                  >
+                    {guestName ? 'Edit' : 'Set Name'}
+                  </button>
+                </div>
+                <button
+                  id="top-open-login-btn"
+                  onClick={() => setIsAuthModalOpen(true)}
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <LogIn size={11} />
+                  <span>Log In / Sign Up</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -875,13 +936,13 @@ function App() {
           onReferenceClick={handleReferenceClick}
           debugMode={debugMode}
           fileSystem={fileSystem}
-          username={effectiveUsername}
+          username={activeGameUsername}
         />
 
         {/* Floating Status Updates */}
-        {!gameOver && updates.length > 0 && (
+        {!gameOver && (updates || []).length > 0 && (
           <div className="absolute bottom-24 right-4 z-20 flex flex-col gap-1 items-end pointer-events-none">
-            {updates.slice(0, 5).map((u, i) => (
+            {(updates || []).slice(0, 5).map((u, i) => (
               <div key={i} className="bg-black/80 border border-neutral-800 px-3 py-1 rounded text-xs font-mono shadow-xl animate-in slide-in-from-right-10 fade-in duration-500">
                 <span className={u.value < 0 ? 'text-red-400' : u.value > 0 ? 'text-green-400' : 'text-yellow-400'}>
                   {u.text}
@@ -909,15 +970,6 @@ function App() {
             (gameMode === 'singleplayer') ||
             (gameMode === 'multiplayer' && (roomState?.gameState === 'playing' || (roomState?.gameState === 'waiting_for_world' && isHost)))
           )) ? recommendations : []}
-          remainingActions={remainingFreeActions}
-          totalAllowance={quotaState.dailyAllowance}
-          purchasedActions={quotaState.purchasedBalance}
-          hasCustomKey={quotaState.hasCustomKey}
-          isInfinite={quotaState.monthlyPlan === 'infinite'}
-          onOpenPricing={() => {
-            setPricingInitialTab('pricing');
-            setIsPricingModalOpen(true);
-          }}
         />
       </div>
 
@@ -929,42 +981,120 @@ function App() {
 
       <AuthModal
         isOpen={isAuthModalOpen}
+        initialTab={authModalInitialTab}
         onClose={() => setIsAuthModalOpen(false)}
-        initialTab={authModalTab}
-        onResetData={() => {
+        onAuthSuccess={(user) => {
+          setCurrentUser(user);
+          setActionStatus(ActionLimitService.getActionStatus(user, guestId));
+          setIsActionLimitModalOpen(false);
+          setIsGuestWelcomeOpen(false);
           setIsAuthModalOpen(false);
-          setIsResetModalOpen(true);
         }}
       />
 
-      <PricingModal
-        isOpen={isPricingModalOpen}
-        onClose={() => {
-          setIsPricingModalOpen(false);
-          setHighlightActionExhausted(false);
-        }}
-        initialTab={pricingInitialTab}
-        highlightActionExhausted={highlightActionExhausted}
-        onOpenAuth={(tab) => {
-          setAuthModalTab(tab || 'signup');
+      <GuestWelcomeModal
+        isOpen={isGuestWelcomeOpen && !currentUser}
+        onClose={() => setIsGuestWelcomeOpen(false)}
+        onOpenAuth={(mode) => {
+          setIsGuestWelcomeOpen(false);
+          setAuthModalInitialTab(mode || 'signup');
           setIsAuthModalOpen(true);
         }}
       />
 
-      <SavedAdventuresModal
-        isOpen={isSavedAdventuresModalOpen}
-        onClose={() => setIsSavedAdventuresModalOpen(false)}
-        onLoadAdventure={handleLoadSavedAdventure}
-        onSaveCurrent={handleSaveCurrentAdventure}
-        onOpenPricing={() => {
-          setPricingInitialTab('subscriptions');
-          setIsPricingModalOpen(true);
+      <GuestNameModal
+        isOpen={isGuestNameModalOpen}
+        onClose={() => setIsGuestNameModalOpen(false)}
+        guestId={guestId}
+        currentGuestName={guestName}
+        onNameSaved={(newName) => {
+          setGuestName(newName);
         }}
-        onOpenCommunity={() => {
-          setIsSavedAdventuresModalOpen(false);
-          navigateTo('community');
+      />
+
+      <MarketModal
+        isOpen={isMarketOpen}
+        onClose={() => setIsMarketOpen(false)}
+        currentUser={currentUser}
+        actionStatus={actionStatus}
+        initialTab={marketInitialTab}
+        onStatusUpdated={refreshActionStatus}
+        onOpenAuth={() => {
+          setIsMarketOpen(false);
+          setAuthModalInitialTab('signup');
+          setIsAuthModalOpen(true);
         }}
-        hasCurrentActiveAdventure={narrative.length > 0}
+        guestId={guestId}
+      />
+
+      <ActionLimitModal
+        isOpen={isActionLimitModalOpen}
+        onClose={() => setIsActionLimitModalOpen(false)}
+        currentUser={currentUser}
+        actionStatus={actionStatus}
+        onOpenAuth={(mode) => {
+          setIsActionLimitModalOpen(false);
+          setAuthModalInitialTab(mode || 'signup');
+          setIsAuthModalOpen(true);
+        }}
+        onOpenMarket={(tab) => {
+          setIsActionLimitModalOpen(false);
+          setMarketInitialTab(tab || 'packs');
+          setIsMarketOpen(true);
+        }}
+        onApiKeySaved={() => {
+          refreshActionStatus();
+          setIsActionLimitModalOpen(false);
+        }}
+      />
+
+      <AdventuresModal
+        isOpen={isAdventuresModalOpen}
+        onClose={() => setIsAdventuresModalOpen(false)}
+        currentUser={currentUser}
+        guestId={guestId}
+        fileSystem={fileSystem}
+        narrative={narrative}
+        onLoadAdventure={handleLoadAdventure}
+        onOpenCommunityShare={(adventure) => {
+          setAdventureToShare(adventure);
+          setIsAdventuresModalOpen(false);
+          setIsCommunityModalOpen(true);
+        }}
+        onOpenMarket={() => {
+          setIsAdventuresModalOpen(false);
+          setMarketInitialTab('subscriptions');
+          setIsMarketOpen(true);
+        }}
+      />
+
+      <CommunityAdventuresModal
+        isOpen={isCommunityModalOpen}
+        onClose={() => {
+          setIsCommunityModalOpen(false);
+          setAdventureToShare(null);
+        }}
+        currentUser={currentUser}
+        fileSystem={fileSystem}
+        narrative={narrative}
+        initialAdventureToShare={adventureToShare}
+        onPlayCommunityAdventure={handlePlayCommunityAdventure}
+        onOpenMarket={() => {
+          setIsCommunityModalOpen(false);
+          setMarketInitialTab('subscriptions');
+          setIsMarketOpen(true);
+        }}
+      />
+
+      <AccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        currentUser={currentUser}
+        actionStatus={actionStatus}
+        onProfileUpdated={(updatedUser) => {
+          setCurrentUser(updatedUser);
+          setActionStatus(ActionLimitService.getActionStatus(updatedUser, guestId));
+        }}
       />
     </div>
   );

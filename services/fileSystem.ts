@@ -137,49 +137,36 @@ export class FileSystem {
 
   findFileByReference(ref: string): string | null {
     if (!ref) return null;
-    let cleanRef = ref.trim().replace(/^\[+|\]+$/g, '').trim();
-    // Strip accidental .txt or .json extensions from search
-    cleanRef = cleanRef.replace(/\.(txt|json)$/i, '').trim();
-    if (!cleanRef) return null;
+    if (this.exists(ref)) return ref;
+    if (this.exists(ref + '.txt')) return ref + '.txt';
 
-    // 1. Direct match on filename
-    if (this.exists(cleanRef)) return cleanRef;
-    if (this.exists(cleanRef + '.txt')) return cleanRef + '.txt';
-    if (this.exists(cleanRef + '.json')) return cleanRef + '.json';
+    const refLower = ref.toLowerCase().trim();
+    const refSlug = refLower.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
-    const refLower = cleanRef.toLowerCase();
-
-    // 2. Case-insensitive exact match on filename (with or without extension)
+    // 1. Case-insensitive exact match on filename
     for (const filename of Object.keys(this.files)) {
       const fLower = filename.toLowerCase();
-      const fBaseLower = fLower.replace(/\.(txt|json)$/, '');
-      if (fBaseLower === refLower || fLower === refLower) {
+      if (fLower === refLower || fLower === `${refLower}.txt`) {
         return filename;
       }
     }
 
-    // 3. Case-insensitive exact match on display name
+    // 2. Case-insensitive exact match on display name
     for (const [filename, meta] of Object.entries(this.metadata)) {
-      if (meta.displayName) {
-        const dLower = meta.displayName.toLowerCase().replace(/\.(txt|json)$/, '').trim();
-        if (dLower === refLower) {
-          return filename;
-        }
+      if (meta.displayName && meta.displayName.toLowerCase() === refLower) {
+        return filename;
       }
     }
 
-    // 4. Slugified match on filename
-    const refSlug = refLower.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-    if (refSlug.length > 2) {
-      for (const filename of Object.keys(this.files)) {
-        const fileSlug = filename.toLowerCase().replace(/\.(txt|json)$/, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-        if (fileSlug === refSlug) {
-          return filename;
-        }
+    // 3. Slugified match on filename
+    for (const filename of Object.keys(this.files)) {
+      const fileSlug = filename.toLowerCase().replace(/\.txt$/, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+      if (fileSlug === refSlug && refSlug.length > 2) {
+        return filename;
       }
     }
 
-    // 5. Safe partial match on display name
+    // 4. Safe partial match on display name
     for (const [filename, meta] of Object.entries(this.metadata)) {
       if (meta.displayName) {
         const displayLower = meta.displayName.toLowerCase();
@@ -190,36 +177,29 @@ export class FileSystem {
       }
     }
 
-    // 6. Safe partial match on filename
+    // 5. Safe partial match on filename (both directions)
     for (const filename of Object.keys(this.files)) {
       const nameWithoutExt = filename.toLowerCase().replace(/\.(txt|json)$/, '');
-      if (refLower.length >= 4 && nameWithoutExt.includes(refLower)) {
+      if (refLower.length >= 3 && nameWithoutExt.includes(refLower)) {
+        return filename;
+      }
+      if (nameWithoutExt.length >= 3 && refLower.includes(nameWithoutExt)) {
+        return filename;
+      }
+      // Check prefix stripped (e.g. character-John -> John)
+      const cleanRef = refLower.replace(/^(character|npc|item|location)-/, '');
+      const cleanName = nameWithoutExt.replace(/^(character|npc|item|location)-/, '');
+      if (cleanRef.length >= 3 && (cleanName.includes(cleanRef) || cleanRef.includes(cleanName))) {
         return filename;
       }
     }
 
-    // 7. Search WITHIN file contents (e.g. unique items, weapons, attacks, abilities, or character names defined within files)
-    if (cleanRef.length >= 2) {
-      const escaped = cleanRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-      // 7a. High-priority structured match within content:
-      // Look for line starting with entity or attack/ability/item/character declaration
-      // e.g. "Full Name: X", "- X:", "AttackName: X", "[X]"
-      const highPriorityRegex = new RegExp(`(?:^|[\\r\\n])[\\s\\-\\*]*(?:Full Name:\\s*)?(?:\\[)?${escaped}(?:\\])?[\\s]*[:\\-\\r\\n]`, 'i');
-      for (const [filename, content] of Object.entries(this.files)) {
-        if (typeof content === 'string' && highPriorityRegex.test(content)) {
-          return filename;
-        }
-      }
-
-      // 7b. General entity name occurrence within content as whole phrase/word boundary
-      if (cleanRef.length >= 3) {
-        const wordBoundaryRegex = new RegExp(`\\b${escaped}\\b`, 'i');
-        for (const [filename, content] of Object.entries(this.files)) {
-          if (typeof content === 'string' && wordBoundaryRegex.test(content)) {
-            return filename;
-          }
-        }
+    // 6. Check file content for exact Full Name or Name match
+    for (const [filename, content] of Object.entries(this.files)) {
+      if (!content || typeof content !== 'string') continue;
+      const contentLower = content.toLowerCase();
+      if (contentLower.includes(`full name: ${refLower}`) || contentLower.includes(`name: ${refLower}`)) {
+        return filename;
       }
     }
 

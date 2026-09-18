@@ -1,25 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import {
-  FileText,
-  ChevronRight,
-  ChevronDown,
-  Activity,
-  Settings,
-  RefreshCw,
-  Users,
-  LogOut,
-  Play,
-  Map as MapIcon,
-  User,
-  Zap,
-  Bookmark,
-  Share2,
-  Crown
-} from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
-import { actionQuotaService } from '../services/actionQuotaService';
+import GoldenName from './GoldenName';
+import { ActionStatus } from '../services/actionLimitService';
 
 interface SidebarProps {
   files: string[];
@@ -43,17 +28,23 @@ interface SidebarProps {
   onJoinClick: () => void;
   syncCount: number;
   mapPanelRef: React.RefObject<MapPanelHandle | null>;
-  onOpenWelcome?: () => void;
-  onOpenAuth?: (tab?: 'login' | 'signup' | 'guest') => void;
-  onOpenPricing?: () => void;
-  onOpenSavedAdventures?: () => void;
+  currentUser?: any;
+  guestName?: string | null;
+  onOpenAuth?: () => void;
+  onOpenGuestName?: () => void;
+  onLogout?: () => void;
+  onNavigateWelcome?: () => void;
+  onOpenAccount?: () => void;
+  actionStatus?: ActionStatus;
+  onOpenMarket?: (tab?: 'packs' | 'subscriptions' | 'apikey') => void;
+  onOpenAdventures?: () => void;
   onOpenCommunity?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-  files,
+  files = [],
   fileSystem,
-  updates,
+  updates = [],
   debugMode,
   onToggleDebug,
   onReset,
@@ -72,12 +63,19 @@ const Sidebar: React.FC<SidebarProps> = ({
   onJoinClick,
   syncCount,
   mapPanelRef,
-  onOpenWelcome,
+  currentUser,
+  guestName,
   onOpenAuth,
-  onOpenPricing,
-  onOpenSavedAdventures,
+  onOpenGuestName,
+  onLogout,
+  onNavigateWelcome,
+  onOpenAccount,
+  actionStatus,
+  onOpenMarket,
+  onOpenAdventures,
   onOpenCommunity
 }) => {
+
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
   const isHost = roomState?.hostUsername === username;
   const expandedRef = useRef<HTMLDivElement>(null);
@@ -85,6 +83,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     if (expandedFile) {
       setActiveTab('files');
+      // Use setTimeout to allow the DOM to update after switching tabs
       setTimeout(() => {
         if (expandedRef.current) {
           expandedRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -97,14 +96,16 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!content) return '';
     let formatted = content;
 
+    // Handle target(...) syntax
     formatted = formatted.replace(/target\((.*?)\)\[(.*?)\]/gs, (match, targets, innerText) => {
       const targetList = targets.split(',').map((t: string) => t.trim());
       if (debugMode || targetList.includes(username)) {
         return `<span class="text-purple-300 bg-purple-900/20 px-1 border border-dashed border-purple-800 rounded" title="Target: ${targets}">${innerText}</span>`;
       }
-      return '';
+      return ''; // Hide completely for non-targets
     });
 
+    // Handle hide[] syntax
     if (debugMode) {
       formatted = formatted.replace(/hide\[(.*?)\]/gs, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded">$1</span>');
     } else {
@@ -129,14 +130,24 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // Filter files based on hide[] and target()
   const visibleFiles = files.filter(filename => {
     if (debugMode) return true;
+
+    // Check if filename has hide[]
     if (filename.includes('hide[')) return false;
 
+    // Check if filename has target()
     const targetMatch = filename.match(/target\((.*?)\)/);
     if (targetMatch) {
       const targetList = targetMatch[1].split(',').map(t => t.trim().toLowerCase());
       if (!targetList.includes(username.toLowerCase())) return false;
+    }
+
+    // Check content for hide[] or target() that might hide the whole file
+    // For simplicity, we just check if the file is a character file of another player
+    if (filename.includes('-') && filename.endsWith('.txt') && !filename.endsWith(`-${username}.txt`) && !isHost) {
+      // Let's rely on the filename containing hide[] or target() for hiding the whole file instead of trying to guess character files.
     }
 
     return true;
@@ -144,111 +155,159 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="w-full md:w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col h-[40vh] md:h-full text-xs md:text-sm font-mono overflow-hidden">
-      {/* Aifinity Brand Header */}
-      <div className="p-2.5 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
-          <span className="font-bold tracking-wider text-sm bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-400 bg-clip-text text-transparent font-sans">
-            Aifinity
-          </span>
-          <span className="text-[9px] text-neutral-500 border border-neutral-800 px-1 py-0.5 rounded font-mono">
-            SANDBOX
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {onOpenWelcome && (
+
+      {/* Account / Guest Status Header */}
+      <div className="p-2.5 bg-neutral-950 border-b border-neutral-800 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${currentUser ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <div className="truncate flex items-center gap-1">
+              {currentUser ? (
+                <GoldenName
+                  name={currentUser.username}
+                  role={currentUser.role}
+                  showGlowingName={currentUser.showGlowingName}
+                  isGolden={currentUser.tier === 'legendary'}
+                  className="font-bold text-gray-200 truncate"
+                />
+              ) : (
+                <span className="font-bold text-gray-200 truncate">
+                  {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
+                </span>
+              )}
+              <span className={`text-[9px] px-1.5 py-0.2 rounded uppercase ml-1 ${
+                currentUser?.tier === 'legendary'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  : currentUser?.tier === 'adventurer'
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                    : 'text-neutral-500'
+              }`}>
+                {currentUser ? (currentUser.tier || 'Account') : 'Guest'}
+              </span>
+            </div>
+          </div>
+          {onNavigateWelcome && (
             <button
-              onClick={onOpenWelcome}
-              className="text-[10px] text-blue-400 hover:text-blue-300 border border-blue-900/60 hover:border-blue-700 bg-blue-950/40 hover:bg-blue-900/60 px-2 py-0.5 rounded transition-all font-mono"
-              title="Open Welcome & Guide"
+              onClick={onNavigateWelcome}
+              className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/60 bg-blue-950/40 px-2 py-0.5 rounded transition-colors shrink-0"
+              title="View Welcome Page"
             >
-              Welcome
+              <Compass size={11} />
+              <span>Welcome</span>
             </button>
           )}
         </div>
-      </div>
 
-      {/* Account / Identity Bar */}
-      {onOpenAuth && (
-        <div className="px-2.5 py-1.5 bg-neutral-950/80 border-b border-neutral-800 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5 min-w-0 pr-2">
-            {actionQuotaService.isGoldenName() ? (
-              <Crown size={12} className="text-amber-400 shrink-0 fill-amber-400/40" />
-            ) : (
-              <User
-                size={12}
-                className={
-                  username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
-                    ? 'text-amber-400 shrink-0'
-                    : 'text-emerald-400 shrink-0'
-                }
-              />
+        {/* Action Status Bar */}
+        {actionStatus && (
+          <div className="p-1.5 bg-neutral-900/90 border border-neutral-800 rounded flex items-center justify-between text-[10px]">
+            <div className="flex items-center gap-1.5 text-neutral-300 truncate">
+              <Zap size={11} className={actionStatus.isUnlimited ? "text-amber-400" : "text-emerald-400"} />
+              {actionStatus.isUnlimited ? (
+                <span className="font-bold text-amber-300">Unlimited Actions</span>
+              ) : actionStatus.isGuest ? (
+                <span>
+                  <strong className="text-amber-400">{(actionStatus.guestActionsRemaining ?? actionStatus.dailyFreeRemaining ?? 0)}/{actionStatus.guestActionsTotal ?? 3}</strong> Guest Actions
+                </span>
+              ) : (
+                <span>
+                  <strong className="text-emerald-400">{(actionStatus.dailyFreeRemaining ?? 0)}/{(actionStatus.dailyFreeTotal ?? 20)}</strong> Free
+                  {(actionStatus.purchasedCredits ?? 0) > 0 && (
+                    <span className="text-amber-400 font-bold ml-1">+{actionStatus.purchasedCredits} Cr</span>
+                  )}
+                </span>
+              )}
+            </div>
+            {onOpenMarket && (
+              <button
+                onClick={() => onOpenMarket('packs')}
+                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-sans font-semibold text-[10px] transition-colors flex items-center gap-1 shrink-0"
+                title="Open Market"
+              >
+                <span>Market</span>
+                <span className="text-[9px] font-bold">+</span>
+              </button>
             )}
-            <span
-              className={`truncate font-mono font-bold text-[11px] ${
-                actionQuotaService.isGoldenName()
-                  ? 'text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]'
-                  : 'text-white'
-              }`}
-              title={username}
-            >
-              {username}
-            </span>
-          {actionQuotaService.getQuotaState().profile?.role === 'admin' && (
-            <span className="text-[9px] bg-indigo-950/80 border border-indigo-500 text-indigo-300 px-1 py-0.5 rounded font-mono flex items-center gap-1 shadow-[0_0_5px_rgba(99,102,241,0.5)]">
-              <Sparkles size={8} className="text-cyan-300" /> Admin
-            </span>
-          )}
-          {actionQuotaService.getQuotaState().profile?.role === 'mod' && (
-            <span className="text-[9px] bg-amber-950/80 border border-amber-500 text-amber-300 px-1 py-0.5 rounded font-mono shadow-[0_0_5px_rgba(245,158,11,0.5)]">
-              Mod
-            </span>
-          )}
-
           </div>
-          <button
-            onClick={() => onOpenAuth('login')}
-            className="text-[10px] text-neutral-400 hover:text-white px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 transition-colors shrink-0"
-          >
-            {username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
-              ? 'Log In'
-              : 'Account'}
-          </button>
-        </div>
-      )}
+        )}
 
-      {/* Action Quota & Adventures Hub Quick Access Buttons */}
-      <div className="grid grid-cols-3 gap-1 p-1.5 bg-black border-b border-neutral-800 text-[10px]">
-        {onOpenPricing && (
-          <button
-            onClick={onOpenPricing}
-            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-amber-300 rounded border border-neutral-800 transition-colors"
-            title="Aifinity Market: Action packs, subscriptions & free key"
-          >
-            <Zap size={11} className="text-amber-400" />
-            <span className="truncate font-bold">Market</span>
-          </button>
-        )}
-        {onOpenSavedAdventures && (
-          <button
-            onClick={onOpenSavedAdventures}
-            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-emerald-300 rounded border border-neutral-800 transition-colors"
-            title="View or save multiple adventure campaigns"
-          >
-            <Bookmark size={11} className="text-emerald-400" />
-            <span className="truncate">Saved</span>
-          </button>
-        )}
-        {onOpenCommunity && (
-          <button
-            onClick={onOpenCommunity}
-            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-purple-300 rounded border border-neutral-800 transition-colors"
-            title="Explore and share community adventures"
-          >
-            <Share2 size={11} className="text-purple-400" />
-            <span className="truncate">Community</span>
-          </button>
-        )}
+        {/* Action Quick Links: Adventures, Community, Market */}
+        <div className="grid grid-cols-3 gap-1 text-[10px]">
+          {onOpenAdventures && (
+            <button
+              onClick={onOpenAdventures}
+              className="bg-neutral-900 hover:bg-neutral-800 text-blue-300 border border-neutral-800 py-1 px-1 rounded flex items-center justify-center gap-1 transition-colors"
+              title="Saved Adventures"
+            >
+              <Bookmark size={11} />
+              <span className="truncate">Adventures</span>
+            </button>
+          )}
+          {onOpenCommunity && (
+            <button
+              onClick={onOpenCommunity}
+              className="bg-neutral-900 hover:bg-neutral-800 text-emerald-300 border border-neutral-800 py-1 px-1 rounded flex items-center justify-center gap-1 transition-colors"
+              title="Community Adventures"
+            >
+              <Globe size={11} />
+              <span className="truncate">Community</span>
+            </button>
+          )}
+          {onOpenMarket && (
+            <button
+              onClick={() => onOpenMarket('packs')}
+              className="bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-neutral-800 py-1 px-1 rounded flex items-center justify-center gap-1 transition-colors"
+              title="Aifinity Market"
+            >
+              <ShoppingCart size={11} />
+              <span className="truncate">Market</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex gap-1.5 text-[10px]">
+          {currentUser ? (
+            <div className="flex gap-1.5 w-full">
+              <button
+                id="sidebar-account-btn"
+                onClick={onOpenAccount}
+                className={`flex-1 py-1 px-2 rounded border font-semibold flex items-center justify-center gap-1 transition-colors truncate ${
+                  currentUser.role === 'admin'
+                    ? 'bg-sky-950/80 hover:bg-sky-900 border-cyan-400/70 text-cyan-300 shadow-[0_0_8px_rgba(56,189,248,0.25)]'
+                    : currentUser.role === 'mod'
+                    ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-400/70 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-blue-300'
+                }`}
+                title="Account Settings & Permissions"
+              >
+                <User size={11} />
+                <span className="truncate">{currentUser.role === 'admin' ? 'Account (Admin)' : currentUser.role === 'mod' ? 'Account (Mod)' : 'Account'}</span>
+              </button>
+              <button
+                onClick={onLogout}
+                className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white py-1 px-2 rounded border border-neutral-700 transition-colors shrink-0"
+                title="Log Out (Switch to Guest)"
+              >
+                Log Out
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={onOpenGuestName}
+                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-amber-300 py-1 px-2 rounded border border-neutral-700 transition-colors truncate"
+              >
+                {guestName ? 'Edit Guest Name' : 'Set Guest Name'}
+              </button>
+              <button
+                onClick={onOpenAuth}
+                className="flex-1 bg-blue-600/80 hover:bg-blue-600 text-white font-semibold py-1 px-2 rounded transition-colors truncate"
+              >
+                Log In / Sign Up
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {gameMode === 'multiplayer' && roomState && (
@@ -267,12 +326,17 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
           <div className="p-2 space-y-1 max-h-32 overflow-y-auto">
-            {roomState.players.map((p: any) => (
+            {(roomState.players || []).map((p: any) => (
               <div key={p.username} className="flex justify-between items-center bg-neutral-800/50 px-2 py-1 rounded">
                 <div className="flex items-center gap-2">
                   <span className={`w-2 h-2 rounded-full ${p.status === 'active' ? 'bg-emerald-500' : 'bg-neutral-600'}`}></span>
                   <span className={p.username === username ? 'text-blue-300 font-bold' : 'text-gray-300'}>
-                    {p.username} {p.username === roomState.hostUsername && '(Host)'}
+                    <GoldenName
+                      name={p.username}
+                      role={p.role}
+                      showGlowingName={p.showGlowingName}
+                      isGolden={p.tier === 'legendary'}
+                    /> {p.username === roomState.hostUsername && '(Host)'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -370,15 +434,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 );
               })}
             </div>
-
+            
             {/* Status Section inside Files Tab */}
             <div className="h-1/3 min-h-[120px] border-t border-neutral-800 flex flex-col bg-neutral-950">
               <div className="p-2 border-b border-neutral-800 bg-neutral-900 text-gray-400 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
                 <Activity size={12} /> Live Status Updates
               </div>
               <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] md:text-xs">
-                {updates.length === 0 && <span className="text-gray-700 italic">No updates...</span>}
-                {updates.map((u, i) => (
+                {(updates || []).length === 0 && <span className="text-gray-700 italic">No updates...</span>}
+                {(updates || []).map((u, i) => (
                   <div key={i} className="mb-1 animate-in fade-in slide-in-from-left-2 duration-300">
                     <span className={
                       u.value < 0 ? 'text-red-400' :
@@ -398,6 +462,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
+
     </div>
   );
 };

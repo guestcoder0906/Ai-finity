@@ -7,6 +7,7 @@ export class MultiplayerService {
   private channel: RealtimeChannel | null = null;
   private roomId: string | null = null;
   private currentUsername: string | null = null;
+  private currentUserMeta: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean } | null = null;
   private syncQueue: Promise<any> = Promise.resolve();
 
   private fileSystem: FileSystem;
@@ -49,15 +50,27 @@ export class MultiplayerService {
     return code;
   }
 
-  async createRoom(username: string): Promise<string> {
+  async createRoom(
+    username: string,
+    playerMeta?: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean }
+  ): Promise<string> {
     const roomId = this.generateRoomCode();
     this.roomId = roomId;
     this.currentUsername = username;
+    this.currentUserMeta = playerMeta || null;
 
     const initialState = {
       id: roomId,
       hostUsername: username,
-      players: [{ username, status: 'active', isReady: false, hasCharacter: false }],
+      players: [{
+        username,
+        status: 'active',
+        isReady: false,
+        hasCharacter: false,
+        tier: playerMeta?.tier,
+        role: playerMeta?.role,
+        showGlowingName: playerMeta?.showGlowingName
+      }],
       gameState: 'waiting_for_world',
       fileSystemState: { files: {}, metadata: {} },
       narrative: [],
@@ -80,7 +93,11 @@ export class MultiplayerService {
     return roomId;
   }
 
-  async joinRoom(roomId: string, username: string): Promise<any> {
+  async joinRoom(
+    roomId: string,
+    username: string,
+    playerMeta?: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean }
+  ): Promise<any> {
     const { data: room, error } = await this.supabase
       .from('rooms')
       .select('state')
@@ -94,6 +111,7 @@ export class MultiplayerService {
     const state = room.state;
     this.roomId = roomId;
     this.currentUsername = username;
+    this.currentUserMeta = playerMeta || null;
 
     await this.setupChannel(roomId, username, false);
     if (state.fileSystemState) {
@@ -170,9 +188,33 @@ export class MultiplayerService {
             });
 
             activeUsernames.forEach((u: string) => {
-              if (!state.players.find((p: any) => p.username.toLowerCase() === u.toLowerCase())) {
-                state.players.push({ username: u, status: 'active', isReady: false, hasCharacter: false });
+              const tracks = (presenceState[u] as any[]) || [];
+              const meta = tracks[0] || {};
+              const existing = state.players.find((p: any) => p.username.toLowerCase() === u.toLowerCase());
+              if (!existing) {
+                state.players.push({
+                  username: u,
+                  status: 'active',
+                  isReady: false,
+                  hasCharacter: false,
+                  role: meta.role,
+                  showGlowingName: meta.showGlowingName,
+                  tier: meta.tier
+                });
                 changed = true;
+              } else {
+                if (meta.role && existing.role !== meta.role) {
+                  existing.role = meta.role;
+                  changed = true;
+                }
+                if (meta.showGlowingName !== undefined && existing.showGlowingName !== meta.showGlowingName) {
+                  existing.showGlowingName = meta.showGlowingName;
+                  changed = true;
+                }
+                if (meta.tier && existing.tier !== meta.tier) {
+                  existing.tier = meta.tier;
+                  changed = true;
+                }
               }
             });
 
@@ -187,7 +229,11 @@ export class MultiplayerService {
 
     await this.channel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        await this.channel?.track({ user: username, online_at: new Date().toISOString() });
+        await this.channel?.track({
+          user: username,
+          online_at: new Date().toISOString(),
+          ...(this.currentUserMeta || {})
+        });
       }
     });
   }

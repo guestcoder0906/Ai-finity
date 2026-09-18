@@ -1,380 +1,150 @@
 import React, { useState, useEffect } from 'react';
-import {
-  ArrowRight,
-  Sparkles,
-  Play,
-  Compass,
-  Shield,
-  BookOpen,
-  Clock,
-  Users,
-  Pause,
-  RotateCcw,
-  User,
-  LogIn,
-  Zap,
-  Bookmark,
-  Share2,
-  Crown
-} from 'lucide-react';
-import { authService, AuthSession } from '../services/authService';
+import { Sparkles, ArrowRight, ShieldCheck, Zap, MessageSquareCode, Clock } from 'lucide-react';
 
 interface WelcomePageProps {
-  onEnterGame: (scenarioPrompt?: string) => void;
-  onOpenAuth?: (tab?: 'login' | 'signup' | 'guest') => void;
-  onOpenPricing?: () => void;
-  onOpenCommunity?: () => void;
+  onEnterGame: () => void;
 }
 
-const PRESET_SCENARIOS = [
-  {
-    id: 'cyberpunk',
-    title: 'Cyberpunk Neo-Tokyo',
-    era: 'Year 2076',
-    prompt: 'A street-level mercenary in the rain-slicked neon alleys of Neo-Tokyo, investigating a stolen corporate prototype cyberdeck.',
-    tag: 'Sci-Fi / Noir'
-  },
-  {
-    id: 'fantasy',
-    title: 'Sunken Citadel of Eldoria',
-    era: 'Year 1024',
-    prompt: 'An arcane scholar traversing the overgrown subterranean chambers of the Sunken Citadel, hunting for forgotten primordial runes.',
-    tag: 'Dark Fantasy'
-  },
-  {
-    id: 'derelict',
-    title: 'Derelict Ship 7',
-    era: 'Deep Orbit 2341',
-    prompt: 'A lone salvage engineer boarding a silent, adrift deep-space hauler whose automated distress beacon suddenly initiated quarantine.',
-    tag: 'Survival Horror'
-  },
-  {
-    id: 'apocalypse',
-    title: 'Dust & Radiation',
-    era: 'Post-Collapse 2108',
-    prompt: 'A hardened scavenger navigating the toxic ruins of an old-world metro line with a faulty geiger counter and a dwindling canteen of water.',
-    tag: 'Post-Apocalyptic'
-  }
-];
-
-export default function WelcomePage({
-  onEnterGame,
-  onOpenAuth,
-  onOpenPricing,
-  onOpenCommunity
-}: WelcomePageProps) {
-  const [countdown, setCountdown] = useState(15);
-  const [isPaused, setIsPaused] = useState(false);
-  const [session, setSession] = useState<AuthSession>(authService.getSession());
-
-  useEffect(() => {
-    const unsub = authService.subscribe(() => {
-      setSession(authService.getSession());
-    });
-    return unsub;
-  }, []);
+export const WelcomePage: React.FC<WelcomePageProps> = ({ onEnterGame }) => {
+  const [countdown, setCountdown] = useState<number>(8);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
 
   useEffect(() => {
     if (isPaused) return;
 
-    if (countdown <= 0) {
+    if (countdown <= 1) {
       onEnterGame();
       return;
     }
 
-    const timer = setInterval(() => {
+    const timer = setTimeout(() => {
       setCountdown(prev => prev - 1);
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => clearTimeout(timer);
   }, [countdown, isPaused, onEnterGame]);
 
-  const currentDisplayName = authService.getSingleplayerName();
-
   return (
-    <div className="fixed inset-0 overflow-y-auto overflow-x-hidden bg-black text-gray-200 font-sans flex flex-col selection:bg-blue-600 selection:text-white z-40">
-      {/* Subtle Background Glows */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-96 bg-gradient-to-b from-blue-900/15 via-indigo-950/10 to-transparent pointer-events-none blur-3xl"></div>
-      <div className="absolute -top-24 right-10 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute top-48 left-10 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
-
-      {/* Top Banner / Navigation */}
-      <header className="sticky top-0 z-40 backdrop-blur-md bg-neutral-950/85 border-b border-neutral-800/80 px-4 py-3 sm:px-8">
-        <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-blue-600 to-cyan-400 flex items-center justify-center font-black text-black shadow-lg shadow-blue-500/20">
-              ∞
-            </div>
-            <div>
-              <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">
-                Aifinity
-              </span>
-              <span className="hidden sm:inline-block ml-2 text-xs px-2 py-0.5 rounded border border-neutral-800 text-neutral-400 font-mono">
-                SANDBOX
-              </span>
-            </div>
+    <div id="welcome-page" className="min-h-screen w-full bg-black text-gray-100 flex flex-col justify-between font-sans selection:bg-blue-600 selection:text-white">
+      {/* Top Navigation */}
+      <header id="welcome-header" className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 font-mono font-bold text-base">
+            A
           </div>
-
-          <div className="flex items-center gap-3">
-            {onOpenCommunity && (
-              <button
-                onClick={onOpenCommunity}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-800 hover:border-neutral-700 bg-neutral-900 text-xs font-mono text-purple-300 hover:text-white transition-colors"
-              >
-                <Share2 size={13} className="text-purple-400" />
-                <span>Community Hub</span>
-              </button>
-            )}
-
-            {onOpenPricing && (
-              <button
-                onClick={onOpenPricing}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-800/60 hover:border-amber-700 bg-amber-950/40 text-xs font-mono text-amber-300 hover:text-white transition-colors"
-              >
-                <Zap size={13} className="text-amber-400" />
-                <span>Pricing & Plans</span>
-              </button>
-            )}
-
-            {/* Account Status Badge */}
-            {onOpenAuth && (
-              <button
-                onClick={() => onOpenAuth(session.type === 'registered' ? 'login' : 'login')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-800 hover:border-neutral-700 bg-neutral-900/80 hover:bg-neutral-800 text-xs font-mono transition-colors"
-                title="Account and Identity Settings"
-              >
-                <User size={13} className={session.type === 'registered' ? 'text-emerald-400' : 'text-amber-400'} />
-                <span className="text-neutral-300 max-w-[120px] truncate">{currentDisplayName}</span>
-                {session.type !== 'registered' && (
-                  <span className="text-[10px] text-blue-400 bg-blue-950/60 px-1 py-0.5 rounded ml-1">
-                    Log In
-                  </span>
-                )}
-              </button>
-            )}
-
-            <div className="hidden md:flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3 py-1.5 rounded-full text-xs font-mono">
-              <span className="relative flex h-2 w-2">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isPaused ? 'bg-amber-400' : 'bg-emerald-400'} opacity-75`}></span>
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${isPaused ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-              </span>
-              {isPaused ? (
-                <span className="text-neutral-400">Auto-redirect paused</span>
-              ) : (
-                <span className="text-neutral-300">
-                  Entering game in <span className="text-blue-400 font-bold">{countdown}s</span>
-                </span>
-              )}
-              <button 
-                onClick={() => setIsPaused(!isPaused)} 
-                className="text-neutral-400 hover:text-white transition-colors ml-1 p-0.5"
-                title={isPaused ? "Resume auto-redirect" : "Pause auto-redirect"}
-              >
-                {isPaused ? <RotateCcw size={13} /> : <Pause size={13} />}
-              </button>
-            </div>
-
-            <button
-              onClick={() => onEnterGame()}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-md shadow-md shadow-blue-600/30 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <span>Play Now</span>
-              <ArrowRight size={14} />
-            </button>
+          <div>
+            <span className="font-mono text-sm tracking-wider font-semibold text-blue-400">AIFINITY</span>
+            <span className="ml-2 text-xs text-neutral-500 font-mono">RPG SANDBOX</span>
           </div>
         </div>
+
+        <button
+          id="enter-game-nav-btn"
+          onClick={onEnterGame}
+          className="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono font-medium rounded border border-blue-500/50 bg-blue-600/20 text-blue-300 hover:bg-blue-600 hover:text-white transition-all cursor-pointer"
+        >
+          <span>Enter Game</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-10 sm:py-16 flex flex-col gap-12 z-10">
-        {/* Hero Section */}
-        <section className="text-center max-w-3xl mx-auto space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-blue-500/30 bg-blue-950/40 text-blue-400 text-xs font-medium font-mono">
-            <Sparkles size={13} className="text-blue-400" />
-            <span>INFINITE AI RPG SANDBOX ENGINE</span>
-          </div>
+      <main id="welcome-main" className="max-w-4xl mx-auto px-6 py-12 flex-1 flex flex-col justify-center">
+        {/* Category Pill */}
+        <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-500/30 bg-blue-950/40 text-blue-400 text-xs font-mono max-w-fit">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Infinite Autonomous AI World Engine</span>
+        </div>
 
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
-            Welcome to <span className="bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-300 bg-clip-text text-transparent">Aifinity</span>
-          </h1>
+        {/* Primary Headline Quote */}
+        <h1 id="welcome-title" className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight mb-6">
+          “Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!”
+        </h1>
 
-          <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-5 sm:p-7 shadow-xl space-y-4">
-            <blockquote className="text-base sm:text-xl font-medium text-neutral-100 italic leading-relaxed">
-              “Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!”
-            </blockquote>
-            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed font-sans">
-              Powered by Google's Gemini models, Aifinity simulates complex worlds with dynamic text files, spatial maps, probability checks, and accurate temporal continuity.
-            </p>
-          </div>
-        </section>
-
-        {/* Pricing, Action Limits & Community Hub Callout */}
-        <section className="p-6 rounded-2xl bg-gradient-to-r from-blue-950/30 via-neutral-900 to-purple-950/30 border border-neutral-800 grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-          <div className="space-y-3 font-mono text-xs">
-            <div className="flex items-center gap-2 text-blue-400 font-bold uppercase tracking-wider">
-              <Zap size={15} />
-              <span>10 Daily Free Actions (20 for Alpha/Beta)</span>
-            </div>
-            <p className="text-neutral-300 font-sans leading-relaxed text-xs">
-              Every day you receive 10 free AI actions refreshed at midnight. When your daily actions are spent, you can continue playing forever with your free Gemini API key, or buy action packs ($2.99–$19.99) and monthly passes ($9.99/mo & $19.99/mo).
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {onOpenPricing && (
-                <button
-                  onClick={onOpenPricing}
-                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded flex items-center gap-1.5 transition-colors shadow"
-                >
-                  <Zap size={13} />
-                  <span>Open Aifinity Market</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-3 font-mono text-xs border-t md:border-t-0 md:border-l border-neutral-800 md:pl-6">
-            <div className="flex items-center gap-2 text-purple-400 font-bold uppercase tracking-wider">
-              <Share2 size={15} />
-              <span>Community Adventures & Multi-Saves</span>
-            </div>
-            <p className="text-neutral-300 font-sans leading-relaxed text-xs">
-              $9.99+ monthly subscribers get permanent access to saving multiple adventures in their Adventures page and posting adventures to the Community Adventures hub!
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {onOpenCommunity && (
-                <button
-                  onClick={onOpenCommunity}
-                  className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-purple-300 rounded border border-neutral-700 flex items-center gap-1.5 transition-colors font-bold"
-                >
-                  <Share2 size={13} />
-                  <span>Open Community Adventures Hub</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
+        {/* Sub-quote */}
+        <div className="border-l-2 border-blue-500/60 pl-4 py-2 mb-8 bg-neutral-900/40 rounded-r">
+          <p id="welcome-subtitle" className="text-lg sm:text-xl text-neutral-200 font-medium">
+            “Setting up and doing actions is as easy as sending a text.”
+          </p>
+        </div>
 
         {/* Feature Highlights Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 hover:border-neutral-700 transition-colors space-y-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-950 border border-blue-800/60 flex items-center justify-center text-blue-400">
-              <Sparkles size={20} />
+        <div id="welcome-features" className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+          <div className="p-4 rounded-lg bg-neutral-900/60 border border-neutral-800">
+            <div className="flex items-center gap-2 text-blue-400 mb-2 font-mono text-xs font-semibold uppercase tracking-wider">
+              <Zap className="w-4 h-4" />
+              <span>Instant Setup</span>
             </div>
-            <h3 className="font-bold text-white text-base">Perception-Based Expansion</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Locations, NPCs, and items are generated dynamically as real text files only as your character explores, expanding infinitely without artificial boundaries.
+              Type any starting prompt or premise. Aifinity generates the physics, rules, starting scenario, and character attributes in seconds.
             </p>
           </div>
 
-          <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 hover:border-neutral-700 transition-colors space-y-3">
-            <div className="w-10 h-10 rounded-lg bg-indigo-950 border border-indigo-800/60 flex items-center justify-center text-indigo-400">
-              <Clock size={20} />
+          <div className="p-4 rounded-lg bg-neutral-900/60 border border-neutral-800">
+            <div className="flex items-center gap-2 text-emerald-400 mb-2 font-mono text-xs font-semibold uppercase tracking-wider">
+              <MessageSquareCode className="w-4 h-4" />
+              <span>Natural Text Actions</span>
             </div>
-            <h3 className="font-bold text-white text-base">Mathematical Physics & Time</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Every action calculates real-world time elapsed, biological stamina, and probability checks. Supports seamless temporal displacement and time-travel epochs.
+              No complex syntax or cumbersome menus. Type what your character says or does naturally just like sending a text message.
             </p>
           </div>
 
-          <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 hover:border-neutral-700 transition-colors space-y-3">
-            <div className="w-10 h-10 rounded-lg bg-cyan-950 border border-cyan-800/60 flex items-center justify-center text-cyan-400">
-              <Users size={20} />
+          <div className="p-4 rounded-lg bg-neutral-900/60 border border-neutral-800">
+            <div className="flex items-center gap-2 text-purple-400 mb-2 font-mono text-xs font-semibold uppercase tracking-wider">
+              <ShieldCheck className="w-4 h-4" />
+              <span>Accurate World State</span>
             </div>
-            <h3 className="font-bold text-white text-base">Instant Multiplayer Synchronization</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Jump in solo as a Guest or registered account, or share a 5-letter room code to embark with companions in a fully synchronized cooperative world.
+              Real-time persistent state files, dynamic maps, probability checks, and temporal consistency ensure complete narrative integrity.
             </p>
           </div>
-        </section>
+        </div>
 
-        {/* Pre-configured Starter Scenarios */}
-        <section id="scenarios" className="space-y-6 scroll-mt-20">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 pb-3">
-            <div>
-              <h2 className="text-xl font-bold text-white">Instant-Launch Scenarios</h2>
-              <p className="text-xs text-neutral-400">Select any world to initialize the adventure with one click:</p>
+        {/* Call to Action and Redirect Timer Bar */}
+        <div id="welcome-action-box" className="p-6 rounded-lg bg-neutral-900/80 border border-neutral-700/80 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col gap-1 text-center sm:text-left">
+            <div className="flex items-center justify-center sm:justify-start gap-2 text-xs font-mono text-neutral-400">
+              <Clock className="w-3.5 h-3.5 text-blue-400" />
+              {isPaused ? (
+                <span>Auto-redirect paused.</span>
+              ) : (
+                <span>
+                  Redirecting to game in <strong className="text-blue-400 font-bold">{countdown}s</strong>...
+                </span>
+              )}
             </div>
-            <span className="text-xs font-mono text-blue-400">Click any card to start</span>
+            <p className="text-xs text-neutral-500">
+              Ready to embark on your adventure? Jump straight into the simulation.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {PRESET_SCENARIOS.map((scenario) => (
-              <div
-                key={scenario.id}
-                onClick={() => onEnterGame(scenario.prompt)}
-                className="group relative bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-blue-500/60 rounded-xl p-5 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-4 hover:shadow-lg hover:shadow-blue-950/30"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-blue-400 font-semibold">{scenario.era}</span>
-                    <span className="bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded border border-neutral-700 text-[10px]">
-                      {scenario.tag}
-                    </span>
-                  </div>
-                  <h3 className="text-base font-bold text-white group-hover:text-blue-300 transition-colors">
-                    {scenario.title}
-                  </h3>
-                  <p className="text-xs text-neutral-400 leading-relaxed">
-                    {scenario.prompt}
-                  </p>
-                </div>
-                <div className="flex items-center text-xs font-mono text-blue-400 group-hover:text-blue-300 gap-1 mt-1">
-                  <span>Initialize this World</span>
-                  <ArrowRight size={13} className="transition-transform group-hover:translate-x-1" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Game Modes & How To Play */}
-        <section className="bg-neutral-900/40 border border-neutral-800/80 rounded-xl p-6 space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-400 font-mono flex items-center gap-2">
-            <Clock size={15} />
-            <span>How Aifinity Operates</span>
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-neutral-300">
-            <div className="space-y-1.5">
-              <span className="font-semibold text-white flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                Singleplayer Mode
-              </span>
-              <p className="text-neutral-400 leading-relaxed pl-3">
-                Experience infinite branching storylines tailored specifically to your character's choices, inventory, and skills with automatic intelligent suggestions.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <span className="font-semibold text-white flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                Multiplayer Mode
-              </span>
-              <p className="text-neutral-400 leading-relaxed pl-3">
-                Host a room code to embark with friends! Each player creates their custom character file, submits actions, and co-exists in a shared synchronized world state.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Bottom Redirect Action */}
-        <div className="text-center py-4 space-y-3">
-          <button
-            onClick={() => onEnterGame()}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-8 py-3.5 rounded-lg shadow-xl shadow-blue-600/30 transition-all transform hover:scale-[1.02] text-sm"
-          >
-            <span>Proceed to Aifinity Game Sandbox</span>
-            <ArrowRight size={16} />
-          </button>
-          <div>
-            <span className="text-xs text-neutral-500 font-mono">
-              Ready to explore? You can return to this page anytime via the Welcome button in the game.
-            </span>
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <button
+              id="pause-redirect-btn"
+              onClick={() => setIsPaused(!isPaused)}
+              className="flex-1 sm:flex-none px-3 py-2 text-xs font-mono text-neutral-400 hover:text-white border border-neutral-800 hover:border-neutral-700 rounded transition-colors"
+            >
+              {isPaused ? 'Resume Redirect' : 'Stay on Page'}
+            </button>
+            <button
+              id="launch-game-btn"
+              onClick={onEnterGame}
+              className="flex-1 sm:flex-none px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs font-semibold tracking-wider rounded flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition-all cursor-pointer"
+            >
+              <span>ENTER AIFINITY</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-neutral-900 bg-neutral-950 py-6 px-4 text-center text-xs text-neutral-500 font-mono">
-        <span>Aifinity © 2026 • Infinite AI RPG Sandbox Engine</span>
+      <footer id="welcome-footer" className="border-t border-neutral-900 py-4 px-6 text-center text-xs text-neutral-600 font-mono">
+        Aifinity &copy; {new Date().getFullYear()} &mdash; Infinite AI RPG Sandbox Engine
       </footer>
     </div>
   );
-}
+};
+
+export default WelcomePage;

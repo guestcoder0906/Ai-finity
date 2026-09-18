@@ -10,7 +10,7 @@ interface NarrativeWindowProps {
   username: string;
 }
 
-const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history, onReferenceClick, debugMode, username }) => {
+const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onReferenceClick, debugMode, username }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,11 +70,10 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history, onReferenceC
       </span>`;
     });
 
-    // 5. Handle [Object] links (render cleanly without .txt or .json extensions)
+    // 5. Handle [Object] links
     processed = processed.replace(/(<[^>]+>)|\[([^\]]+)\]/g, (match, htmlTag, ref) => {
       if (htmlTag) return htmlTag;
-      const cleanRef = ref.replace(/\.(txt|json)$/i, '').trim();
-      return `<span class="text-yellow-400 hover:text-yellow-200 hover:underline cursor-pointer" data-ref="${cleanRef}">${cleanRef}</span>`;
+      return `<span class="text-yellow-400 hover:text-yellow-200 hover:underline cursor-pointer" data-ref="${ref}">${ref}</span>`;
     });
 
     return processed;
@@ -90,14 +89,14 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history, onReferenceC
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono bg-black min-h-0" onClick={handleClick}>
-      {history.length === 0 && (
+      {(history || []).length === 0 && (
         <div className="text-green-500 italic flex flex-col gap-2">
           <span>Initializing system connection...</span>
           <span>Enter world description to start adventure....</span>
         </div>
       )}
 
-      {history.map((entry) => {
+      {(history || []).map((entry) => {
         const parsedHtml = parseText(entry.text);
         // If the entire entry is hidden (e.g., only contained a target() not meant for us), don't render an empty div
         if (!parsedHtml.trim() && entry.type !== 'user') return null;

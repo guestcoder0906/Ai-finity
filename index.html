@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Aifinity (Infinite RPG)</title>
-    <meta name="description" content="Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!" />
-    <meta property="og:title" content="Aifinity (Infinite AI RPG Sandbox)" />
-    <meta property="og:description" content="Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!" />
-    <meta property="og:type" content="website" />
+    <title>Aifinity</title>
+    <meta name="description" content="An infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way! Setting up and doing actions is as easy as sending a text." />
+    <meta property="og:title" content="Aifinity" />
+    <meta property="og:description" content="An infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way! Setting up and doing actions is as easy as sending a text." />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script async src="https://pay.google.com/gp/p/js/pay.js"></script>
     <style>
       /* Custom scrollbar to match the terminal aesthetic */
       ::-webkit-scrollbar {
@@ -26,21 +26,9 @@
         background: #444;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.4",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.564.0"
-  }
-}
-</script>
-<script async src="https://pay.google.com/gp/p/js/pay.js"></script>
-<link rel="stylesheet" href="/index.css">
-</head>
-  <body class="bg-black text-gray-200">
+    <link rel="stylesheet" href="/index.css">
+  </head>
+  <body class="bg-black text-gray-200 overflow-hidden">
     <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

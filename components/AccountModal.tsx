@@ -1,0 +1,944 @@
+import React, { useState, useEffect } from 'react';
+import {
+  UserProfile,
+  UserRole,
+  isDefaultAdmin,
+  updateCachedProfile
+} from '../services/authService';
+import {
+  searchUsers,
+  grantActionsToUser,
+  setInfiniteActionsForUser,
+  resetUserActions,
+  setUserRole,
+  grantAdventurePermissions,
+  setGlowingNamePreference
+} from '../services/adminService';
+import { ActionStatus } from '../services/actionLimitService';
+import GoldenName from './GoldenName';
+import {
+  X,
+  User,
+  Sparkles,
+  Shield,
+  Infinity,
+  Zap,
+  CheckCircle2,
+  AlertCircle,
+  Search,
+  Settings,
+  ToggleLeft,
+  ToggleRight,
+  ShieldAlert,
+  UserCheck,
+  Award,
+  Crown,
+  Share2,
+  Bookmark
+} from 'lucide-react';
+
+interface AccountModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  currentUser: UserProfile | null;
+  actionStatus: ActionStatus;
+  onProfileUpdated: (updatedUser: UserProfile) => void;
+}
+
+export const AccountModal: React.FC<AccountModalProps> = ({
+  isOpen,
+  onClose,
+  currentUser,
+  actionStatus,
+  onProfileUpdated
+}) => {
+  const [activeTab, setActiveTab] = useState<'profile' | 'staff'>('profile');
+
+  // Glowing name state
+  const [glowingEnabled, setGlowingEnabled] = useState<boolean>(
+    currentUser?.showGlowingName !== false
+  );
+
+  // Staff search & target state
+  const [userQuery, setUserQuery] = useState('');
+  const [userList, setUserList] = useState<UserProfile[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [actionsToGrant, setActionsToGrant] = useState<number>(50);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
+  const isMod = (currentUser?.role === 'mod') && !isAdmin;
+  const isStaff = isAdmin || isMod;
+
+  useEffect(() => {
+    if (currentUser) {
+      setGlowingEnabled(currentUser.showGlowingName !== false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (isOpen && isStaff) {
+      loadUsers('');
+    }
+  }, [isOpen, isStaff]);
+
+  if (!isOpen || !currentUser) return null;
+
+  const loadUsers = async (queryTerm: string) => {
+    setLoadingUsers(true);
+    try {
+      const results = await searchUsers(queryTerm);
+      setUserList(results);
+      if (selectedUser) {
+        const updatedSelected = results.find((u) => u.uid === selectedUser.uid);
+        if (updatedSelected) setSelectedUser(updatedSelected);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleToggleGlowing = async () => {
+    const next = !glowingEnabled;
+    setGlowingEnabled(next);
+    await setGlowingNamePreference(currentUser, next);
+    const updated = { ...currentUser, showGlowingName: next };
+    onProfileUpdated(updated);
+  };
+
+  const handleGrantActions = async () => {
+    if (!selectedUser) return;
+    setActionLoading(true);
+    setFeedbackMessage(null);
+
+    const res = await grantActionsToUser(currentUser, selectedUser.uid, actionsToGrant);
+    if (!res.success) {
+      setFeedbackMessage({ text: res.error || 'Failed to grant actions.', type: 'error' });
+    } else {
+      const newCredits = res.newCredits !== undefined ? res.newCredits : (selectedUser.actionCredits || 0) + actionsToGrant;
+      const updatedUserObj: UserProfile = {
+        ...selectedUser,
+        actionCredits: newCredits
+      };
+      setSelectedUser(updatedUserObj);
+      updateCachedProfile(selectedUser.uid, { actionCredits: newCredits });
+      if (selectedUser.uid === currentUser.uid) {
+        onProfileUpdated({
+          ...currentUser,
+          actionCredits: newCredits
+        });
+      }
+      setFeedbackMessage({
+        text: `Successfully granted ${actionsToGrant} actions to ${selectedUser.username}! (Total credits: ${newCredits})`,
+        type: 'success'
+      });
+      await loadUsers(userQuery);
+    }
+    setActionLoading(false);
+  };
+
+  const handleSetInfinite = async (enable: boolean) => {
+    if (!selectedUser) return;
+    setActionLoading(true);
+    setFeedbackMessage(null);
+
+    const res = await setInfiniteActionsForUser(currentUser, selectedUser.uid, enable);
+    if (!res.success) {
+      setFeedbackMessage({ text: res.error || 'Failed to update infinite actions.', type: 'error' });
+    } else {
+      const updatedUserObj: UserProfile = {
+        ...selectedUser,
+        hasInfiniteActions: enable
+      };
+      setSelectedUser(updatedUserObj);
+      updateCachedProfile(selectedUser.uid, { hasInfiniteActions: enable });
+      if (selectedUser.uid === currentUser.uid) {
+        onProfileUpdated({
+          ...currentUser,
+          hasInfiniteActions: enable
+        });
+      }
+      setFeedbackMessage({
+        text: enable
+          ? `Infinite actions granted to ${selectedUser.username}!`
+          : `Infinite actions revoked for ${selectedUser.username}.`,
+        type: 'success'
+      });
+      await loadUsers(userQuery);
+    }
+    setActionLoading(false);
+  };
+
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  const handleResetActions = async () => {
+    if (!selectedUser) return;
+    if (!confirmResetOpen) {
+      setConfirmResetOpen(true);
+      return;
+    }
+
+    setActionLoading(true);
+    setFeedbackMessage(null);
+    setConfirmResetOpen(false);
+
+    const res = await resetUserActions(currentUser, selectedUser.uid);
+    if (!res.success) {
+      setFeedbackMessage({ text: res.error || 'Failed to reset actions.', type: 'error' });
+    } else {
+      const updatedUserObj: UserProfile = {
+        ...selectedUser,
+        actionCredits: 0,
+        hasInfiniteActions: false
+      };
+      setSelectedUser(updatedUserObj);
+      updateCachedProfile(selectedUser.uid, { actionCredits: 0, hasInfiniteActions: false });
+      if (selectedUser.uid === currentUser.uid) {
+        onProfileUpdated({
+          ...currentUser,
+          actionCredits: 0,
+          hasInfiniteActions: false
+        });
+      }
+      setFeedbackMessage({
+        text: `Actions for ${selectedUser.username} have been reset to 0 and infinite status revoked.`,
+        type: 'success'
+      });
+      await loadUsers(userQuery);
+    }
+    setActionLoading(false);
+  };
+
+  const handleSetRole = async (newRole: 'user' | 'mod' | 'admin') => {
+    if (!selectedUser) return;
+    setActionLoading(true);
+    setFeedbackMessage(null);
+
+    const res = await setUserRole(currentUser, selectedUser.uid, newRole);
+    if (!res.success) {
+      setFeedbackMessage({ text: res.error || 'Failed to update user role.', type: 'error' });
+    } else {
+      const updatedUserObj: UserProfile = {
+        ...selectedUser,
+        role: newRole,
+        hasInfiniteActions: newRole === 'admin' ? true : selectedUser.hasInfiniteActions,
+        canSaveMultipleAdventures: (newRole === 'admin' || newRole === 'mod') ? true : selectedUser.canSaveMultipleAdventures,
+        canPostCommunityAdventures: (newRole === 'admin' || newRole === 'mod') ? true : selectedUser.canPostCommunityAdventures
+      };
+      setSelectedUser(updatedUserObj);
+      updateCachedProfile(selectedUser.uid, {
+        role: newRole,
+        ...(newRole === 'admin' ? { hasInfiniteActions: true, canSaveMultipleAdventures: true, canPostCommunityAdventures: true } : {}),
+        ...(newRole === 'mod' ? { canSaveMultipleAdventures: true, canPostCommunityAdventures: true } : {})
+      });
+      if (selectedUser.uid === currentUser.uid) {
+        onProfileUpdated({
+          ...currentUser,
+          ...updatedUserObj
+        });
+      }
+      const roleLabel = newRole === 'admin' ? 'Administrator (Admin)' : newRole === 'mod' ? 'Moderator (Mod)' : 'Standard User';
+      setFeedbackMessage({
+        text: `Success! ${selectedUser.username} is now ${roleLabel}.`,
+        type: 'success'
+      });
+      await loadUsers(userQuery);
+    }
+    setActionLoading(false);
+  };
+
+  const handleToggleAdventurePermission = async (key: 'canSaveMultipleAdventures' | 'canPostCommunityAdventures', currentVal?: boolean) => {
+    if (!selectedUser) return;
+    setActionLoading(true);
+    setFeedbackMessage(null);
+
+    const nextVal = !currentVal;
+    const res = await grantAdventurePermissions(currentUser, selectedUser.uid, {
+      [key]: nextVal
+    });
+
+    if (!res.success) {
+      setFeedbackMessage({ text: res.error || 'Failed to update permissions.', type: 'error' });
+    } else {
+      const updatedUserObj: UserProfile = {
+        ...selectedUser,
+        [key]: nextVal
+      };
+      setSelectedUser(updatedUserObj);
+      updateCachedProfile(selectedUser.uid, { [key]: nextVal });
+      if (selectedUser.uid === currentUser.uid) {
+        onProfileUpdated({
+          ...currentUser,
+          [key]: nextVal
+        });
+      }
+      setFeedbackMessage({
+        text: `Updated permission for ${selectedUser.username}!`,
+        type: 'success'
+      });
+      await loadUsers(userQuery);
+    }
+    setActionLoading(false);
+  };
+
+  return (
+    <div id="account-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 font-mono">
+      <div className="bg-neutral-900 border border-neutral-700 w-full max-w-2xl max-h-[90vh] rounded-xl shadow-2xl flex flex-col overflow-hidden relative">
+        {/* Modal Top Header */}
+        <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/80 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${
+              isAdmin
+                ? 'bg-sky-950 border border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(56,189,248,0.5)]'
+                : isMod
+                ? 'bg-amber-950 border border-amber-400 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.5)]'
+                : 'bg-neutral-800 border border-neutral-700 text-white'
+            }`}>
+              {isAdmin ? <Sparkles size={16} /> : isMod ? <Shield size={16} /> : <User size={16} />}
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-white tracking-wider flex items-center gap-2">
+                <span>ACCOUNT DASHBOARD</span>
+                {isAdmin && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-400/80 text-cyan-300 font-extrabold uppercase shadow-[0_0_8px_rgba(56,189,248,0.4)]">
+                    CELESTIAL ADMIN
+                  </span>
+                )}
+                {isMod && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950/80 border border-amber-400/80 text-amber-300 font-extrabold uppercase shadow-[0_0_8px_rgba(245,158,11,0.4)]">
+                    MODERATOR
+                  </span>
+                )}
+              </h2>
+              <p className="text-[11px] text-neutral-400">Manage profile settings, permissions, and staff tools</p>
+            </div>
+          </div>
+
+          <button
+            id="close-account-modal-btn"
+            onClick={onClose}
+            className="p-1 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+            title="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tab Navigation if staff */}
+        {isStaff && (
+          <div className="flex border-b border-neutral-800 bg-neutral-950 px-6 shrink-0">
+            <button
+              id="account-tab-profile"
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              className={`py-3 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'profile'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <User size={14} />
+              <span>MY ACCOUNT</span>
+            </button>
+            <button
+              id="account-tab-staff"
+              type="button"
+              onClick={() => setActiveTab('staff')}
+              className={`py-3 px-4 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'staff'
+                  ? isAdmin
+                    ? 'border-cyan-400 text-cyan-300 shadow-cyan-400/20'
+                    : 'border-amber-400 text-amber-300 shadow-amber-400/20'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              {isAdmin ? <Sparkles size={14} /> : <Shield size={14} />}
+              <span>{isAdmin ? 'ADMIN CONSOLE' : 'MODERATOR TOOLS'}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Modal Body */}
+        <div className="p-6 overflow-y-auto space-y-5 flex-1">
+          {activeTab === 'profile' ? (
+            <>
+              {/* Profile Card */}
+              <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="text-[11px] text-neutral-500 uppercase tracking-wider mb-1">Signed in as</div>
+                  <div className="text-base font-bold text-white flex items-center gap-2">
+                    <GoldenName
+                      name={currentUser.username}
+                      role={currentUser.role}
+                      showGlowingName={currentUser.showGlowingName}
+                      isGolden={currentUser.tier === 'legendary'}
+                    />
+                  </div>
+                  <div className="text-xs text-neutral-400 mt-0.5">{currentUser.email || 'No email attached'}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="px-2.5 py-1 bg-neutral-900 border border-neutral-800 rounded text-xs text-neutral-300">
+                    Tier: <span className="font-bold text-white uppercase">{currentUser.tier || 'Free'}</span>
+                  </div>
+                  {isAdmin && (
+                    <div className="px-2.5 py-1 bg-cyan-950/70 border border-cyan-400/50 rounded text-xs text-cyan-300 font-bold flex items-center gap-1 shadow-[0_0_6px_rgba(56,189,248,0.3)]">
+                      <Sparkles size={12} />
+                      <span>Admin</span>
+                    </div>
+                  )}
+                  {isMod && (
+                    <div className="px-2.5 py-1 bg-amber-950/70 border border-amber-400/50 rounded text-xs text-amber-300 font-bold flex items-center gap-1 shadow-[0_0_6px_rgba(245,158,11,0.3)]">
+                      <Shield size={12} />
+                      <span>Moderator</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Limits & Infinite Actions Status */}
+              <div className={`p-4 rounded-xl border ${
+                isAdmin || actionStatus.hasInfiniteActions
+                  ? 'bg-gradient-to-r from-sky-950/40 via-indigo-950/30 to-purple-950/40 border-cyan-500/40 shadow-[0_0_15px_rgba(56,189,248,0.15)]'
+                  : 'bg-neutral-950 border-neutral-800'
+              }`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                      <Zap size={14} />
+                    </div>
+                    <span className="text-xs font-bold text-white tracking-wider">ACTION PRIVILEGES</span>
+                  </div>
+                  {isAdmin || actionStatus.hasInfiniteActions ? (
+                    <span className="text-xs font-extrabold text-cyan-300 flex items-center gap-1.5 bg-cyan-950/80 px-2.5 py-1 rounded-full border border-cyan-400/60 shadow-[0_0_8px_rgba(56,189,248,0.4)]">
+                      <Infinity size={15} className="animate-pulse" />
+                      <span>INFINITE ACTIONS IN ADVANCE</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-neutral-300">
+                      {actionStatus.totalAvailableActions} actions remaining
+                    </span>
+                  )}
+                </div>
+
+                {isAdmin ? (
+                  <div className="p-3 bg-sky-950/60 border border-cyan-400/40 rounded-lg text-xs text-cyan-200 space-y-1">
+                    <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                      <Sparkles size={14} />
+                      <span>Celestial Admin Privilege Active</span>
+                    </div>
+                    <p className="text-[11px] text-cyan-200/90 leading-relaxed">
+                      As an Administrator, you have permanent infinite actions automatically active in advance on your account. You will never run out of turns.
+                    </p>
+                  </div>
+                ) : actionStatus.hasInfiniteActions ? (
+                  <div className="p-3 bg-indigo-950/60 border border-indigo-400/40 rounded-lg text-xs text-indigo-200 space-y-1">
+                    <div className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                      <CheckCircle2 size={14} className="text-emerald-400" />
+                      <span>Infinite Actions Granted</span>
+                    </div>
+                    <p className="text-[11px] text-indigo-200/90 leading-relaxed">
+                      An Administrator has granted your account infinite actions in advance! You can explore adventures without limits.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
+                      <div className="text-neutral-400 text-[10px]">Daily Free (20/day)</div>
+                      <div className="text-sm font-bold text-emerald-400 mt-0.5">
+                        {actionStatus.dailyFreeRemaining} / {actionStatus.dailyFreeTotal}
+                      </div>
+                    </div>
+                    <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
+                      <div className="text-neutral-400 text-[10px]">Purchased Credits</div>
+                      <div className="text-sm font-bold text-blue-400 mt-0.5">
+                        {actionStatus.purchasedCredits}
+                      </div>
+                    </div>
+                    <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
+                      <div className="text-neutral-400 text-[10px]">Total Available</div>
+                      <div className="text-sm font-bold text-white mt-0.5">
+                        {actionStatus.totalAvailableActions}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Special Permissions (Multiple Adventures & Community) */}
+              <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-xl space-y-3">
+                <div className="text-xs font-bold text-white tracking-wider flex items-center gap-2">
+                  <Award size={15} className="text-amber-400" />
+                  <span>PERMANENT ADVENTURE PERMISSIONS</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bookmark size={15} className="text-blue-400" />
+                      <div>
+                        <div className="font-semibold text-neutral-200">Save Multiple Adventures</div>
+                        <div className="text-[10px] text-neutral-500">Store and load multiple story saves</div>
+                      </div>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      actionStatus.canSaveMultipleAdventures
+                        ? 'bg-emerald-950 border border-emerald-500/50 text-emerald-300'
+                        : 'bg-neutral-800 text-neutral-400'
+                    }`}>
+                      {actionStatus.canSaveMultipleAdventures ? 'ENABLED' : 'LOCKED'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Share2 size={15} className="text-purple-400" />
+                      <div>
+                        <div className="font-semibold text-neutral-200">Post Community Adventures</div>
+                        <div className="text-[10px] text-neutral-500">Publish adventures for all players</div>
+                      </div>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      actionStatus.canPostCommunityAdventures
+                        ? 'bg-emerald-950 border border-emerald-500/50 text-emerald-300'
+                        : 'bg-neutral-800 text-neutral-400'
+                    }`}>
+                      {actionStatus.canPostCommunityAdventures ? 'ENABLED' : 'LOCKED'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Glowing Name Toggle (Staff Only) */}
+              {isStaff && (
+                <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        {isAdmin ? <Sparkles size={14} className="text-cyan-300" /> : <Shield size={14} className="text-amber-300" />}
+                        <span>{isAdmin ? 'CELESTIAL GLOWING NAME' : 'GOLDEN GLOWING NAME'}</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 mt-0.5">
+                        Highlight your name with an atmospheric glow across multiplayer, lobbies, chat, and game pages. (Your {isAdmin ? 'ADMIN' : 'MOD'} tag remains visible).
+                      </p>
+                    </div>
+
+                    <button
+                      id="toggle-glowing-name-btn"
+                      type="button"
+                      onClick={handleToggleGlowing}
+                      className="text-neutral-300 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                      title={glowingEnabled ? 'Turn Off Glowing Name' : 'Turn On Glowing Name'}
+                    >
+                      {glowingEnabled ? (
+                        <ToggleRight size={32} className={isAdmin ? 'text-cyan-400' : 'text-amber-400'} />
+                      ) : (
+                        <ToggleLeft size={32} className="text-neutral-600" />
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="pt-2 border-t border-neutral-900 flex items-center gap-3 text-xs">
+                    <span className="text-neutral-500">Preview:</span>
+                    <GoldenName
+                      name={currentUser.username}
+                      role={currentUser.role}
+                      showGlowingName={glowingEnabled}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            /* STAFF / ADMIN CONSOLE TAB */
+            <div className="space-y-5">
+              {/* Staff Overview Banner */}
+              <div className={`p-3.5 rounded-xl border ${
+                isAdmin
+                  ? 'bg-sky-950/40 border-cyan-500/50 text-cyan-200'
+                  : 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+              } text-xs space-y-1`}>
+                <div className="font-bold flex items-center gap-2">
+                  {isAdmin ? <Sparkles size={15} /> : <Shield size={15} />}
+                  <span>{isAdmin ? 'Administrator Powers Active' : 'Moderator Tools Active'}</span>
+                </div>
+                <p className="text-[11px] leading-relaxed opacity-90">
+                  {isAdmin
+                    ? 'Admins can grant any amount of permanent free actions, grant/revoke infinite actions, grant multiple adventures & community permissions, and assign users as mods/Admins.'
+                    : 'Moderators can grant up to 500 permanent free added actions per receiving user per day, grant multiple adventures & community permissions, and reset/take away infinite actions.'}
+                </p>
+              </div>
+
+              {/* Feedback alert */}
+              {feedbackMessage && (
+                <div className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                  feedbackMessage.type === 'success'
+                    ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
+                    : 'bg-red-950/80 border-red-700 text-red-300'
+                }`}>
+                  {feedbackMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                  <span>{feedbackMessage.text}</span>
+                </div>
+              )}
+
+              {/* User Search and Selector */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-neutral-300">
+                  Select User to Manage
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 text-neutral-500" size={14} />
+                  <input
+                    id="staff-user-search-input"
+                    type="text"
+                    value={userQuery}
+                    onChange={(e) => {
+                      setUserQuery(e.target.value);
+                      loadUsers(e.target.value);
+                    }}
+                    placeholder="Search by username or email..."
+                    className="w-full bg-black border border-neutral-700 pl-9 pr-4 py-2 text-xs text-white rounded-lg focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* User quick list */}
+                <div className="max-h-40 overflow-y-auto border border-neutral-800 rounded-lg divide-y divide-neutral-850 bg-black/50">
+                  {loadingUsers ? (
+                    <div className="p-3 text-center text-xs text-neutral-500">Loading registered players...</div>
+                  ) : userList.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-neutral-500">No users found matching query.</div>
+                  ) : (
+                    userList.map((u) => (
+                      <button
+                        key={u.uid}
+                        type="button"
+                        onClick={() => {
+                          setSelectedUser(u);
+                          setFeedbackMessage(null);
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between text-xs transition-colors cursor-pointer ${
+                          selectedUser?.uid === u.uid
+                            ? 'bg-blue-950/60 border-l-2 border-blue-500'
+                            : 'hover:bg-neutral-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <GoldenName name={u.username} role={u.role} showGlowingName={u.showGlowingName} />
+                          <span className="text-[11px] text-neutral-500 truncate">({u.email || 'No email'})</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {u.hasInfiniteActions && (
+                            <span className="text-[10px] text-cyan-300 flex items-center gap-0.5">
+                              <Infinity size={11} />
+                              <span>Inf</span>
+                            </span>
+                          )}
+                          <span className="text-[10px] text-neutral-400">
+                            {u.actionCredits || 0} credits
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Selected User Management Panel */}
+              {selectedUser ? (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 space-y-4">
+                  <div className="border-b border-neutral-800 pb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-neutral-400">Selected Player:</div>
+                      <div className="text-sm font-bold text-white flex items-center gap-2 mt-0.5">
+                        <GoldenName
+                          name={selectedUser.username}
+                          role={selectedUser.role}
+                          showGlowingName={selectedUser.showGlowingName}
+                        />
+                        <span className="text-xs text-neutral-500 font-normal">({selectedUser.email || selectedUser.uid})</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-[10px] uppercase font-semibold text-neutral-300">
+                        Role: {selectedUser.role || 'user'}
+                      </span>
+                      {selectedUser.hasInfiniteActions && (
+                        <span className="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-500/60 text-[10px] uppercase font-bold text-cyan-300 flex items-center gap-1">
+                          <Infinity size={10} />
+                          <span>Infinite</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 1. Grant Free Added Actions */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Grant Permanent Free Added Actions
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="actions-to-grant-input"
+                        type="number"
+                        min={1}
+                        max={isAdmin ? 100000 : 500}
+                        value={actionsToGrant}
+                        onChange={(e) => setActionsToGrant(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-28 bg-black border border-neutral-700 px-3 py-1.5 text-xs text-white rounded-lg focus:border-blue-500 focus:outline-none"
+                      />
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setActionsToGrant(50)}
+                          className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 rounded text-[11px] text-neutral-300 cursor-pointer"
+                        >
+                          +50
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActionsToGrant(100)}
+                          className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 rounded text-[11px] text-neutral-300 cursor-pointer"
+                        >
+                          +100
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActionsToGrant(250)}
+                          className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 rounded text-[11px] text-neutral-300 cursor-pointer"
+                        >
+                          +250
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActionsToGrant(500)}
+                          className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 rounded text-[11px] text-neutral-300 cursor-pointer"
+                        >
+                          +500
+                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => setActionsToGrant(2000)}
+                            className="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-700 rounded text-[11px] text-cyan-300 cursor-pointer"
+                          >
+                            +2000
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        id="grant-actions-btn"
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={handleGrantActions}
+                        className="ml-auto px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs tracking-wider transition-colors cursor-pointer shadow"
+                      >
+                        {actionLoading ? 'GRANTING...' : 'GRANT ACTIONS'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-neutral-500">
+                      {isMod
+                        ? 'Moderators may grant up to 500 actions per user per day.'
+                        : 'Admins may grant any amount of permanent actions.'}
+                    </p>
+                  </div>
+
+                  {/* 2. Infinite Actions Control */}
+                  <div className="pt-3 border-t border-neutral-850 space-y-2">
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Infinite Actions Management
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isAdmin ? (
+                        <>
+                          {!selectedUser.hasInfiniteActions ? (
+                            <button
+                              id="grant-infinite-actions-btn"
+                              type="button"
+                              disabled={actionLoading}
+                              onClick={() => handleSetInfinite(true)}
+                              className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(56,189,248,0.3)]"
+                            >
+                              <Infinity size={14} />
+                              <span>GRANT INFINITE ACTIONS (ADMIN)</span>
+                            </button>
+                          ) : (
+                            <button
+                              id="revoke-infinite-actions-btn"
+                              type="button"
+                              disabled={actionLoading}
+                              onClick={() => handleSetInfinite(false)}
+                              className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Infinity size={14} />
+                              <span>REVOKE INFINITE ACTIONS</span>
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        // Mods can take away / reset infinite actions
+                        selectedUser.hasInfiniteActions && (
+                          <button
+                            type="button"
+                            disabled={actionLoading}
+                            onClick={() => handleSetInfinite(false)}
+                            className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Infinity size={14} />
+                            <span>REVOKE INFINITE ACTIONS (MOD)</span>
+                          </button>
+                        )
+                      )}
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          id="reset-user-actions-btn"
+                          type="button"
+                          disabled={actionLoading}
+                          onClick={handleResetActions}
+                          className={`px-3 py-1.5 border font-semibold rounded-lg text-xs transition-colors cursor-pointer ${
+                            confirmResetOpen
+                              ? 'bg-red-600 border-red-500 text-white animate-pulse'
+                              : 'bg-red-950 hover:bg-red-900 border-red-800 text-red-300'
+                          }`}
+                          title="Reset user actions to 0 and remove infinite status"
+                        >
+                          {confirmResetOpen ? 'CLICK AGAIN TO CONFIRM RESET' : 'RESET / TAKE AWAY ACTIONS'}
+                        </button>
+                        {confirmResetOpen && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmResetOpen(false)}
+                            className="px-2 py-1.5 text-xs text-neutral-400 hover:text-white rounded bg-neutral-800 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Adventure & Community Permissions */}
+                  <div className="pt-3 border-t border-neutral-850 space-y-2">
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Permanent Adventure Permissions (Admins & Mods)
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        id="toggle-multi-saves-btn"
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => handleToggleAdventurePermission('canSaveMultipleAdventures', selectedUser.canSaveMultipleAdventures)}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                          selectedUser.canSaveMultipleAdventures
+                            ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                            : 'bg-neutral-900 border-neutral-750 text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        <Bookmark size={13} />
+                        <span>Multiple Saves: {selectedUser.canSaveMultipleAdventures ? 'GRANTED' : 'GRANT'}</span>
+                      </button>
+
+                      <button
+                        id="toggle-community-post-btn"
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => handleToggleAdventurePermission('canPostCommunityAdventures', selectedUser.canPostCommunityAdventures)}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                          selectedUser.canPostCommunityAdventures
+                            ? 'bg-purple-950/70 border-purple-600 text-purple-300'
+                            : 'bg-neutral-900 border-neutral-750 text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        <Share2 size={13} />
+                        <span>Community Posting: {selectedUser.canPostCommunityAdventures ? 'GRANTED' : 'GRANT'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4. Staff Role Assignment (Only Admins) */}
+                  <div className="pt-3 border-t border-neutral-850 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-neutral-300">
+                        Role Assignment (Only Admins)
+                      </label>
+                      {!isAdmin && (
+                        <span className="text-[10px] text-neutral-500">Restricted to Admins only</span>
+                      )}
+                    </div>
+
+                    {isAdmin ? (
+                      <div className="flex flex-wrap gap-2">
+                        {(() => {
+                          const currentRole = selectedUser.role || 'user';
+                          return (
+                            <>
+                              <button
+                                id="assign-role-user-btn"
+                                type="button"
+                                disabled={actionLoading || currentRole === 'user'}
+                                onClick={() => handleSetRole('user')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                  currentRole === 'user'
+                                    ? 'bg-neutral-800 border-neutral-600 text-white cursor-default'
+                                    : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white hover:border-neutral-600 cursor-pointer'
+                                }`}
+                              >
+                                Standard User
+                              </button>
+                              <button
+                                id="assign-role-mod-btn"
+                                type="button"
+                                disabled={actionLoading || currentRole === 'mod'}
+                                onClick={() => handleSetRole('mod')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors ${
+                                  currentRole === 'mod'
+                                    ? 'bg-amber-950 border-amber-500 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.3)] cursor-default'
+                                    : 'bg-neutral-950 border-neutral-800 text-amber-400/80 hover:text-amber-300 hover:border-amber-600/60 cursor-pointer'
+                                }`}
+                              >
+                                <Shield size={13} />
+                                <span>Promote to Moderator (Mod)</span>
+                              </button>
+                              <button
+                                id="assign-role-admin-btn"
+                                type="button"
+                                disabled={actionLoading || currentRole === 'admin'}
+                                onClick={() => handleSetRole('admin')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors ${
+                                  currentRole === 'admin'
+                                    ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.3)] cursor-default'
+                                    : 'bg-neutral-950 border-neutral-800 text-cyan-400/80 hover:text-cyan-300 hover:border-cyan-500/60 cursor-pointer'
+                                }`}
+                              >
+                                <Sparkles size={13} />
+                                <span>Promote to Administrator (Admin)</span>
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg text-[11px] text-neutral-400">
+                        Moderators cannot grant or promote other users as mods or Admins.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 border border-dashed border-neutral-800 rounded-xl text-center text-xs text-neutral-500">
+                  Select a user from the list above to manage their actions, infinite access, and permissions.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AccountModal;
