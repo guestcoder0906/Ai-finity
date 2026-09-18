@@ -1,0 +1,6 @@
+{
+  "name": "AI-SUD Gemini Edition",
+  "description": "A text-based AI world engine using Gemini 3.0 Flash. The file system is the source of truth for the world state.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
