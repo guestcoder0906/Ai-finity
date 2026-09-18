@@ -70,10 +70,11 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history, onReferenceC
       </span>`;
     });
 
-    // 5. Handle [Object] links
+    // 5. Handle [Object] links (render cleanly without .txt or .json extensions)
     processed = processed.replace(/(<[^>]+>)|\[([^\]]+)\]/g, (match, htmlTag, ref) => {
       if (htmlTag) return htmlTag;
-      return `<span class="text-yellow-400 hover:text-yellow-200 hover:underline cursor-pointer" data-ref="${ref}">${ref}</span>`;
+      const cleanRef = ref.replace(/\.(txt|json)$/i, '').trim();
+      return `<span class="text-yellow-400 hover:text-yellow-200 hover:underline cursor-pointer" data-ref="${cleanRef}">${cleanRef}</span>`;
     });
 
     return processed;

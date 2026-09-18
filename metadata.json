@@ -1,6 +1,6 @@
 {
-  "name": "AI-SUD Gemini Edition",
-  "description": "A text-based AI world engine using Gemini 3.0 Flash. The file system is the source of truth for the world state.",
+  "name": "Aifinity",
+  "description": "Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

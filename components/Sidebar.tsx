@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 
 interface SidebarProps {
@@ -26,6 +26,8 @@ interface SidebarProps {
   onJoinClick: () => void;
   syncCount: number;
   mapPanelRef: React.RefObject<MapPanelHandle | null>;
+  onOpenWelcome?: () => void;
+  onOpenAuth?: (tab?: 'login' | 'signup' | 'guest') => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -49,7 +51,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onHostClick,
   onJoinClick,
   syncCount,
-  mapPanelRef
+  mapPanelRef,
+  onOpenWelcome,
+  onOpenAuth
 }) => {
 
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
@@ -131,6 +135,61 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="w-full md:w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col h-[40vh] md:h-full text-xs md:text-sm font-mono overflow-hidden">
+
+      {/* Aifinity Brand Header */}
+      <div className="p-2.5 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
+          <span className="font-bold tracking-wider text-sm bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-400 bg-clip-text text-transparent font-sans">
+            Aifinity
+          </span>
+          <span className="text-[9px] text-neutral-500 border border-neutral-800 px-1 py-0.5 rounded font-mono">
+            SANDBOX
+          </span>
+        </div>
+        {onOpenWelcome && (
+          <button
+            onClick={onOpenWelcome}
+            className="text-[10px] text-blue-400 hover:text-blue-300 border border-blue-900/60 hover:border-blue-700 bg-blue-950/40 hover:bg-blue-900/60 px-2 py-0.5 rounded transition-all font-mono"
+            title="Open Welcome & Guide"
+          >
+            Welcome
+          </button>
+        )}
+      </div>
+
+      {/* Account / Identity Bar */}
+      {onOpenAuth && (
+        <div className="px-2.5 py-1.5 bg-neutral-950/80 border-b border-neutral-800 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5 min-w-0 pr-2">
+            <User
+              size={12}
+              className={
+                username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
+                  ? 'text-amber-400 shrink-0'
+                  : 'text-emerald-400 shrink-0'
+              }
+            />
+            <span className="truncate text-white font-mono font-bold text-[11px]" title={username}>
+              {username}
+            </span>
+          </div>
+          <button
+            onClick={() =>
+              onOpenAuth(
+                username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
+                  ? 'login'
+                  : 'login'
+              )
+            }
+            className="text-[10px] text-neutral-400 hover:text-white px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 transition-colors shrink-0"
+          >
+            {username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
+              ? 'Log In'
+              : 'Account'}
+          </button>
+        </div>
+      )}
 
       {gameMode === 'multiplayer' && roomState && (
         <div className="flex flex-col border-b border-neutral-800">

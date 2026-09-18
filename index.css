@@ -17,7 +17,6 @@ body {
   background-color: var(--terminal-bg);
   color: #d1d5db;
   font-family: var(--font-mono);
-  overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 

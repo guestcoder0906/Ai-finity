@@ -8,8 +8,12 @@ import NarrativeWindow from './components/NarrativeWindow';
 import InputArea from './components/InputArea';
 import Modal from './components/Modal';
 import MainMenu from './components/MainMenu';
+import WelcomePage from './components/WelcomePage';
+import AuthModal from './components/AuthModal';
 import { MultiplayerService } from './services/multiplayer';
 import { SuggestionGenerator } from './services/suggestionGenerator';
+import { authService, AuthSession } from './services/authService';
+import { User } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
 const fileSystem = new FileSystem();
@@ -68,6 +72,25 @@ function App() {
   const [username, setUsername] = useState<string>(() => {
     return localStorage.getItem('aimud_username') || '';
   });
+
+  // Authentication & Guest State
+  const [authSession, setAuthSession] = useState<AuthSession>(() => authService.getSession());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'signup' | 'guest'>('login');
+
+  useEffect(() => {
+    const unsub = authService.subscribe(() => {
+      setAuthSession(authService.getSession());
+    });
+    return unsub;
+  }, []);
+
+  // Compute name resolution for singleplayer and multiplayer
+  const onlineGuestNames = roomState?.players?.map((p: any) => p.username) || [];
+  const singleplayerName = authService.getSingleplayerName();
+  const multiplayerName = authService.getMultiplayerName(onlineGuestNames);
+  const effectiveUsername = gameMode === 'singleplayer' ? singleplayerName : (username || multiplayerName);
+
   const processingCountRef = useRef(0);
   const [showCharacterCreation, setShowCharacterCreation] = useState(false);
   const [characterDescription, setCharacterDescription] = useState('');
@@ -76,6 +99,51 @@ function App() {
   const updateProcessing = (delta: number) => {
     processingCountRef.current = Math.max(0, processingCountRef.current + delta);
     setIsProcessing(processingCountRef.current > 0);
+  };
+
+  // Route / Welcome page state
+  const [currentRoute, setCurrentRoute] = useState<'game' | 'welcome'>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (path === '/welcome' || hash === '#/welcome' || path.startsWith('/welcome')) {
+        return 'welcome';
+      }
+    }
+    return 'game';
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (path === '/welcome' || hash === '#/welcome' || path.startsWith('/welcome')) {
+        setCurrentRoute('welcome');
+      } else {
+        setCurrentRoute('game');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (route: 'game' | 'welcome') => {
+    if (route === 'welcome') {
+      window.history.pushState(null, '', '/welcome');
+      setCurrentRoute('welcome');
+    } else {
+      window.history.pushState(null, '', '/');
+      setCurrentRoute('game');
+    }
+  };
+
+  const handleEnterFromWelcome = (scenarioPrompt?: string) => {
+    navigateTo('game');
+    if (scenarioPrompt) {
+      setTimeout(() => {
+        handleAction(scenarioPrompt);
+      }, 100);
+    }
   };
 
   const isHost = roomState?.hostUsername === username;
@@ -216,11 +284,12 @@ function App() {
   };
 
   const handleJoinGame = async (roomId: string, joinUsername: string) => {
-    setUsername(joinUsername);
-    localStorage.setItem('aimud_username', joinUsername);
+    const effJoinName = joinUsername || authService.getMultiplayerName();
+    setUsername(effJoinName);
+    localStorage.setItem('aimud_username', effJoinName);
     const ms = initMultiplayerService();
     try {
-      await ms.joinRoom(roomId, joinUsername);
+      await ms.joinRoom(roomId, effJoinName);
       localStorage.setItem('aimud_roomId', roomId);
       setGameMode('multiplayer');
       setShowMultiplayerModal(null);
@@ -236,7 +305,7 @@ function App() {
       if (fileSystem.list().length === 0) {
         setNarrative([{
           id: 'init',
-          text: 'Welcome to AI-MUD Gemini Edition. Enter a scenario prompt to begin (e.g., "A cyberpunk detective in Neo-Tokyo")',
+          text: 'Welcome to Aifinity. Enter a scenario prompt to begin (e.g., "A cyberpunk detective in Neo-Tokyo")',
           type: 'system'
         }]);
       } else {
@@ -269,11 +338,12 @@ function App() {
   }, [gameMode, isInitialized, roomState?.gameState]);
 
   const handleHostGame = async (hostUsername: string) => {
-    setUsername(hostUsername);
-    localStorage.setItem('aimud_username', hostUsername);
+    const effHostName = hostUsername || authService.getMultiplayerName();
+    setUsername(effHostName);
+    localStorage.setItem('aimud_username', effHostName);
     const ms = initMultiplayerService();
     fileSystem.clear();
-    const roomId = await ms.createRoom(hostUsername);
+    const roomId = await ms.createRoom(effHostName);
     localStorage.setItem('aimud_roomId', roomId);
     setGameMode('multiplayer');
     setShowMultiplayerModal(null);
@@ -323,11 +393,11 @@ function App() {
       try {
         let result;
         if (!isInitialized) {
-          result = await aiEngine.initialize(text, username || 'Player');
+          result = await aiEngine.initialize(text, singleplayerName);
           setIsInitialized(true);
         } else {
           const mapScreenshot = await mapPanelRef.current?.captureScreenshot() || undefined;
-          result = await aiEngine.processAction(text, username || 'Player', mapScreenshot);
+          result = await aiEngine.processAction(text, singleplayerName, mapScreenshot);
         }
 
         if (result) {
@@ -440,6 +510,29 @@ function App() {
     setIsResetModalOpen(false);
   };
 
+  if (currentRoute === 'welcome') {
+    return (
+      <>
+        <WelcomePage
+          onEnterGame={handleEnterFromWelcome}
+          onOpenAuth={(tab) => {
+            setAuthModalTab(tab || 'login');
+            setIsAuthModalOpen(true);
+          }}
+        />
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          initialTab={authModalTab}
+          onResetData={() => {
+            setIsAuthModalOpen(false);
+            setIsResetModalOpen(true);
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="flex flex-col md:flex-row h-screen w-full bg-black text-gray-200 overflow-hidden">
       {showMultiplayerModal && (
@@ -448,6 +541,10 @@ function App() {
           onJoinGame={handleJoinGame}
           onCancel={() => setShowMultiplayerModal(null)}
           initialMode={showMultiplayerModal}
+          onOpenAuth={(tab) => {
+            setAuthModalTab(tab || 'login');
+            setIsAuthModalOpen(true);
+          }}
         />
       )}
 
@@ -505,7 +602,7 @@ function App() {
         setExpandedFile={setExpandedFile}
         gameMode={gameMode}
         roomState={roomState}
-        username={username}
+        username={effectiveUsername}
         onKickPlayer={(user) => {
           if (multiplayerService) {
             const userLower = user.toLowerCase();
@@ -534,14 +631,39 @@ function App() {
         onJoinClick={() => setShowMultiplayerModal('join')}
         syncCount={syncCount}
         mapPanelRef={mapPanelRef}
+        onOpenWelcome={() => navigateTo('welcome')}
+        onOpenAuth={(tab) => {
+          setAuthModalTab(tab || 'login');
+          setIsAuthModalOpen(true);
+        }}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
-        <div className="bg-neutral-900 border-b border-neutral-800 p-2 text-center text-xs text-blue-400 font-mono tracking-widest shadow-lg z-10 flex justify-between items-center">
-          <span>{worldTime || "TIME: UNKNOWN"}</span>
-          {gameMode === 'multiplayer' && roomState && (
-            <span className="text-emerald-400">Room: {roomState.id} | {roomState.players?.filter((p: any) => p.status === 'active').length} Players</span>
-          )}
+        <div className="bg-neutral-900 border-b border-neutral-800 px-3 py-1.5 text-xs font-mono shadow-lg z-10 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            {/* Quick Account Profile Button */}
+            <button
+              onClick={() => {
+                setAuthModalTab(authSession.type === 'registered' ? 'login' : 'login');
+                setIsAuthModalOpen(true);
+              }}
+              className="text-[11px] font-mono flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-950 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 transition-colors"
+              title="Manage Account / Guest Name"
+            >
+              <User size={12} className={authSession.type === 'registered' ? 'text-emerald-400' : 'text-amber-400'} />
+              <span className="max-w-[110px] truncate">{effectiveUsername}</span>
+            </button>
+
+            <span className="text-neutral-700 hidden sm:inline">|</span>
+            <span className="text-blue-400 tracking-widest hidden sm:inline">{worldTime || "TIME: UNKNOWN"}</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-blue-400 tracking-widest sm:hidden">{worldTime || "TIME: UNKNOWN"}</span>
+            {gameMode === 'multiplayer' && roomState && (
+              <span className="text-emerald-400">Room: {roomState.id} | {roomState.players?.filter((p: any) => p.status === 'active').length} Players</span>
+            )}
+          </div>
         </div>
 
         <NarrativeWindow
@@ -549,7 +671,7 @@ function App() {
           onReferenceClick={handleReferenceClick}
           debugMode={debugMode}
           fileSystem={fileSystem}
-          username={username}
+          username={effectiveUsername}
         />
 
         {/* Floating Status Updates */}
@@ -590,6 +712,16 @@ function App() {
         isOpen={isResetModalOpen}
         onConfirm={handleReset}
         onCancel={() => setIsResetModalOpen(false)}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        initialTab={authModalTab}
+        onResetData={() => {
+          setIsAuthModalOpen(false);
+          setIsResetModalOpen(true);
+        }}
       />
     </div>
   );
