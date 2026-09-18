@@ -734,6 +734,13 @@ class AuthService {
   }
 
   /**
+   * Get list of all registered accounts (read-only copy)
+   */
+  public getAccounts(): UserAccount[] {
+    return [...this.accounts];
+  }
+
+  /**
    * Get public profile descriptor
    */
   public getProfileInfo() {

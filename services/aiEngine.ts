@@ -1642,6 +1642,12 @@ INSTRUCTIONS:
     }
     return parseInt(clean) || 0;
   }
+  private getAIClient(): GoogleGenAI {
+    const storedKey = typeof window !== 'undefined' ? localStorage.getItem('aimud_apikey') : null;
+    const apiKey = storedKey || process.env.API_KEY || '';
+    return new GoogleGenAI({ apiKey });
+  }
+
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {
     try {
       let contents: any;
@@ -1669,7 +1675,8 @@ INSTRUCTIONS:
         ];
       }
 
-      const response = await this.ai.models.generateContent({
+      const client = this.getAIClient();
+      const response = await client.models.generateContent({
         model: modelName || 'gemini-3.5-flash-lite',
         contents: contents,
         config: {

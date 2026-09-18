@@ -1,10 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Sparkles, Play, Compass, Shield, BookOpen, Clock, Users, Pause, RotateCcw, User, LogIn } from 'lucide-react';
+import {
+  ArrowRight,
+  Sparkles,
+  Play,
+  Compass,
+  Shield,
+  BookOpen,
+  Clock,
+  Users,
+  Pause,
+  RotateCcw,
+  User,
+  LogIn,
+  Zap,
+  Bookmark,
+  Share2,
+  Crown
+} from 'lucide-react';
 import { authService, AuthSession } from '../services/authService';
 
 interface WelcomePageProps {
   onEnterGame: (scenarioPrompt?: string) => void;
   onOpenAuth?: (tab?: 'login' | 'signup' | 'guest') => void;
+  onOpenPricing?: () => void;
+  onOpenCommunity?: () => void;
 }
 
 const PRESET_SCENARIOS = [
@@ -38,7 +57,12 @@ const PRESET_SCENARIOS = [
   }
 ];
 
-export default function WelcomePage({ onEnterGame, onOpenAuth }: WelcomePageProps) {
+export default function WelcomePage({
+  onEnterGame,
+  onOpenAuth,
+  onOpenPricing,
+  onOpenCommunity
+}: WelcomePageProps) {
   const [countdown, setCountdown] = useState(15);
   const [isPaused, setIsPaused] = useState(false);
   const [session, setSession] = useState<AuthSession>(authService.getSession());
@@ -50,7 +74,6 @@ export default function WelcomePage({ onEnterGame, onOpenAuth }: WelcomePageProp
     return unsub;
   }, []);
 
-  // Automatic countdown timer to redirect to game
   useEffect(() => {
     if (isPaused) return;
 
@@ -93,6 +116,26 @@ export default function WelcomePage({ onEnterGame, onOpenAuth }: WelcomePageProp
           </div>
 
           <div className="flex items-center gap-3">
+            {onOpenCommunity && (
+              <button
+                onClick={onOpenCommunity}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-800 hover:border-neutral-700 bg-neutral-900 text-xs font-mono text-purple-300 hover:text-white transition-colors"
+              >
+                <Share2 size={13} className="text-purple-400" />
+                <span>Community Hub</span>
+              </button>
+            )}
+
+            {onOpenPricing && (
+              <button
+                onClick={onOpenPricing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-800/60 hover:border-amber-700 bg-amber-950/40 text-xs font-mono text-amber-300 hover:text-white transition-colors"
+              >
+                <Zap size={13} className="text-amber-400" />
+                <span>Pricing & Plans</span>
+              </button>
+            )}
+
             {/* Account Status Badge */}
             {onOpenAuth && (
               <button
@@ -159,37 +202,59 @@ export default function WelcomePage({ onEnterGame, onOpenAuth }: WelcomePageProp
             <blockquote className="text-base sm:text-xl font-medium text-neutral-100 italic leading-relaxed">
               “Aifinity is an infinite AI RPG sandbox game that keeps track and sets up everything under seconds! Easy to play, in the most accurate way!”
             </blockquote>
-            <div className="h-px bg-neutral-800 w-24 mx-auto"></div>
-            <p className="text-sm sm:text-base text-blue-300/90 font-medium">
-              “Setting up and doing actions is as easy as sending a text.”
+            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed font-sans">
+              Powered by Google's Gemini models, Aifinity simulates complex worlds with dynamic text files, spatial maps, probability checks, and accurate temporal continuity.
             </p>
           </div>
+        </section>
 
-          {/* Quick CTA Actions */}
-          <div className="flex flex-wrap justify-center items-center gap-4 pt-2">
-            <button
-              onClick={() => onEnterGame()}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold px-6 py-3 rounded-lg shadow-lg shadow-blue-500/25 transition-all text-sm transform hover:scale-[1.02]"
-            >
-              <Play size={16} fill="currentColor" />
-              <span>Launch Sandbox Game</span>
-            </button>
-            <button
-              onClick={() => {
-                setIsPaused(true);
-                const el = document.getElementById('scenarios');
-                el?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="flex items-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 font-medium px-5 py-3 rounded-lg border border-neutral-700 transition-colors text-sm"
-            >
-              <BookOpen size={16} />
-              <span>Choose a Scenario</span>
-            </button>
+        {/* Pricing, Action Limits & Community Hub Callout */}
+        <section className="p-6 rounded-2xl bg-gradient-to-r from-blue-950/30 via-neutral-900 to-purple-950/30 border border-neutral-800 grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+          <div className="space-y-3 font-mono text-xs">
+            <div className="flex items-center gap-2 text-blue-400 font-bold uppercase tracking-wider">
+              <Zap size={15} />
+              <span>10 Daily Free Actions (20 for Alpha/Beta)</span>
+            </div>
+            <p className="text-neutral-300 font-sans leading-relaxed text-xs">
+              Every day you receive 10 free AI actions refreshed at midnight. When your daily actions are spent, you can continue playing forever with your free Gemini API key, or buy action packs ($2.99–$19.99) and monthly passes ($9.99/mo & $19.99/mo).
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {onOpenPricing && (
+                <button
+                  onClick={onOpenPricing}
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded flex items-center gap-1.5 transition-colors shadow"
+                >
+                  <Zap size={13} />
+                  <span>Open Aifinity Market</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3 font-mono text-xs border-t md:border-t-0 md:border-l border-neutral-800 md:pl-6">
+            <div className="flex items-center gap-2 text-purple-400 font-bold uppercase tracking-wider">
+              <Share2 size={15} />
+              <span>Community Adventures & Multi-Saves</span>
+            </div>
+            <p className="text-neutral-300 font-sans leading-relaxed text-xs">
+              $9.99+ monthly subscribers get permanent access to saving multiple adventures in their Adventures page and posting adventures to the Community Adventures hub!
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {onOpenCommunity && (
+                <button
+                  onClick={onOpenCommunity}
+                  className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-purple-300 rounded border border-neutral-700 flex items-center gap-1.5 transition-colors font-bold"
+                >
+                  <Share2 size={13} />
+                  <span>Open Community Adventures Hub</span>
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
         {/* Feature Highlights Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 hover:border-neutral-700 transition-colors space-y-3">
             <div className="w-10 h-10 rounded-lg bg-blue-950 border border-blue-800/60 flex items-center justify-center text-blue-400">
               <Sparkles size={20} />

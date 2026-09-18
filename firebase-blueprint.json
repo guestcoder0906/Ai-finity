@@ -2,22 +2,61 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "User profile and linked identity data",
+      "description": "User profile and subscription/quota data",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "username": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "isBetaAlpha": { "type": "boolean" },
+        "plan": { "type": "string" },
+        "subscriptionExpiresAt": { "type": "number" },
+        "purchasedActions": { "type": "number" },
+        "dailyActionsUsed": { "type": "number" },
+        "lastDailyReset": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "mod", "user"] },
+        "adminGlowHidden": { "type": "boolean" },
+        "grantedActions": { "type": "number" },
+        "infiniteActionsGranted": { "type": "boolean" },
+        "permanentSavesGranted": { "type": "boolean" },
+        "permanentCommunityPostsGranted": { "type": "boolean" },
+        "lastModGrantDate": { "type": "string" },
+        "modGrantAmountToday": { "type": "number" }
       },
-      "required": ["uid", "email"]
+      "required": ["uid"]
+    },
+    "CommunityAdventure": {
+      "title": "CommunityAdventure",
+      "description": "Adventures published by players to the community",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "isNsfw": { "type": "boolean" },
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "shareType": { "type": "string" },
+        "startingPrompt": { "type": "string" },
+        "initialGeneration": { "type": "string" },
+        "fullNarrative": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "likes": { "type": "number" },
+        "tags": { "type": "string" }
+      },
+      "required": ["id", "title", "authorName", "shareType"]
     }
   },
   "firestore": {
     "/users/{userId}": {
-      "entity": "UserProfile",
+      "schema": "UserProfile",
       "description": "User profile document stored under their authenticated Firebase UID"
+    },
+    "/community_adventures/{adventureId}": {
+      "schema": "CommunityAdventure",
+      "description": "Public community adventures shared by eligible players"
     }
   }
 }

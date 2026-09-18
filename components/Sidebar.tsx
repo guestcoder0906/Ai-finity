@@ -1,8 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User } from 'lucide-react';
+import {
+  FileText,
+  ChevronRight,
+  ChevronDown,
+  Activity,
+  Settings,
+  RefreshCw,
+  Users,
+  LogOut,
+  Play,
+  Map as MapIcon,
+  User,
+  Zap,
+  Bookmark,
+  Share2,
+  Crown
+} from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
+import { actionQuotaService } from '../services/actionQuotaService';
 
 interface SidebarProps {
   files: string[];
@@ -28,6 +45,9 @@ interface SidebarProps {
   mapPanelRef: React.RefObject<MapPanelHandle | null>;
   onOpenWelcome?: () => void;
   onOpenAuth?: (tab?: 'login' | 'signup' | 'guest') => void;
+  onOpenPricing?: () => void;
+  onOpenSavedAdventures?: () => void;
+  onOpenCommunity?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -53,9 +73,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   syncCount,
   mapPanelRef,
   onOpenWelcome,
-  onOpenAuth
+  onOpenAuth,
+  onOpenPricing,
+  onOpenSavedAdventures,
+  onOpenCommunity
 }) => {
-
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
   const isHost = roomState?.hostUsername === username;
   const expandedRef = useRef<HTMLDivElement>(null);
@@ -63,7 +85,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     if (expandedFile) {
       setActiveTab('files');
-      // Use setTimeout to allow the DOM to update after switching tabs
       setTimeout(() => {
         if (expandedRef.current) {
           expandedRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -76,16 +97,14 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!content) return '';
     let formatted = content;
 
-    // Handle target(...) syntax
     formatted = formatted.replace(/target\((.*?)\)\[(.*?)\]/gs, (match, targets, innerText) => {
       const targetList = targets.split(',').map((t: string) => t.trim());
       if (debugMode || targetList.includes(username)) {
         return `<span class="text-purple-300 bg-purple-900/20 px-1 border border-dashed border-purple-800 rounded" title="Target: ${targets}">${innerText}</span>`;
       }
-      return ''; // Hide completely for non-targets
+      return '';
     });
 
-    // Handle hide[] syntax
     if (debugMode) {
       formatted = formatted.replace(/hide\[(.*?)\]/gs, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded">$1</span>');
     } else {
@@ -110,24 +129,14 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Filter files based on hide[] and target()
   const visibleFiles = files.filter(filename => {
     if (debugMode) return true;
-
-    // Check if filename has hide[]
     if (filename.includes('hide[')) return false;
 
-    // Check if filename has target()
     const targetMatch = filename.match(/target\((.*?)\)/);
     if (targetMatch) {
       const targetList = targetMatch[1].split(',').map(t => t.trim().toLowerCase());
       if (!targetList.includes(username.toLowerCase())) return false;
-    }
-
-    // Check content for hide[] or target() that might hide the whole file
-    // For simplicity, we just check if the file is a character file of another player
-    if (filename.includes('-') && filename.endsWith('.txt') && !filename.endsWith(`-${username}.txt`) && !isHost) {
-      // Let's rely on the filename containing hide[] or target() for hiding the whole file instead of trying to guess character files.
     }
 
     return true;
@@ -135,7 +144,6 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="w-full md:w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col h-[40vh] md:h-full text-xs md:text-sm font-mono overflow-hidden">
-
       {/* Aifinity Brand Header */}
       <div className="p-2.5 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -147,41 +155,59 @@ const Sidebar: React.FC<SidebarProps> = ({
             SANDBOX
           </span>
         </div>
-        {onOpenWelcome && (
-          <button
-            onClick={onOpenWelcome}
-            className="text-[10px] text-blue-400 hover:text-blue-300 border border-blue-900/60 hover:border-blue-700 bg-blue-950/40 hover:bg-blue-900/60 px-2 py-0.5 rounded transition-all font-mono"
-            title="Open Welcome & Guide"
-          >
-            Welcome
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onOpenWelcome && (
+            <button
+              onClick={onOpenWelcome}
+              className="text-[10px] text-blue-400 hover:text-blue-300 border border-blue-900/60 hover:border-blue-700 bg-blue-950/40 hover:bg-blue-900/60 px-2 py-0.5 rounded transition-all font-mono"
+              title="Open Welcome & Guide"
+            >
+              Welcome
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Account / Identity Bar */}
       {onOpenAuth && (
         <div className="px-2.5 py-1.5 bg-neutral-950/80 border-b border-neutral-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 min-w-0 pr-2">
-            <User
-              size={12}
-              className={
-                username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
-                  ? 'text-amber-400 shrink-0'
-                  : 'text-emerald-400 shrink-0'
-              }
-            />
-            <span className="truncate text-white font-mono font-bold text-[11px]" title={username}>
+            {actionQuotaService.isGoldenName() ? (
+              <Crown size={12} className="text-amber-400 shrink-0 fill-amber-400/40" />
+            ) : (
+              <User
+                size={12}
+                className={
+                  username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
+                    ? 'text-amber-400 shrink-0'
+                    : 'text-emerald-400 shrink-0'
+                }
+              />
+            )}
+            <span
+              className={`truncate font-mono font-bold text-[11px] ${
+                actionQuotaService.isGoldenName()
+                  ? 'text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]'
+                  : 'text-white'
+              }`}
+              title={username}
+            >
               {username}
             </span>
+          {actionQuotaService.getQuotaState().profile?.role === 'admin' && (
+            <span className="text-[9px] bg-indigo-950/80 border border-indigo-500 text-indigo-300 px-1 py-0.5 rounded font-mono flex items-center gap-1 shadow-[0_0_5px_rgba(99,102,241,0.5)]">
+              <Sparkles size={8} className="text-cyan-300" /> Admin
+            </span>
+          )}
+          {actionQuotaService.getQuotaState().profile?.role === 'mod' && (
+            <span className="text-[9px] bg-amber-950/80 border border-amber-500 text-amber-300 px-1 py-0.5 rounded font-mono shadow-[0_0_5px_rgba(245,158,11,0.5)]">
+              Mod
+            </span>
+          )}
+
           </div>
           <button
-            onClick={() =>
-              onOpenAuth(
-                username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
-                  ? 'login'
-                  : 'login'
-              )
-            }
+            onClick={() => onOpenAuth('login')}
             className="text-[10px] text-neutral-400 hover:text-white px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 transition-colors shrink-0"
           >
             {username.includes('(Guest)') || username.startsWith('guest') || username === 'Player'
@@ -190,6 +216,40 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
       )}
+
+      {/* Action Quota & Adventures Hub Quick Access Buttons */}
+      <div className="grid grid-cols-3 gap-1 p-1.5 bg-black border-b border-neutral-800 text-[10px]">
+        {onOpenPricing && (
+          <button
+            onClick={onOpenPricing}
+            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-amber-300 rounded border border-neutral-800 transition-colors"
+            title="Aifinity Market: Action packs, subscriptions & free key"
+          >
+            <Zap size={11} className="text-amber-400" />
+            <span className="truncate font-bold">Market</span>
+          </button>
+        )}
+        {onOpenSavedAdventures && (
+          <button
+            onClick={onOpenSavedAdventures}
+            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-emerald-300 rounded border border-neutral-800 transition-colors"
+            title="View or save multiple adventure campaigns"
+          >
+            <Bookmark size={11} className="text-emerald-400" />
+            <span className="truncate">Saved</span>
+          </button>
+        )}
+        {onOpenCommunity && (
+          <button
+            onClick={onOpenCommunity}
+            className="flex items-center justify-center gap-1 py-1.5 px-1 bg-neutral-900 hover:bg-neutral-800 text-purple-300 rounded border border-neutral-800 transition-colors"
+            title="Explore and share community adventures"
+          >
+            <Share2 size={11} className="text-purple-400" />
+            <span className="truncate">Community</span>
+          </button>
+        )}
+      </div>
 
       {gameMode === 'multiplayer' && roomState && (
         <div className="flex flex-col border-b border-neutral-800">
@@ -310,7 +370,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 );
               })}
             </div>
-            
+
             {/* Status Section inside Files Tab */}
             <div className="h-1/3 min-h-[120px] border-t border-neutral-800 flex flex-col bg-neutral-950">
               <div className="p-2 border-b border-neutral-800 bg-neutral-900 text-gray-400 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
@@ -338,7 +398,6 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
-
     </div>
   );
 };

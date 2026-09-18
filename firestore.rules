@@ -1,8 +1,87 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function getRole(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid)) ? get(/databases/$(database)/documents/users/$(uid)).data.role : "user";
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.email == 'chloe.a.alba.1@gmail.com' || getRole(request.auth.uid) == 'admin');
+    }
+
+    function isMod() {
+      return isSignedIn() && (getRole(request.auth.uid) == 'mod' || isAdmin());
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid']) &&
+             data.uid == request.auth.uid &&
+             (!('role' in data) || data.role in ["admin", "mod", "user"]) &&
+             (!('adminGlowHidden' in data) || data.adminGlowHidden is bool) &&
+             (!('infiniteActionsGranted' in data) || data.infiniteActionsGranted is bool) &&
+             (!('permanentSavesGranted' in data) || data.permanentSavesGranted is bool) &&
+             (!('permanentCommunityPostsGranted' in data) || data.permanentCommunityPostsGranted is bool);
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if true; 
+      
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUserProfile(incoming()) && (
+        (incoming().get('role', 'user') == 'user' || request.auth.token.email == 'chloe.a.alba.1@gmail.com') &&
+        incoming().get('infiniteActionsGranted', false) == false &&
+        incoming().get('permanentSavesGranted', false) == false &&
+        incoming().get('permanentCommunityPostsGranted', false) == false &&
+        incoming().get('grantedActions', 0) == 0
+      );
+
+      allow update: if isSignedIn() && isValidId(userId) && (
+        isAdmin() ||
+        (isMod() && incoming().diff(existing()).affectedKeys().hasOnly(['grantedActions', 'permanentSavesGranted', 'permanentCommunityPostsGranted', 'lastModGrantDate', 'modGrantAmountToday'])) ||
+        (userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'username', 'dailyActionsUsed', 'lastDailyReset', 'purchasedActions', 'plan', 'subscriptionExpiresAt', 'adminGlowHidden']))
+      );
+    }
+
+    function isValidCommunityAdventure(data) {
+       return data.keys().hasAll(['id', 'title', 'authorName', 'shareType']) &&
+              data.id is string && data.id.size() <= 128 &&
+              data.title is string && data.title.size() <= 256 &&
+              data.authorName is string && data.authorName.size() <= 128 &&
+              data.shareType is string && data.shareType in ['full_adventure', 'starting_prompt_only', 'initial_ai_generation'] &&
+              (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+              (!('isNsfw' in data) || data.isNsfw is bool) &&
+              (!('authorUid' in data) || data.authorUid is string) &&
+              (!('startingPrompt' in data) || data.startingPrompt is string) &&
+              (!('initialGeneration' in data) || data.initialGeneration is string) &&
+              (!('fullNarrativeText' in data) || data.fullNarrativeText is string) &&
+              (!('createdAt' in data) || data.createdAt is number) &&
+              (!('likes' in data) || data.likes is number) &&
+              (!('tags' in data) || data.tags is string);
+    }
+
+    match /community_adventures/{adventureId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(adventureId) && isValidCommunityAdventure(incoming()) && 
+                    incoming().get('authorUid', '') == request.auth.uid && 
+                    incoming().id == adventureId;
+      allow update: if isSignedIn() && isValidId(adventureId) && (
+                    (incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'isNsfw', 'tags']) && existing().get('authorUid', '') == request.auth.uid) ||
+                    (incoming().diff(existing()).affectedKeys().hasOnly(['likes'])) ||
+                    isAdmin() || isMod()
+      );
+      allow delete: if isSignedIn() && isValidId(adventureId) && (
+                    existing().get('authorUid', '') == request.auth.uid || 
+                    isAdmin() || isMod()
+      );
     }
   }
 }

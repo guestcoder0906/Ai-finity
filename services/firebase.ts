@@ -26,6 +26,24 @@ export async function signInWithGooglePopup() {
     };
   } catch (error: any) {
     console.error('Firebase Google Sign-In error:', error);
+    const code = error?.code || '';
+    const message = error?.message || '';
+    const isUnauthorizedDomain = code === 'auth/unauthorized-domain' || message.includes('auth/unauthorized-domain');
+
+    if (isUnauthorizedDomain) {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'www.aifinity-rpg.com';
+      const projectId = firebaseConfig.projectId || 'gen-lang-client-0320558179';
+      const consoleSettingsUrl = `https://console.firebase.google.com/project/${projectId}/authentication/settings`;
+
+      return {
+        success: false,
+        isUnauthorizedDomain: true,
+        unauthorizedHost: currentHost,
+        consoleSettingsUrl,
+        error: `Firebase Auth Error (auth/unauthorized-domain): The domain "${currentHost}" is not authorized for Google Sign-In. You can authorize it by adding "www.aifinity-rpg.com" and "aifinity-rpg.com" in Firebase Console > Authentication > Settings > Authorized domains.`
+      };
+    }
+
     return {
       success: false,
       error: error?.message || 'Google sign-in was cancelled or failed.'
