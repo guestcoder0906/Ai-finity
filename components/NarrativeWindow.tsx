@@ -88,9 +88,9 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono bg-black min-h-0" onClick={handleClick}>
+    <div className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3.5 font-mono bg-black min-h-0 text-xs sm:text-[13px] md:text-sm leading-relaxed" onClick={handleClick}>
       {(history || []).length === 0 && (
-        <div className="text-green-500 italic flex flex-col gap-2">
+        <div className="text-green-500 italic flex flex-col gap-1.5 sm:gap-2 text-xs sm:text-sm">
           <span>Initializing system connection...</span>
           <span>Enter world description to start adventure....</span>
         </div>
@@ -102,11 +102,11 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
         if (!parsedHtml.trim() && entry.type !== 'user') return null;
 
         return (
-          <div key={entry.id} className={`narrative-entry leading-relaxed ${entry.type === 'user' ? 'text-blue-400 font-bold border-l-2 border-blue-900 pl-2' :
+          <div key={entry.id} className={`narrative-entry leading-relaxed ${entry.type === 'user' ? 'text-blue-400 font-semibold border-l-2 border-blue-900 pl-2' :
             entry.type === 'system' ? 'text-green-500 italic' :
               'text-gray-300'
             }`}>
-            {entry.type === 'user' && <span className="mr-2">&gt;</span>}
+            {entry.type === 'user' && <span className="mr-1.5">&gt;</span>}
             <span dangerouslySetInnerHTML={{ __html: parsedHtml }} />
           </div>
         );

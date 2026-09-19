@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -78,12 +78,14 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
 
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
+  const [isMobileExpanded, setIsMobileExpanded] = useState(false);
   const isHost = roomState?.hostUsername === username;
   const expandedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (expandedFile) {
       setActiveTab('files');
+      setIsMobileExpanded(true);
       // Use setTimeout to allow the DOM to update after switching tabs
       setTimeout(() => {
         if (expandedRef.current) {
@@ -155,10 +157,63 @@ const Sidebar: React.FC<SidebarProps> = ({
   });
 
   return (
-    <div className="w-full md:w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col h-[40vh] md:h-full text-xs md:text-sm font-mono overflow-hidden">
+    <div className={`w-full md:w-80 bg-neutral-900 border-b md:border-b-0 md:border-r border-neutral-800 flex flex-col ${isMobileExpanded ? 'h-[50vh] sm:h-[55vh]' : 'h-auto'} md:h-full text-[11px] md:text-xs font-mono overflow-hidden transition-all duration-300 ease-in-out shrink-0`}>
 
-      {/* Account / Guest Status Header */}
-      <div className="p-2.5 bg-neutral-950 border-b border-neutral-800 flex flex-col gap-2">
+      {/* Mobile-Only Collapsible Header Bar */}
+      <div className="md:hidden flex items-center justify-between px-2.5 py-1.5 bg-neutral-950 border-b border-neutral-800 text-[11px]">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              setActiveTab('files');
+              setIsMobileExpanded(true);
+            }}
+            className={`px-2 py-0.5 rounded text-[11px] flex items-center gap-1 border transition-colors ${
+              activeTab === 'files'
+                ? 'bg-blue-950/70 border-blue-700/80 text-blue-300 font-semibold shadow-sm'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+            }`}
+          >
+            <FileText size={11} className={activeTab === 'files' ? 'text-blue-400' : 'text-neutral-500'} />
+            <span>Files ({visibleFiles.length})</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('map');
+              setIsMobileExpanded(true);
+            }}
+            className={`px-2 py-0.5 rounded text-[11px] flex items-center gap-1 border transition-colors ${
+              activeTab === 'map'
+                ? 'bg-emerald-950/70 border-emerald-700/80 text-emerald-300 font-semibold shadow-sm'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+            }`}
+          >
+            <MapIcon size={11} className={activeTab === 'map' ? 'text-emerald-400' : 'text-neutral-500'} />
+            <span>Map</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {expandedFile && !isMobileExpanded && (
+            <span className="text-[10px] text-blue-400 truncate max-w-[100px] bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/50">
+              {expandedFile.replace(/\.txt|\.json/gi, '')}
+            </span>
+          )}
+          <button
+            onClick={() => setIsMobileExpanded(!isMobileExpanded)}
+            className="flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 hover:text-white px-2.5 py-1 rounded border border-neutral-700 text-[10.5px] font-mono transition-colors active:scale-95"
+            title={isMobileExpanded ? "Collapse side panel" : "Expand side panel"}
+          >
+            <span>{isMobileExpanded ? 'Close Panel' : 'Expand Panel'}</span>
+            {isMobileExpanded ? <ChevronUp size={12} className="text-blue-400" /> : <ChevronDown size={12} className="text-blue-400" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Main Sidebar Body - Hidden on mobile when collapsed, full on desktop or when expanded */}
+      <div className={`flex-1 flex flex-col min-h-0 ${isMobileExpanded ? 'flex' : 'hidden md:flex'}`}>
+
+        {/* Account / Guest Status Header */}
+        <div className="p-2 sm:p-2.5 bg-neutral-950 border-b border-neutral-800 flex flex-col gap-1.5 sm:gap-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 overflow-hidden">
             <span className={`w-2 h-2 rounded-full shrink-0 ${currentUser ? 'bg-emerald-400' : 'bg-amber-400'}`} />
@@ -403,6 +458,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <RefreshCw size={12} />
               </button>
             )}
+            <button
+              onClick={() => setIsMobileExpanded(false)}
+              className="md:hidden text-neutral-400 hover:text-white transition-colors flex items-center gap-0.5 text-[9.5px] bg-neutral-900 border border-neutral-800 px-1.5 py-0.5 rounded"
+              title="Collapse Panel"
+            >
+              <ChevronUp size={11} />
+              <span>Hide</span>
+            </button>
           </div>
         </div>
 
@@ -617,6 +680,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
+      </div>
     </div>
   );
 };

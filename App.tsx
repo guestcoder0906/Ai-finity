@@ -29,7 +29,7 @@ import {
 } from './services/authService';
 import { ActionLimitService, ActionStatus } from './services/actionLimitService';
 import { SavedAdventure, CommunityAdventure } from './services/adventuresService';
-import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown } from 'lucide-react';
+import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown, Menu, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
 const fileSystem = new FileSystem();
@@ -133,6 +133,7 @@ function App() {
   const [isCommunityModalOpen, setIsCommunityModalOpen] = useState(false);
   const [adventureToShare, setAdventureToShare] = useState<SavedAdventure | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isMobileTopMenuOpen, setIsMobileTopMenuOpen] = useState(false);
 
   const refreshActionStatus = useCallback(() => {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
@@ -661,7 +662,7 @@ function App() {
   }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen w-full bg-black text-gray-200 overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-full bg-black text-gray-200 overflow-hidden">
       {showMultiplayerModal && (
         <MainMenu
           onHostGame={handleHostGame}
@@ -783,152 +784,319 @@ function App() {
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
         {/* Main Game Top Bar */}
-        <div className="bg-neutral-900 border-b border-neutral-800 px-3 py-2 text-xs font-mono shadow-lg z-10 flex justify-between items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Welcome Page Button on Main Game Page */}
-            <button
-              id="welcome-page-top-btn"
-              onClick={() => {
-                window.history.pushState({}, '', '/welcome');
-                setCurrentPath('/welcome');
-              }}
-              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Go to Welcome Page"
-            >
-              <Compass size={13} className="text-blue-400" />
-              <span className="font-semibold">Welcome Page</span>
-            </button>
+        <div className="bg-neutral-900 border-b border-neutral-800 text-xs font-mono shadow-lg z-20 flex flex-col">
+          {/* Desktop Top Bar (hidden on small mobile, visible md+) */}
+          <div className="hidden md:flex px-3 py-2 justify-between items-center gap-2 flex-wrap text-[11px] md:text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Welcome Page Button on Main Game Page */}
+              <button
+                id="welcome-page-top-btn"
+                onClick={() => {
+                  window.history.pushState({}, '', '/welcome');
+                  setCurrentPath('/welcome');
+                }}
+                className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Go to Welcome Page"
+              >
+                <Compass size={13} className="text-blue-400" />
+                <span className="font-semibold">Welcome Page</span>
+              </button>
 
-            {/* Quick Navigation: Adventures, Community, Market */}
-            <button
-              id="top-adventures-btn"
-              onClick={() => setIsAdventuresModalOpen(true)}
-              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="View and manage saved adventures"
-            >
-              <Bookmark size={13} className="text-blue-400" />
-              <span>Adventures</span>
-            </button>
+              {/* Quick Navigation: Adventures, Community, Market */}
+              <button
+                id="top-adventures-btn"
+                onClick={() => setIsAdventuresModalOpen(true)}
+                className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="View and manage saved adventures"
+              >
+                <Bookmark size={13} className="text-blue-400" />
+                <span>Adventures</span>
+              </button>
 
-            <button
-              id="top-community-btn"
-              onClick={() => setIsCommunityModalOpen(true)}
-              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Browse community adventures"
-            >
-              <Globe size={13} className="text-emerald-400" />
-              <span>Community</span>
-            </button>
+              <button
+                id="top-community-btn"
+                onClick={() => setIsCommunityModalOpen(true)}
+                className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Browse community adventures"
+              >
+                <Globe size={13} className="text-emerald-400" />
+                <span>Community</span>
+              </button>
 
-            <button
-              id="top-market-btn"
-              onClick={() => {
-                setMarketInitialTab('packs');
-                setIsMarketOpen(true);
-              }}
-              className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/40 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Aifinity Market: Buy actions, upgrade tier, or connect custom API key"
-            >
-              <ShoppingCart size={13} className="text-amber-400" />
-              <span className="font-bold">Market</span>
-              {actionStatus?.isUnlimited ? (
-                <span className="text-[10px] bg-amber-500/20 text-amber-200 px-1.5 py-0.2 rounded font-sans flex items-center gap-0.5">
-                  <Zap size={9} /> Unlimited
-                </span>
-              ) : actionStatus?.isGuest ? (
-                <span className="text-[10px] bg-amber-950/70 border border-amber-800/60 text-amber-300 px-1.5 py-0.2 rounded font-sans">
-                  {actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3} Guest Free
-                </span>
-              ) : (
-                <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
-                  {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20} Free
-                  {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
+              <button
+                id="top-market-btn"
+                onClick={() => {
+                  setMarketInitialTab('packs');
+                  setIsMarketOpen(true);
+                }}
+                className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/40 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Aifinity Market: Buy actions, upgrade tier, or connect custom API key"
+              >
+                <ShoppingCart size={13} className="text-amber-400" />
+                <span className="font-bold">Market</span>
+                {actionStatus?.isUnlimited ? (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-200 px-1.5 py-0.2 rounded font-sans flex items-center gap-0.5">
+                    <Zap size={9} /> Unlimited
+                  </span>
+                ) : actionStatus?.isGuest ? (
+                  <span className="text-[10px] bg-amber-950/70 border border-amber-800/60 text-amber-300 px-1.5 py-0.2 rounded font-sans">
+                    {actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3} Guest Free
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
+                    {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20} Free
+                    {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
+                  </span>
+                )}
+              </button>
+
+              <span className="text-neutral-600">|</span>
+              <span className="text-blue-400 tracking-widest">{worldTime || "TIME: UNKNOWN"}</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {gameMode === 'multiplayer' && roomState && (
+                <span className="text-emerald-400 text-[11px]">
+                  Room: {roomState.id} | {(roomState.players || []).filter((p: any) => p.status === 'active').length} Players
                 </span>
               )}
-            </button>
 
-            <span className="hidden sm:inline text-neutral-600">|</span>
-            <span className="text-blue-400 tracking-widest">{worldTime || "TIME: UNKNOWN"}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {gameMode === 'multiplayer' && roomState && (
-              <span className="text-emerald-400 text-[11px]">
-                Room: {roomState.id} | {(roomState.players || []).filter((p: any) => p.status === 'active').length} Players
-              </span>
-            )}
-
-            {currentUser ? (
-              <div className="flex items-center gap-2 bg-neutral-950 px-2.5 py-1 rounded border border-neutral-700 text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <GoldenName
-                  name={currentUser.username}
-                  role={currentUser.role}
-                  showGlowingName={currentUser.showGlowingName}
-                  isGolden={currentUser.tier === 'legendary'}
-                  className="font-bold text-white"
-                />
-                <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-semibold ${
-                  currentUser.tier === 'legendary'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5'
-                    : currentUser.tier === 'adventurer'
-                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                      : 'bg-neutral-800 text-neutral-400'
-                }`}>
-                  {currentUser.tier === 'legendary' && <Crown size={9} />}
-                  {currentUser.tier || 'free'}
-                </span>
-                <button
-                  id="top-account-btn"
-                  onClick={() => setIsAccountModalOpen(true)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium border flex items-center gap-1 cursor-pointer transition-colors ${
-                    currentUser.role === 'admin'
-                      ? 'bg-sky-950/80 hover:bg-sky-900 border-cyan-400/60 text-cyan-300'
-                      : currentUser.role === 'mod'
-                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-400/60 text-amber-300'
-                      : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200'
-                  }`}
-                  title="Account Settings, Permissions & Profile"
-                >
-                  <User size={10} />
-                  <span>{currentUser.role === 'admin' ? 'Account (Admin)' : currentUser.role === 'mod' ? 'Account (Mod)' : 'Account'}</span>
-                </button>
-                <button
-                  id="top-logout-btn"
-                  onClick={handleLogout}
-                  className="text-neutral-400 hover:text-red-400 ml-0.5 text-[10px] underline cursor-pointer"
-                  title="Log out and return to Guest"
-                >
-                  Log Out
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 bg-neutral-950 px-2 py-1 rounded border border-neutral-800 text-[11px]">
-                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                  <span className="text-amber-300">
-                    {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
+              {currentUser ? (
+                <div className="flex items-center gap-2 bg-neutral-950 px-2.5 py-1 rounded border border-neutral-700 text-[11px]">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <GoldenName
+                    name={currentUser.username}
+                    role={currentUser.role}
+                    showGlowingName={currentUser.showGlowingName}
+                    isGolden={currentUser.tier === 'legendary'}
+                    className="font-bold text-white"
+                  />
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-semibold ${
+                    currentUser.tier === 'legendary'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5'
+                      : currentUser.tier === 'adventurer'
+                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                        : 'bg-neutral-800 text-neutral-400'
+                  }`}>
+                    {currentUser.tier === 'legendary' && <Crown size={9} />}
+                    {currentUser.tier || 'free'}
                   </span>
                   <button
-                    id="top-change-guest-name-btn"
-                    onClick={() => setIsGuestNameModalOpen(true)}
-                    className="text-neutral-400 hover:text-amber-300 ml-1 text-[10px] underline cursor-pointer"
-                    title="Change guest temporary name"
+                    id="top-account-btn"
+                    onClick={() => setIsAccountModalOpen(true)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium border flex items-center gap-1 cursor-pointer transition-colors ${
+                      currentUser.role === 'admin'
+                        ? 'bg-sky-950/80 hover:bg-sky-900 border-cyan-400/60 text-cyan-300'
+                        : currentUser.role === 'mod'
+                        ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-400/60 text-amber-300'
+                        : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200'
+                    }`}
+                    title="Account Settings, Permissions & Profile"
                   >
-                    {guestName ? 'Edit' : 'Set Name'}
+                    <User size={10} />
+                    <span>{currentUser.role === 'admin' ? 'Account (Admin)' : currentUser.role === 'mod' ? 'Account (Mod)' : 'Account'}</span>
+                  </button>
+                  <button
+                    id="top-logout-btn"
+                    onClick={handleLogout}
+                    className="text-neutral-400 hover:text-red-400 ml-0.5 text-[10px] underline cursor-pointer"
+                    title="Log out and return to Guest"
+                  >
+                    Log Out
                   </button>
                 </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 bg-neutral-950 px-2 py-1 rounded border border-neutral-800 text-[11px]">
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span className="text-amber-300">
+                      {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
+                    </span>
+                    <button
+                      id="top-change-guest-name-btn"
+                      onClick={() => setIsGuestNameModalOpen(true)}
+                      className="text-neutral-400 hover:text-amber-300 ml-1 text-[10px] underline cursor-pointer"
+                      title="Change guest temporary name"
+                    >
+                      {guestName ? 'Edit' : 'Set Name'}
+                    </button>
+                  </div>
+                  <button
+                    id="top-open-login-btn"
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <LogIn size={11} />
+                    <span>Log In / Sign Up</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Mobile Top Bar (Single compact line on < md) */}
+          <div className="flex md:hidden px-2.5 py-1.5 justify-between items-center gap-1.5 text-[10.5px]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-blue-400 font-semibold tracking-wide truncate max-w-[130px]" title={worldTime}>
+                {worldTime || "TIME: ACTIVE"}
+              </span>
+              {gameMode === 'multiplayer' && roomState && (
+                <span className="text-emerald-400 text-[9.5px] bg-emerald-950/70 border border-emerald-800/60 px-1 py-0.2 rounded truncate">
+                  Room: {roomState.id}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Compact Market / Actions status */}
+              <button
+                onClick={() => {
+                  setMarketInitialTab('packs');
+                  setIsMarketOpen(true);
+                }}
+                className="px-2 py-0.5 bg-amber-500/10 active:bg-amber-500/20 text-amber-300 rounded border border-amber-500/40 text-[10px] flex items-center gap-1"
+                title="Aifinity Market"
+              >
+                <Zap size={10} className="text-amber-400" />
+                {actionStatus?.isUnlimited ? (
+                  <span className="font-bold">Unlimited</span>
+                ) : actionStatus?.isGuest ? (
+                  <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3}</span>
+                ) : (
+                  <span>{actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20}</span>
+                )}
+              </button>
+
+              {/* Expandable Menu Toggle */}
+              <button
+                onClick={() => setIsMobileTopMenuOpen(!isMobileTopMenuOpen)}
+                className={`px-2 py-0.5 rounded border text-[10.5px] font-mono flex items-center gap-1 transition-colors ${
+                  isMobileTopMenuOpen
+                    ? 'bg-blue-900/60 border-blue-700 text-blue-200'
+                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-300'
+                }`}
+                title="Navigation & Account Menu"
+              >
+                <Menu size={11} />
+                <span>{isMobileTopMenuOpen ? 'Close' : 'Menu'}</span>
+                {isMobileTopMenuOpen ? <ChevronUpIcon size={11} /> : <ChevronDownIcon size={11} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Expandable Mobile Navigation Drawer */}
+          {isMobileTopMenuOpen && (
+            <div className="md:hidden bg-neutral-950 border-t border-neutral-800 p-2 text-[10.5px] flex flex-col gap-2 animate-in slide-in-from-top-2 duration-150 shadow-2xl">
+              {/* Quick Navigation Buttons */}
+              <div className="grid grid-cols-3 gap-1.5">
                 <button
-                  id="top-open-login-btn"
-                  onClick={() => setIsAuthModalOpen(true)}
-                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    window.history.pushState({}, '', '/welcome');
+                    setCurrentPath('/welcome');
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-blue-300 rounded border border-neutral-800 flex items-center justify-center gap-1 transition-colors"
                 >
-                  <LogIn size={11} />
-                  <span>Log In / Sign Up</span>
+                  <Compass size={12} className="text-blue-400" />
+                  <span>Welcome</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    setIsAdventuresModalOpen(true);
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 rounded border border-neutral-800 flex items-center justify-center gap-1 transition-colors"
+                >
+                  <Bookmark size={12} className="text-blue-400" />
+                  <span>Adventures</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    setIsCommunityModalOpen(true);
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-emerald-300 rounded border border-neutral-800 flex items-center justify-center gap-1 transition-colors"
+                >
+                  <Globe size={12} className="text-emerald-400" />
+                  <span>Community</span>
                 </button>
               </div>
-            )}
-          </div>
+
+              {/* User / Account Section in Mobile Menu */}
+              <div className="bg-neutral-900/80 p-2 rounded border border-neutral-800 flex items-center justify-between gap-2">
+                {currentUser ? (
+                  <>
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+                      <GoldenName
+                        name={currentUser.username}
+                        role={currentUser.role}
+                        showGlowingName={currentUser.showGlowingName}
+                        isGolden={currentUser.tier === 'legendary'}
+                        className="font-bold text-white text-[11px] truncate"
+                      />
+                      <span className="text-[9px] bg-neutral-800 text-neutral-400 px-1 py-0.2 rounded uppercase">
+                        {currentUser.tier || 'free'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          setIsAccountModalOpen(true);
+                        }}
+                        className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 text-[10px] flex items-center gap-1"
+                      >
+                        <User size={10} />
+                        <span>Account</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          handleLogout();
+                        }}
+                        className="px-1.5 py-1 text-red-400 hover:text-red-300 text-[10px] underline"
+                      >
+                        Log Out
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1.5 truncate text-[10.5px]">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+                      <span className="text-amber-300 truncate">
+                        {guestName ? `${guestName} (Guest)` : 'Guest Player'}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          setIsGuestNameModalOpen(true);
+                        }}
+                        className="text-neutral-400 hover:text-amber-300 text-[9.5px] underline ml-1"
+                      >
+                        Edit
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setIsMobileTopMenuOpen(false);
+                        setIsAuthModalOpen(true);
+                      }}
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10.5px] font-semibold flex items-center gap-1 shrink-0"
+                    >
+                      <LogIn size={11} />
+                      <span>Log In</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <NarrativeWindow
