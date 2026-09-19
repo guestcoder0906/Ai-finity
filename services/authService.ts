@@ -439,7 +439,6 @@ export async function loginWithGoogle(): Promise<{
   user?: UserProfile;
   needsUsername?: boolean;
   googleUser?: FirebaseUser;
-  unauthorizedDomain?: boolean;
   error?: string;
 }> {
   try {
@@ -468,13 +467,12 @@ export async function loginWithGoogle(): Promise<{
     if (err.code === 'auth/popup-closed-by-user') {
       return { error: 'Sign in popup closed.' };
     }
-    if (
-      err.code === 'auth/unauthorized-domain' ||
-      err.code === 'auth/operation-not-allowed' ||
-      (err.message && err.message.toLowerCase().includes('unauthorized domain'))
-    ) {
+    if (err.code === 'auth/popup-blocked') {
+      return { error: 'Popup was blocked by your browser. Please allow popups for https://www.aifinity-rpg.com to complete Google sign-in.' };
+    }
+    if (err.code === 'auth/unauthorized-domain') {
       return {
-        unauthorizedDomain: true
+        error: 'Google Sign-In authorization for www.aifinity-rpg.com requires domain authorization in the Firebase project settings.'
       };
     }
     return { error: err.message || 'Google sign in failed.' };

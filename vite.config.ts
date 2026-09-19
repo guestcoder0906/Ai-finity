@@ -9,6 +9,13 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
         allowedHosts: true,
+        proxy: {
+          '/__/auth': {
+            target: 'https://gen-lang-client-0320558179.firebaseapp.com',
+            changeOrigin: true,
+            secure: true
+          }
+        },
         hmr: {
           overlay: false
         }
@@ -16,7 +23,14 @@ export default defineConfig(({ mode }) => {
       preview: {
         port: 3000,
         host: '0.0.0.0',
-        allowedHosts: true
+        allowedHosts: true,
+        proxy: {
+          '/__/auth': {
+            target: 'https://gen-lang-client-0320558179.firebaseapp.com',
+            changeOrigin: true,
+            secure: true
+          }
+        }
       },
       plugins: [react()],
       define: {
