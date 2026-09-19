@@ -72,5 +72,11 @@ service cloud.firestore {
       allow update: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
       allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isModOrAdmin());
     }
+
+    // App configurations and payout routing settings
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isModOrAdmin();
+    }
   }
 }

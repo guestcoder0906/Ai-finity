@@ -103,6 +103,20 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "amount", "itemName", "status"]
+    },
+    "config": {
+      "title": "App Configuration",
+      "description": "Global application configuration including admin payout routing",
+      "type": "object",
+      "properties": {
+        "recipientEmail": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "venmoHandle": { "type": "string" },
+        "cashAppHandle": { "type": "string" },
+        "payPalHandle": { "type": "string" },
+        "instructions": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -133,6 +147,10 @@
     "/community_adventures/{adventureId}": {
       "schema": "community_adventures",
       "description": "Publicly shared community adventures"
+    },
+    "/config/{configId}": {
+      "schema": "config",
+      "description": "Global application and payout configuration"
     }
   }
 }

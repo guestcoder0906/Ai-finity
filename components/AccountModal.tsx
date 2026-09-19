@@ -12,7 +12,11 @@ import {
   resetUserActions,
   setUserRole,
   grantAdventurePermissions,
-  setGlowingNamePreference
+  setGlowingNamePreference,
+  getPayoutSettings,
+  updatePayoutSettings,
+  PayoutSettings,
+  DEFAULT_PAYOUT_SETTINGS
 } from '../services/adminService';
 import { ActionStatus } from '../services/actionLimitService';
 import GoldenName from './GoldenName';
@@ -34,7 +38,8 @@ import {
   Award,
   Crown,
   Share2,
-  Bookmark
+  Bookmark,
+  Wallet
 } from 'lucide-react';
 
 interface AccountModalProps {
@@ -69,6 +74,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
+  // Payout Configuration state
+  const [payoutConfig, setPayoutConfig] = useState<PayoutSettings>(DEFAULT_PAYOUT_SETTINGS);
+  const [venmoInput, setVenmoInput] = useState(DEFAULT_PAYOUT_SETTINGS.venmoHandle || '');
+  const [cashAppInput, setCashAppInput] = useState(DEFAULT_PAYOUT_SETTINGS.cashAppHandle || '');
+  const [payoutSaveStatus, setPayoutSaveStatus] = useState<string | null>(null);
+  const [savingPayout, setSavingPayout] = useState(false);
+
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = (currentUser?.role === 'mod') && !isAdmin;
   const isStaff = isAdmin || isMod;
@@ -98,10 +110,37 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   useEffect(() => {
     if (isOpen && isStaff) {
       loadUsers('');
+      getPayoutSettings().then((cfg) => {
+        setPayoutConfig(cfg);
+        setVenmoInput(cfg.venmoHandle || '');
+        setCashAppInput(cfg.cashAppHandle || '');
+      });
     }
   }, [isOpen, isStaff]);
 
   if (!isOpen || !currentUser) return null;
+
+  const handleSavePayout = async () => {
+    if (!currentUser || !isAdmin) return;
+    setSavingPayout(true);
+    setPayoutSaveStatus(null);
+    const res = await updatePayoutSettings(currentUser, {
+      venmoHandle: venmoInput.trim(),
+      cashAppHandle: cashAppInput.trim()
+    });
+    setSavingPayout(false);
+    if (res.success) {
+      setPayoutConfig(prev => ({
+        ...prev,
+        venmoHandle: venmoInput.trim(),
+        cashAppHandle: cashAppInput.trim()
+      }));
+      setPayoutSaveStatus('Saved! Market purchases will route to these handles.');
+      setTimeout(() => setPayoutSaveStatus(null), 3000);
+    } else {
+      setPayoutSaveStatus(res.error || 'Failed to update payout settings.');
+    }
+  };
 
   const handleToggleGlowing = async () => {
     const next = !glowingEnabled;
@@ -570,6 +609,71 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     : 'Moderators can grant up to 500 permanent free added actions per receiving user per day, grant multiple adventures & community permissions, and reset/take away infinite actions.'}
                 </p>
               </div>
+
+              {/* Creator Payout Routing (Admin / Owner Chloe) */}
+              {isAdmin && (
+                <div className="bg-neutral-950 border border-amber-500/40 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                        <Wallet size={15} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">Market Payment Routing (Venmo & Cash App)</h4>
+                        <p className="text-[11px] text-neutral-400">Where customer funds go when players purchase in the Market</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-amber-400 bg-amber-950/60 border border-amber-900/60 px-2 py-0.5 rounded">
+                      {payoutConfig.recipientEmail}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[11px] text-neutral-300 font-medium mb-1">
+                        Venmo Username / Phone / Email
+                      </label>
+                      <input
+                        type="text"
+                        value={venmoInput}
+                        onChange={(e) => setVenmoInput(e.target.value)}
+                        placeholder="@Chloe-Alba"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-amber-400 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-neutral-300 font-medium mb-1">
+                        Cash App $Cashtag
+                      </label>
+                      <input
+                        type="text"
+                        value={cashAppInput}
+                        onChange={(e) => setCashAppInput(e.target.value)}
+                        placeholder="$ChloeAlba"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-amber-400 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    {payoutSaveStatus ? (
+                      <span className="text-xs text-emerald-400 font-mono">{payoutSaveStatus}</span>
+                    ) : (
+                      <span className="text-[10px] text-neutral-500">
+                        All payments made by players in the Aifinity Market will be directed to these handles.
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      disabled={savingPayout}
+                      onClick={handleSavePayout}
+                      className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-lg text-xs transition-colors shadow"
+                    >
+                      {savingPayout ? 'Saving...' : 'Save Handles'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Feedback alert */}
               {feedbackMessage && (

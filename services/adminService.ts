@@ -262,3 +262,66 @@ export async function setGlowingNamePreference(
     console.error('Failed to update glowing name preference:', err);
   }
 }
+
+export interface PayoutSettings {
+  recipientEmail: string;
+  recipientName: string;
+  venmoHandle?: string;
+  cashAppHandle?: string;
+  payPalHandle?: string;
+  instructions?: string;
+  updatedAt?: string;
+}
+
+export const DEFAULT_PAYOUT_SETTINGS: PayoutSettings = {
+  recipientEmail: 'chloe.a.alba.1@gmail.com',
+  recipientName: 'Chloe',
+  venmoHandle: 'chloe.a.alba.1@gmail.com',
+  cashAppHandle: '$chloealba1',
+  payPalHandle: 'chloe.a.alba.1@gmail.com',
+  instructions: 'Include your Aifinity account email in the payment note/memo.'
+};
+
+/**
+ * Fetch payout routing settings. Defaults to Chloe's email and payment handles.
+ */
+export async function getPayoutSettings(): Promise<PayoutSettings> {
+  try {
+    const configRef = doc(db, 'config', 'payout_settings');
+    const snap = await getDoc(configRef);
+    if (snap.exists()) {
+      return { ...DEFAULT_PAYOUT_SETTINGS, ...snap.data() as Partial<PayoutSettings> };
+    }
+  } catch (err) {
+    console.warn('Failed to load payout settings from Firestore, using defaults:', err);
+  }
+  return DEFAULT_PAYOUT_SETTINGS;
+}
+
+/**
+ * Update payout routing settings in Firestore (restricted to admin Chloe).
+ */
+export async function updatePayoutSettings(
+  actor: UserProfile,
+  settings: Partial<PayoutSettings>
+): Promise<{ success: boolean; error?: string }> {
+  const isAdmin = actor.role === 'admin' || isDefaultAdmin(actor.email, actor.username);
+  if (!isAdmin) {
+    return { success: false, error: 'Only administrators can update payout destination settings.' };
+  }
+
+  try {
+    const configRef = doc(db, 'config', 'payout_settings');
+    const dataToSave = {
+      ...DEFAULT_PAYOUT_SETTINGS,
+      ...settings,
+      updatedAt: new Date().toISOString()
+    };
+    await setDoc(configRef, dataToSave, { merge: true });
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to update payout settings in Firestore:', err);
+    return { success: false, error: err.message || 'Failed to update payout destination settings.' };
+  }
+}
+

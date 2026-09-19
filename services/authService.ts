@@ -422,6 +422,8 @@ export async function recordPaymentTransaction(
     paymentMethod: string;
     status: 'completed' | 'failed';
     createdAt: string;
+    recipient?: string;
+    notes?: string;
   }
 ): Promise<void> {
   try {
