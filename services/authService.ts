@@ -439,6 +439,7 @@ export async function loginWithGoogle(): Promise<{
   user?: UserProfile;
   needsUsername?: boolean;
   googleUser?: FirebaseUser;
+  unauthorizedDomain?: boolean;
   error?: string;
 }> {
   try {
@@ -467,9 +468,13 @@ export async function loginWithGoogle(): Promise<{
     if (err.code === 'auth/popup-closed-by-user') {
       return { error: 'Sign in popup closed.' };
     }
-    if (err.code === 'auth/unauthorized-domain') {
+    if (
+      err.code === 'auth/unauthorized-domain' ||
+      err.code === 'auth/operation-not-allowed' ||
+      (err.message && err.message.toLowerCase().includes('unauthorized domain'))
+    ) {
       return {
-        error: 'Domain authorization required: "aifinity-rpg.com" and "www.aifinity-rpg.com" must be added to Authorized Domains in your Firebase Console (Authentication > Settings > Authorized domains). You can also sign up or log in immediately using Email & Password below.'
+        unauthorizedDomain: true
       };
     }
     return { error: err.message || 'Google sign in failed.' };
