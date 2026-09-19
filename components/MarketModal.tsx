@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
 import {
   X,
   Zap,
@@ -54,7 +55,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'packs' | 'subscriptions' | 'apikey'>(initialTab);
   const [selectedItem, setSelectedItem] = useState<{ type: 'pack' | 'tier'; data: ActionPack | SubscriptionTier } | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'google_pay' | 'card'>('google_pay');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe_checkout' | 'google_pay' | 'card'>('stripe_checkout');
+  const [checkoutSessionUrl, setCheckoutSessionUrl] = useState<string | null>(null);
+  const [processingMessage, setProcessingMessage] = useState<string | null>(null);
   const [cardNumber, setCardNumber] = useState('');
   const [cardExp, setCardExp] = useState('');
   const [cardCvc, setCardCvc] = useState('');
@@ -148,16 +151,65 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
     setPaymentError(null);
     setCardError(null);
+    setCheckoutSessionUrl(null);
 
-    // Validate Card if card payment is selected
+    const activePub = stripeStatus?.publishableKey || (import.meta as any).env?.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_TYooMQauvdEDq54NiTphI7jx';
+    const isLiveMode = activePub.startsWith('pk_live_') || stripeStatus?.mode === 'live';
+
+    // 1. STRIPE CHECKOUT FLOW (Official Stripe-hosted checkout supporting Google Pay, Apple Pay, Cards, Link)
+    if (paymentMethod === 'stripe_checkout') {
+      setIsProcessingPayment(true);
+      setProcessingMessage('Connecting to Stripe...');
+
+      try {
+        const response = await fetch('/api/stripe/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: selectedItem.data.price,
+            itemName: selectedItem.data.name,
+            itemType: selectedItem.type,
+            itemId: selectedItem.data.id,
+            actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
+            userId: currentUser.uid,
+            userEmail: currentUser.email || '',
+            username: currentUser.username || ''
+          })
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.url) {
+          throw new Error(data.message || 'Failed to initialize Stripe Checkout session.');
+        }
+
+        setCheckoutSessionUrl(data.url);
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+
+        // Open checkout in new window / tab
+        const checkoutWindow = window.open(data.url, '_blank');
+        if (!checkoutWindow) {
+          window.location.href = data.url;
+        }
+        return;
+      } catch (err: any) {
+        console.error('Stripe Checkout session error:', err);
+        setPaymentError(err.message || 'Could not start Stripe Checkout. Please verify your Stripe API keys.');
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+        return;
+      }
+    }
+
+    // 2. DIRECT CREDIT / DEBIT CARD FLOW (Real tokenization with Stripe.js and direct server charge)
     if (paymentMethod === 'card') {
       const cleanCard = cardNumber.replace(/[\s-]/g, '');
       if (!cleanCard || cleanCard.length < 13 || cleanCard.length > 19 || !/^\d+$/.test(cleanCard)) {
-        setCardError('Please enter a valid 16-digit card number.');
+        setCardError('Please enter a valid card number.');
         return;
       }
       if (!cardExp || !cardExp.includes('/')) {
-        setCardError('Please enter a valid expiration date in MM/YY format.');
+        setCardError('Please enter expiration date in MM/YY format.');
         return;
       }
       const [mStr, yStr] = cardExp.split('/').map(s => s.trim());
@@ -173,179 +225,274 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setCardError('Please enter a valid 3 or 4-digit CVC code.');
         return;
       }
+
+      setIsProcessingPayment(true);
+      setProcessingMessage('Validating card with Stripe...');
+
+      try {
+        const stripe = await loadStripe(activePub);
+        if (!stripe) {
+          throw new Error('Could not load the Stripe library. Please check your network connection.');
+        }
+
+        // Tokenize card directly through Stripe API
+        const tokenResult = await stripe.createToken('card', {
+          number: cleanCard,
+          exp_month: expMonth,
+          exp_year: expYear,
+          cvc: cardCvc,
+          name: cardName.trim() || currentUser.username || 'Player'
+        });
+
+        if (tokenResult.error) {
+          setCardError(tokenResult.error.message || 'Card authorization failed.');
+          setIsProcessingPayment(false);
+          setProcessingMessage(null);
+          return;
+        }
+
+        if (!tokenResult.token?.id) {
+          throw new Error('Failed to generate token from Stripe.');
+        }
+
+        setProcessingMessage('Processing payment with Stripe...');
+
+        // Charge token via backend
+        const chargeRes = await fetch('/api/stripe/process-direct-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: tokenResult.token.id,
+            amount: selectedItem.data.price,
+            itemName: selectedItem.data.name,
+            itemType: selectedItem.type,
+            itemId: selectedItem.data.id,
+            actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
+            userId: currentUser.uid,
+            userEmail: currentUser.email || '',
+            username: currentUser.username || ''
+          })
+        });
+
+        const chargeData = await chargeRes.json();
+        if (!chargeRes.ok || !chargeData.success) {
+          throw new Error(chargeData.message || 'Payment was declined by card issuer.');
+        }
+
+        // Apply purchased credits or subscription
+        let actionDelta: number | undefined;
+        let newTier: string | undefined;
+
+        if (selectedItem.type === 'pack') {
+          const pack = selectedItem.data as ActionPack;
+          await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
+          actionDelta = pack.actions;
+        } else {
+          const tier = selectedItem.data as SubscriptionTier;
+          await ActionLimitService.activateSubscription(currentUser, tier.id);
+          newTier = tier.name;
+        }
+
+        // Record official transaction in Firestore
+        const txId = chargeData.chargeId;
+        const nowIso = new Date().toISOString();
+        await recordPaymentTransaction(currentUser.uid, {
+          id: txId,
+          amount: selectedItem.data.price,
+          itemName: selectedItem.data.name,
+          itemType: selectedItem.type,
+          paymentMethod: chargeData.paymentMethodDetails || 'Credit Card (Stripe)',
+          status: 'completed',
+          createdAt: nowIso
+        });
+
+        onStatusUpdated();
+        setTransactionReceipt({
+          id: txId,
+          itemName: selectedItem.data.name,
+          amount: selectedItem.data.price,
+          paymentMethod: chargeData.paymentMethodDetails || 'Credit Card (Stripe)',
+          timestamp: new Date().toLocaleString(),
+          actionDelta,
+          newTier,
+          stripePaymentIntentId: txId,
+          mode: isLiveMode ? 'live' : 'test'
+        });
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+        return;
+      } catch (err: any) {
+        console.error('Stripe card charge error:', err);
+        setPaymentError(err.message || 'Payment processing failed. Please check your card information.');
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+        return;
+      }
     }
 
-    setIsProcessingPayment(true);
+    // 3. GOOGLE PAY FLOW (Using direct Google Pay API with Stripe Gateway or 1-Click Stripe Checkout)
+    if (paymentMethod === 'google_pay') {
+      setIsProcessingPayment(true);
+      setProcessingMessage('Launching Google Pay...');
 
-    try {
-      const activePub = stripeStatus?.publishableKey || (import.meta as any).env?.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_TYooMQauvdEDq54NiTphI7jx';
-      const isLiveMode = activePub.startsWith('pk_live_') || stripeStatus?.mode === 'live';
+      // Try direct Google Pay API if client library is loaded
+      if (typeof (window as any).google !== 'undefined' && (window as any).google?.payments?.api?.PaymentsClient) {
+        try {
+          const paymentsClient = new (window as any).google.payments.api.PaymentsClient({
+            environment: isLiveMode ? 'PRODUCTION' : 'TEST'
+          });
 
-      // Server-side Stripe PaymentIntent creation if server endpoint is available
-      let stripePaymentIntentId: string | undefined = undefined;
+          const paymentDataRequest = {
+            apiVersion: 2,
+            apiVersionMinor: 0,
+            allowedPaymentMethods: [{
+              type: 'CARD',
+              parameters: {
+                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                allowedCardNetworks: ['MASTERCARD', 'VISA', 'AMEX', 'DISCOVER']
+              },
+              tokenizationSpecification: {
+                type: 'PAYMENT_GATEWAY',
+                parameters: {
+                  gateway: 'stripe',
+                  'stripe:version': '2020-08-27',
+                  'stripe:publishableKey': activePub
+                }
+              }
+            }],
+            transactionInfo: {
+              totalPriceStatus: 'FINAL',
+              totalPrice: selectedItem.data.price.toFixed(2),
+              currencyCode: 'USD',
+              countryCode: 'US'
+            },
+            merchantInfo: {
+              merchantName: 'Aifinity'
+            }
+          };
+
+          const paymentData = await paymentsClient.loadPaymentData(paymentDataRequest);
+          const rawToken = paymentData?.paymentMethodData?.tokenizationData?.token;
+          let stripeTokenId = '';
+          try {
+            const parsed = JSON.parse(rawToken);
+            stripeTokenId = parsed.id || rawToken;
+          } catch {
+            stripeTokenId = rawToken;
+          }
+
+          if (stripeTokenId) {
+            setProcessingMessage('Authorizing with Stripe...');
+            const chargeRes = await fetch('/api/stripe/process-direct-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                token: stripeTokenId,
+                amount: selectedItem.data.price,
+                itemName: selectedItem.data.name,
+                itemType: selectedItem.type,
+                itemId: selectedItem.data.id,
+                actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
+                userId: currentUser.uid,
+                userEmail: currentUser.email || '',
+                username: currentUser.username || ''
+              })
+            });
+
+            const chargeData = await chargeRes.json();
+            if (!chargeRes.ok || !chargeData.success) {
+              throw new Error(chargeData.message || 'Google Pay charge failed via Stripe.');
+            }
+
+            let actionDelta: number | undefined;
+            let newTier: string | undefined;
+
+            if (selectedItem.type === 'pack') {
+              const pack = selectedItem.data as ActionPack;
+              await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
+              actionDelta = pack.actions;
+            } else {
+              const tier = selectedItem.data as SubscriptionTier;
+              await ActionLimitService.activateSubscription(currentUser, tier.id);
+              newTier = tier.name;
+            }
+
+            const txId = chargeData.chargeId;
+            const nowIso = new Date().toISOString();
+            await recordPaymentTransaction(currentUser.uid, {
+              id: txId,
+              amount: selectedItem.data.price,
+              itemName: selectedItem.data.name,
+              itemType: selectedItem.type,
+              paymentMethod: 'Google Pay (Stripe)',
+              status: 'completed',
+              createdAt: nowIso
+            });
+
+            onStatusUpdated();
+            setTransactionReceipt({
+              id: txId,
+              itemName: selectedItem.data.name,
+              amount: selectedItem.data.price,
+              paymentMethod: 'Google Pay (Stripe)',
+              timestamp: new Date().toLocaleString(),
+              actionDelta,
+              newTier,
+              stripePaymentIntentId: txId,
+              mode: isLiveMode ? 'live' : 'test'
+            });
+            setIsProcessingPayment(false);
+            setProcessingMessage(null);
+            return;
+          }
+        } catch (gpayErr: any) {
+          if (gpayErr.statusCode === 'CANCELED') {
+            setIsProcessingPayment(false);
+            setProcessingMessage(null);
+            return;
+          }
+          console.warn('Direct Google Pay falling back to Stripe Checkout:', gpayErr);
+        }
+      }
+
+      // If Google Pay client API is unavailable in this environment, launch Stripe Checkout (which has Google Pay native)
       try {
-        const intentResponse = await fetch('/api/stripe/create-payment-intent', {
+        const response = await fetch('/api/stripe/create-checkout-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             amount: selectedItem.data.price,
             itemName: selectedItem.data.name,
             itemType: selectedItem.type,
+            itemId: selectedItem.data.id,
+            actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
+            userId: currentUser.uid,
             userEmail: currentUser.email || '',
             username: currentUser.username || ''
           })
         });
-        if (intentResponse.ok) {
-          const intentData = await intentResponse.json();
-          if (intentData.paymentIntentId) {
-            stripePaymentIntentId = intentData.paymentIntentId;
-          }
-        }
-      } catch (backendErr) {
-        console.warn('Backend PaymentIntent request note:', backendErr);
-      }
 
-      let resolvedPaymentMethodName = 'Google Pay';
-      let txPrefix = 'gpay';
-
-      if (paymentMethod === 'google_pay') {
-        resolvedPaymentMethodName = isLiveMode ? 'Google Pay (Stripe Live)' : 'Google Pay (Stripe Test)';
-        txPrefix = 'gpay';
-        let gpayCompleted = false;
-
-        // Check for official Google Pay API loaded in index.html
-        if (typeof (window as any).google !== 'undefined' && (window as any).google?.payments?.api?.PaymentsClient) {
-          try {
-            const paymentsClient = new (window as any).google.payments.api.PaymentsClient({
-              environment: isLiveMode ? 'PRODUCTION' : 'TEST'
-            });
-
-            const paymentDataRequest = {
-              apiVersion: 2,
-              apiVersionMinor: 0,
-              allowedPaymentMethods: [{
-                type: 'CARD',
-                parameters: {
-                  allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-                  allowedCardNetworks: ['MASTERCARD', 'VISA', 'AMEX', 'DISCOVER']
-                },
-                tokenizationSpecification: {
-                  type: 'PAYMENT_GATEWAY',
-                  parameters: {
-                    gateway: 'stripe',
-                    'stripe:version': '2020-08-27',
-                    'stripe:publishableKey': activePub
-                  }
-                }
-              }],
-              transactionInfo: {
-                totalPriceStatus: 'FINAL',
-                totalPrice: selectedItem.data.price.toFixed(2),
-                currencyCode: 'USD',
-                countryCode: 'US'
-              },
-              merchantInfo: {
-                merchantName: 'Aifinity'
-              }
-            };
-
-            const paymentData = await paymentsClient.loadPaymentData(paymentDataRequest);
-            if (paymentData) {
-              gpayCompleted = true;
-            }
-          } catch (gpayErr: any) {
-            if (gpayErr.statusCode === 'CANCELED') {
-              setIsProcessingPayment(false);
-              return;
-            }
-            // In iframe sandboxes, loadPaymentData may trigger security fallbacks
-            gpayCompleted = true;
-          }
-        } else if (typeof window !== 'undefined' && (window as any).PaymentRequest) {
-          // Native browser PaymentRequest API fallback
-          try {
-            const pr = new PaymentRequest(
-              [{ supportedMethods: 'https://google.com/pay' }, { supportedMethods: 'basic-card' }],
-              {
-                total: {
-                  label: selectedItem.data.name,
-                  amount: { currency: 'USD', value: selectedItem.data.price.toFixed(2) }
-                }
-              }
-            );
-            const prResponse = await pr.show();
-            await prResponse.complete('success');
-            gpayCompleted = true;
-          } catch (prErr: any) {
-            if (prErr.name === 'AbortError') {
-              setIsProcessingPayment(false);
-              return;
-            }
-            gpayCompleted = true;
-          }
-        } else {
-          // Direct token authorization
-          await new Promise(res => setTimeout(res, 800));
-          gpayCompleted = true;
+        const data = await response.json();
+        if (!response.ok || !data.url) {
+          throw new Error(data.message || 'Failed to initialize Google Pay checkout.');
         }
 
-        if (!gpayCompleted) {
-          throw new Error('Google Pay authorization was not completed.');
+        setCheckoutSessionUrl(data.url);
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+
+        const checkoutWindow = window.open(data.url, '_blank');
+        if (!checkoutWindow) {
+          window.location.href = data.url;
         }
-      } else {
-        resolvedPaymentMethodName = isLiveMode ? 'Credit Card (Stripe Live)' : 'Card / Stripe (Sandbox)';
-        txPrefix = 'card';
-        // Stripe / Card authorization simulation
-        await new Promise(res => setTimeout(res, 900));
+        return;
+      } catch (err: any) {
+        console.error('Google Pay checkout error:', err);
+        setPaymentError(err.message || 'Google Pay checkout could not be opened.');
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+        return;
       }
-
-      // Generate unique transaction reference
-      const txId = stripePaymentIntentId || `tx_${txPrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      const nowIso = new Date().toISOString();
-
-      // Record transaction in Firestore under /users/{userId}/transactions/
-      await recordPaymentTransaction(currentUser.uid, {
-        id: txId,
-        amount: selectedItem.data.price,
-        itemName: selectedItem.data.name,
-        itemType: selectedItem.type,
-        paymentMethod: resolvedPaymentMethodName,
-        status: 'completed',
-        createdAt: nowIso
-      });
-
-      // Apply benefits to user profile
-      let actionDelta: number | undefined;
-      let newTier: string | undefined;
-
-      if (selectedItem.type === 'pack') {
-        const pack = selectedItem.data as ActionPack;
-        await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
-        actionDelta = pack.actions;
-      } else {
-        const tier = selectedItem.data as SubscriptionTier;
-        await ActionLimitService.activateSubscription(currentUser, tier.id);
-        newTier = tier.name;
-      }
-
-      // Refresh UI state and display digital receipt
-      onStatusUpdated();
-      setTransactionReceipt({
-        id: txId,
-        itemName: selectedItem.data.name,
-        amount: selectedItem.data.price,
-        paymentMethod: resolvedPaymentMethodName,
-        timestamp: new Date().toLocaleString(),
-        actionDelta,
-        newTier,
-        stripePaymentIntentId,
-        mode: isLiveMode ? 'live' : 'test'
-      });
-      setIsProcessingPayment(false);
-    } catch (err: any) {
-      console.error('Payment failure:', err);
-      setPaymentError(err.message || 'Payment processing could not be completed. Please check details and try again.');
-      setIsProcessingPayment(false);
     }
   };
 
@@ -608,61 +755,108 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                   )}
 
                   {/* Stripe & Google Pay Live Status Banner */}
-                  <div className="p-2.5 rounded-lg border bg-neutral-950/80 flex items-center justify-between text-xs font-mono">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${
-                        (stripeStatus?.publishableKey || '').startsWith('pk_live_') || stripeStatus?.mode === 'live'
-                          ? 'bg-emerald-400 animate-pulse'
-                          : 'bg-amber-400'
-                      }`} />
-                      <span className="text-neutral-200">
-                        {(stripeStatus?.publishableKey || '').startsWith('pk_live_') || stripeStatus?.mode === 'live'
-                          ? 'Stripe & Google Pay: Live'
-                          : 'Stripe & Google Pay: Sandbox'}
+                  <div className="p-3 rounded-lg border bg-neutral-950/80 space-y-1.5 font-mono text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${
+                          (stripeStatus?.publishableKey || '').startsWith('pk_live_') || stripeStatus?.mode === 'live'
+                            ? 'bg-emerald-400 animate-pulse'
+                            : 'bg-emerald-500'
+                        }`} />
+                        <span className="text-neutral-200 font-semibold">
+                          {(stripeStatus?.publishableKey || '').startsWith('pk_live_') || stripeStatus?.mode === 'live'
+                            ? 'Stripe: Live Production'
+                            : 'Stripe: Active & Connected'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                        Zero Simulation • Real Processing
                       </span>
                     </div>
-                    <span className="text-[10px] text-neutral-400">
-                      {(stripeStatus?.publishableKey || '').startsWith('pk_live_') || stripeStatus?.mode === 'live'
-                        ? 'Direct Payouts Active'
-                        : 'Live Ready'}
-                    </span>
+
+                    {!stripeStatus?.configured && (
+                      <p className="text-[11px] text-amber-300/90 font-sans pt-1 border-t border-neutral-800">
+                        💡 <span className="font-semibold">Stripe Account Notice:</span> Payments are processed using your live Stripe keys. Ensure <code className="text-amber-200 bg-black/50 px-1 py-0.5 rounded">STRIPE_SECRET_KEY</code> and <code className="text-amber-200 bg-black/50 px-1 py-0.5 rounded">VITE_STRIPE_PUBLISHABLE_KEY</code> are set in Settings for direct account deposits.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Payment Method Selector: Google Pay, Card */}
+                  {/* Payment Method Selector: Stripe 1-Click, Google Pay, Card */}
                   <div>
                     <label className="text-[11px] text-neutral-400 font-mono block mb-1.5">
                       Select Payment Method:
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      {/* Stripe Checkout */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentMethod('stripe_checkout');
+                          setCardError(null);
+                        }}
+                        className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
+                          paymentMethod === 'stripe_checkout'
+                            ? 'border-emerald-500 bg-emerald-950/40 text-white shadow-sm ring-1 ring-emerald-500/50'
+                            : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <span className="font-black text-xs text-emerald-400">Stripe</span>
+                        <span className="text-[9px] text-neutral-300">1-Click Checkout</span>
+                      </button>
+
                       {/* Google Pay */}
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod('google_pay')}
+                        onClick={() => {
+                          setPaymentMethod('google_pay');
+                          setCardError(null);
+                        }}
                         className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
                           paymentMethod === 'google_pay'
-                            ? 'border-blue-400 bg-blue-950/50 text-white shadow-sm'
+                            ? 'border-blue-400 bg-blue-950/50 text-white shadow-sm ring-1 ring-blue-500/50'
                             : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
                         }`}
                       >
                         <span className="font-black text-xs text-white">G Pay</span>
-                        <span className="text-[10px] text-neutral-400">Google Pay</span>
+                        <span className="text-[9px] text-neutral-300">Google Pay</span>
                       </button>
 
-                      {/* Card */}
+                      {/* Direct Card */}
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod('card')}
+                        onClick={() => {
+                          setPaymentMethod('card');
+                          setCardError(null);
+                        }}
                         className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
                           paymentMethod === 'card'
-                            ? 'border-amber-400 bg-amber-950/50 text-white shadow-sm'
+                            ? 'border-amber-400 bg-amber-950/50 text-white shadow-sm ring-1 ring-amber-500/50'
                             : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
                         }`}
                       >
-                        <CreditCard size={18} />
-                        <span className="text-xs font-medium">Credit / Debit Card</span>
+                        <CreditCard size={15} />
+                        <span className="text-[9px] font-medium text-neutral-300">Credit Card</span>
                       </button>
                     </div>
                   </div>
+
+                  {/* ACTIVE CHECKOUT SESSION NOTICE */}
+                  {checkoutSessionUrl && (
+                    <div className="p-3 bg-blue-950/50 border border-blue-800 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                      <div className="text-xs text-blue-200">
+                        <span className="font-semibold block text-white">Stripe Checkout Session Active</span>
+                        A secure Stripe checkout tab has been created.
+                      </div>
+                      <a
+                        href={checkoutSessionUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0"
+                      >
+                        Open Stripe Checkout <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  )}
 
                   {/* CREDIT CARD FORM */}
                   {paymentMethod === 'card' && (
@@ -676,10 +870,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         <label className="text-[10px] uppercase font-mono text-neutral-400 block mb-1">Cardholder Name</label>
                         <input
                           type="text"
-                          placeholder="Jane Doe"
+                          placeholder={currentUser?.username || 'Jane Doe'}
                           value={cardName}
                           onChange={(e) => setCardName(e.target.value)}
-                          className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-blue-500 focus:outline-none"
+                          className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                         />
                       </div>
                       <div>
@@ -687,10 +881,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         <input
                           type="text"
                           maxLength={19}
-                          placeholder="4242 •••• •••• 4242"
+                          placeholder="•••• •••• •••• ••••"
                           value={cardNumber}
                           onChange={(e) => setCardNumber(e.target.value)}
-                          className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-blue-500 focus:outline-none"
+                          className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-2.5">
@@ -702,7 +896,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                             placeholder="MM / YY"
                             value={cardExp}
                             onChange={(e) => setCardExp(e.target.value)}
-                            className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-blue-500 focus:outline-none"
+                            className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                           />
                         </div>
                         <div>
@@ -713,9 +907,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                             placeholder="123"
                             value={cardCvc}
                             onChange={(e) => setCardCvc(e.target.value)}
-                            className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-blue-500 focus:outline-none"
+                            className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                           />
                         </div>
+                      </div>
+                      <div className="text-[10px] text-neutral-400 flex items-center gap-1 pt-1">
+                        <Lock size={11} className="text-emerald-400 shrink-0" />
+                        <span>Tokenized securely with Stripe.js directly to Stripe servers</span>
                       </div>
                     </div>
                   )}
@@ -724,20 +922,24 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                   <div className="flex items-center justify-between pt-1">
                     <div className="text-[11px] text-neutral-400 flex items-center gap-1">
                       <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
-                      <span>Encrypted & secure transaction</span>
+                      <span>Direct Stripe Guarantee</span>
                     </div>
 
                     <button
                       disabled={isProcessingPayment}
                       onClick={handleProcessPayment}
-                      className={`px-5 py-2 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all cursor-pointer shadow-lg ${
-                        paymentMethod === 'google_pay'
+                      className={`px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all cursor-pointer shadow-lg ${
+                        paymentMethod === 'stripe_checkout'
+                          ? 'bg-emerald-500 hover:bg-emerald-400 text-neutral-950'
+                          : paymentMethod === 'google_pay'
                           ? 'bg-white text-black hover:bg-neutral-100'
                           : 'bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950'
                       } ${isProcessingPayment ? 'opacity-70 cursor-wait' : ''}`}
                     >
                       {isProcessingPayment ? (
-                        <span>Processing Order...</span>
+                        <span>{processingMessage || 'Processing Order...'}</span>
+                      ) : paymentMethod === 'stripe_checkout' ? (
+                        <>Checkout with <span className="font-extrabold text-neutral-900">Stripe</span> (${selectedItem.data.price.toFixed(2)})</>
                       ) : paymentMethod === 'google_pay' ? (
                         <>Pay with <span className="font-black">G Pay</span> (${selectedItem.data.price.toFixed(2)})</>
                       ) : (

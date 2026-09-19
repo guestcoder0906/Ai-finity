@@ -244,6 +244,66 @@ function App() {
     return '/';
   });
 
+  const [stripeReturnMessage, setStripeReturnMessage] = useState<{
+    type: 'success' | 'info' | 'error';
+    text: string;
+  } | null>(null);
+
+  // Catch returns from Stripe Checkout sessions
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('stripe_session_id');
+    const stripeStatusParam = urlParams.get('stripe_status');
+
+    if (sessionId) {
+      window.history.replaceState({}, '', window.location.pathname);
+      fetch(`/api/stripe/verify-checkout-session?sessionId=${encodeURIComponent(sessionId)}`)
+        .then(res => res.json())
+        .then(async (data) => {
+          if (data.paid) {
+            const meta = data.metadata || {};
+            const uid = meta.userId || currentUser?.uid;
+            if (uid) {
+              if (meta.itemType === 'pack') {
+                const delta = parseInt(meta.actionDelta, 10) || 0;
+                if (currentUser) {
+                  await ActionLimitService.addPurchasedCredits(currentUser, delta);
+                }
+              } else if (meta.itemType === 'tier') {
+                if (currentUser && meta.itemId) {
+                  await ActionLimitService.activateSubscription(currentUser, meta.itemId);
+                }
+              }
+              await recordPaymentTransaction(uid, {
+                id: sessionId,
+                amount: data.amount,
+                itemName: meta.itemName || 'Market Purchase',
+                itemType: meta.itemType || 'pack',
+                paymentMethod: 'Stripe Checkout',
+                status: 'completed',
+                createdAt: new Date().toISOString()
+              });
+            }
+            refreshActionStatus();
+            setStripeReturnMessage({
+              type: 'success',
+              text: `🎉 Stripe Payment Verified! Purchase of ${meta.itemName || 'Item'} ($${data.amount.toFixed(2)}) has been credited to your account.`
+            });
+          }
+        })
+        .catch(err => {
+          console.error('Failed to verify Stripe checkout session:', err);
+        });
+    } else if (stripeStatusParam === 'cancelled') {
+      window.history.replaceState({}, '', window.location.pathname);
+      setStripeReturnMessage({
+        type: 'info',
+        text: 'Stripe Checkout was cancelled.'
+      });
+    }
+  }, [currentUser, refreshActionStatus]);
+
   useEffect(() => {
     const handleLocationChange = () => {
       if (isWelcomeRouteActive()) {
@@ -719,6 +779,21 @@ function App() {
       className="flex flex-col md:flex-row w-full bg-black text-gray-200 overflow-hidden"
       style={{ height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }}
     >
+      {/* Stripe Return Notification Banner */}
+      {stripeReturnMessage && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-[92%] p-3.5 rounded-xl border shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
+            <span className="text-base">💎</span>
+            <span>{stripeReturnMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setStripeReturnMessage(null)}
+            className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {showMultiplayerModal && (
         <MainMenu
           onHostGame={handleHostGame}
