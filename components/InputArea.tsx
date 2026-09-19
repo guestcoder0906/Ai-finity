@@ -17,7 +17,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled, recommendations
   };
 
   return (
-    <div className="flex flex-col border-t border-neutral-800 bg-neutral-900 pb-[env(safe-area-inset-bottom,0px)] shrink-0">
+    <div className="flex flex-col border-t border-neutral-800 bg-neutral-900 safe-area-bottom shrink-0">
       {recommendations && recommendations.length > 0 && !disabled && (
         <div className="flex items-center gap-1.5 p-1.5 px-2.5 sm:px-4 bg-neutral-950 border-b border-neutral-800 overflow-x-auto no-scrollbar">
           {recommendations.map((rec, idx) => (

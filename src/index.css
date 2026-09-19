@@ -1,18 +1,34 @@
 @import "tailwindcss";
 
-/* Lock root to prevent rubber-band bounce and window scrolling on iOS */
-html, body, #root {
-  height: 100%;
+:root {
+  --app-height: 100dvh;
+}
+
+html, body {
   width: 100%;
+  height: 100%;
+  height: var(--app-height, 100dvh);
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  position: fixed;
-  inset: 0;
   background-color: #000000;
-  overscroll-behavior: none;
-  -webkit-overflow-scrolling: touch;
   -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Safe area padding for mobile home indicator */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Prevent iOS Safari auto-zoom on input focus */
@@ -22,21 +38,15 @@ html, body, #root {
   }
 }
 
-/* Momentum touch scrolling for all scroll containers */
+/* Momentum touch scrolling for scroll containers */
 .overflow-y-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
-  touch-action: pan-y;
 }
 
 .overflow-x-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-  touch-action: pan-x;
 }
 
 .overflow-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  touch-action: pan-x pan-y;
 }

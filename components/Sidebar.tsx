@@ -192,7 +192,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         md:relative md:inset-auto md:z-auto md:w-80 md:h-full md:bg-neutral-900 md:border-r md:border-neutral-800 md:flex-col
         text-[11px] md:text-xs font-mono overflow-hidden shrink-0
       `}
-      style={{ WebkitOverflowScrolling: 'touch' }}
+      style={{
+        WebkitOverflowScrolling: 'touch',
+        ...(effectiveMobileOpen ? { height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' } : {})
+      }}
     >
       {/* Mobile Drawer Header Bar (Visible on mobile when drawer is opened) */}
       <div className="md:hidden flex items-center justify-between px-3 py-2 bg-neutral-900 border-b border-neutral-800 shrink-0">

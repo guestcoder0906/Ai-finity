@@ -25,7 +25,11 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onEnterGame }) => {
   }, [countdown, isPaused, onEnterGame]);
 
   return (
-    <div id="welcome-page" className="min-h-screen w-full bg-black text-gray-100 flex flex-col justify-between font-sans selection:bg-blue-600 selection:text-white">
+    <div
+      id="welcome-page"
+      className="h-full w-full overflow-y-auto bg-black text-gray-100 flex flex-col justify-between font-sans selection:bg-blue-600 selection:text-white"
+      style={{ WebkitOverflowScrolling: 'touch' }}
+    >
       {/* Top Navigation */}
       <header id="welcome-header" className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">

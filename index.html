@@ -32,6 +32,20 @@
         background: #444;
       }
     </style>
+    <script>
+      (function() {
+        function updateAppHeight() {
+          var h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+          document.documentElement.style.setProperty('--app-height', h + 'px');
+        }
+        updateAppHeight();
+        window.addEventListener('resize', updateAppHeight);
+        window.addEventListener('orientationchange', updateAppHeight);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', updateAppHeight);
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/index.css">
   </head>
   <body class="bg-black text-gray-200 overflow-hidden">

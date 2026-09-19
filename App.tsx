@@ -137,6 +137,29 @@ function App() {
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [mobilePanelTab, setMobilePanelTab] = useState<'files' | 'map'>('files');
 
+  // Dynamically keep app height strictly bounded to mobile visual viewport (handles address bar and virtual keyboard)
+  useEffect(() => {
+    const updateAppHeight = () => {
+      const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${h}px`);
+    };
+    updateAppHeight();
+    window.addEventListener('resize', updateAppHeight);
+    window.addEventListener('orientationchange', updateAppHeight);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateAppHeight);
+      window.visualViewport.addEventListener('scroll', updateAppHeight);
+    }
+    return () => {
+      window.removeEventListener('resize', updateAppHeight);
+      window.removeEventListener('orientationchange', updateAppHeight);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', updateAppHeight);
+        window.visualViewport.removeEventListener('scroll', updateAppHeight);
+      }
+    };
+  }, []);
+
   const refreshActionStatus = useCallback(() => {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
   }, [currentUser, guestId]);
@@ -666,7 +689,10 @@ function App() {
   }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen h-[100dvh] w-full bg-black text-gray-200 overflow-hidden">
+    <div
+      className="flex flex-col md:flex-row w-full bg-black text-gray-200 overflow-hidden"
+      style={{ height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }}
+    >
       {showMultiplayerModal && (
         <MainMenu
           onHostGame={handleHostGame}

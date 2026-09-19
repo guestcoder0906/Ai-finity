@@ -94,7 +94,7 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
     <div
       ref={containerRef}
       className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3.5 font-mono bg-black min-h-0 text-xs sm:text-[13px] md:text-sm leading-relaxed"
-      style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}
+      style={{ WebkitOverflowScrolling: 'touch' }}
       onClick={handleClick}
     >
       {(history || []).length === 0 && (
