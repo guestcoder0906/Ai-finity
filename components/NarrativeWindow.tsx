@@ -11,10 +11,13 @@ interface NarrativeWindowProps {
 }
 
 const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onReferenceClick, debugMode, username }) => {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (containerRef.current) {
+      // Scroll container directly to prevent mobile browser window/body scroll displacement
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
   }, [history]);
 
   // Helper to parse text with [Links], hide[...], and target(...)
@@ -88,7 +91,12 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3.5 font-mono bg-black min-h-0 text-xs sm:text-[13px] md:text-sm leading-relaxed" onClick={handleClick}>
+    <div
+      ref={containerRef}
+      className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3.5 font-mono bg-black min-h-0 text-xs sm:text-[13px] md:text-sm leading-relaxed"
+      style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}
+      onClick={handleClick}
+    >
       {(history || []).length === 0 && (
         <div className="text-green-500 italic flex flex-col gap-1.5 sm:gap-2 text-xs sm:text-sm">
           <span>Initializing system connection...</span>
@@ -111,7 +119,6 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
           </div>
         );
       })}
-      <div ref={bottomRef} />
     </div>
   );
 };

@@ -29,7 +29,7 @@ import {
 } from './services/authService';
 import { ActionLimitService, ActionStatus } from './services/actionLimitService';
 import { SavedAdventure, CommunityAdventure } from './services/adventuresService';
-import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown, Menu, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from 'lucide-react';
+import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown, Menu, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, FileText, Map as MapIcon } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
 const fileSystem = new FileSystem();
@@ -134,6 +134,8 @@ function App() {
   const [adventureToShare, setAdventureToShare] = useState<SavedAdventure | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isMobileTopMenuOpen, setIsMobileTopMenuOpen] = useState(false);
+  const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
+  const [mobilePanelTab, setMobilePanelTab] = useState<'files' | 'map'>('files');
 
   const refreshActionStatus = useCallback(() => {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
@@ -631,6 +633,8 @@ function App() {
     const filename = fileSystem.findFileByReference(ref);
     if (filename) {
       setExpandedFile(filename);
+      setMobilePanelTab('files');
+      setIsMobilePanelOpen(true);
     }
   };
 
@@ -780,6 +784,10 @@ function App() {
         onOpenAccount={() => setIsAccountModalOpen(true)}
         onOpenAdventures={() => setIsAdventuresModalOpen(true)}
         onOpenCommunity={() => setIsCommunityModalOpen(true)}
+        isMobileOpen={isMobilePanelOpen}
+        onCloseMobile={() => setIsMobilePanelOpen(false)}
+        mobileTab={mobilePanelTab}
+        onSetMobileTab={setMobilePanelTab}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
@@ -935,19 +943,41 @@ function App() {
           </div>
 
           {/* Mobile Top Bar (Single compact line on < md) */}
-          <div className="flex md:hidden px-2.5 py-1.5 justify-between items-center gap-1.5 text-[10.5px]">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-blue-400 font-semibold tracking-wide truncate max-w-[130px]" title={worldTime}>
-                {worldTime || "TIME: ACTIVE"}
+          <div className="flex md:hidden px-2.5 py-1.5 justify-between items-center gap-1 text-[10px] sm:text-[10.5px]">
+            <div className="flex items-center gap-1 min-w-0">
+              <button
+                onClick={() => {
+                  setMobilePanelTab('files');
+                  setIsMobilePanelOpen(true);
+                }}
+                className="px-2 py-0.5 rounded bg-blue-950/80 active:bg-blue-900 border border-blue-800/80 text-blue-300 font-semibold flex items-center gap-1 shrink-0 transition-colors active:scale-95"
+                title="Open World Files & Character Sheet"
+              >
+                <FileText size={11} className="text-blue-400" />
+                <span>Files ({files.length})</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobilePanelTab('map');
+                  setIsMobilePanelOpen(true);
+                }}
+                className="px-2 py-0.5 rounded bg-emerald-950/80 active:bg-emerald-900 border border-emerald-800/80 text-emerald-300 font-semibold flex items-center gap-1 shrink-0 transition-colors active:scale-95"
+                title="Open Map"
+              >
+                <MapIcon size={11} className="text-emerald-400" />
+                <span>Map</span>
+              </button>
+              <span className="text-blue-400 font-semibold tracking-wide truncate max-w-[70px] sm:max-w-[120px]" title={worldTime}>
+                {worldTime || "TIME"}
               </span>
               {gameMode === 'multiplayer' && roomState && (
-                <span className="text-emerald-400 text-[9.5px] bg-emerald-950/70 border border-emerald-800/60 px-1 py-0.2 rounded truncate">
-                  Room: {roomState.id}
+                <span className="text-emerald-400 text-[9px] bg-emerald-950/70 border border-emerald-800/60 px-1 py-0.2 rounded truncate">
+                  {roomState.id}
                 </span>
               )}
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               {/* Compact Market / Actions status */}
               <button
                 onClick={() => {
@@ -1021,6 +1051,32 @@ function App() {
                 >
                   <Globe size={12} className="text-emerald-400" />
                   <span>Community</span>
+                </button>
+              </div>
+
+              {/* World Files and Map Links in Mobile Menu */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    setMobilePanelTab('files');
+                    setIsMobilePanelOpen(true);
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-blue-300 rounded border border-neutral-800 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <FileText size={12} className="text-blue-400" />
+                  <span>Files & Character</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    setMobilePanelTab('map');
+                    setIsMobilePanelOpen(true);
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-emerald-300 rounded border border-neutral-800 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <MapIcon size={12} className="text-emerald-400" />
+                  <span>Interactive Map</span>
                 </button>
               </div>
 
