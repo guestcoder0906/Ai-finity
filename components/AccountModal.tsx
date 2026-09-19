@@ -67,24 +67,11 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = (currentUser?.role === 'mod') && !isAdmin;
   const isStaff = isAdmin || isMod;
-
-  useEffect(() => {
-    if (currentUser) {
-      setGlowingEnabled(currentUser.showGlowingName !== false);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (isOpen && isStaff) {
-      loadUsers('');
-    }
-  }, [isOpen, isStaff]);
-
-  if (!isOpen || !currentUser) return null;
 
   const loadUsers = async (queryTerm: string) => {
     setLoadingUsers(true);
@@ -101,6 +88,20 @@ export const AccountModal: React.FC<AccountModalProps> = ({
       setLoadingUsers(false);
     }
   };
+
+  useEffect(() => {
+    if (currentUser) {
+      setGlowingEnabled(currentUser.showGlowingName !== false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (isOpen && isStaff) {
+      loadUsers('');
+    }
+  }, [isOpen, isStaff]);
+
+  if (!isOpen || !currentUser) return null;
 
   const handleToggleGlowing = async () => {
     const next = !glowingEnabled;
@@ -172,8 +173,6 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     }
     setActionLoading(false);
   };
-
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
   const handleResetActions = async () => {
     if (!selectedUser) return;

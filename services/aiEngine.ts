@@ -117,9 +117,20 @@ CRITICAL JSON SYNTAX & BRACKET INTEGRITY (READ CAREFULLY):
 
 STAT PERSISTENCE RULE (CRITICAL):
 - The files are the ONLY persistent memory. Any change mentioned in the narrative or 'updates' array MUST be reflected in the updated content of the relevant file.
-- If a player takes damage, you MUST include the updated "CharacterName-USERNAME.txt" file in your 'files' response object.
-- If an NPC is wounded, you MUST update their file (or the shared group file).
+- If a player takes damage, expends energy/stamina/mana (combat maneuvers, attacks, spells, sprinting, physical exertion), or recovers resources (resting, sleeping, potions, food), you MUST include the updated "CharacterName-USERNAME.txt" file in your 'files' response object with their new Health and Energy values calculated.
+- If an NPC is wounded or expends resources, you MUST update their file (or the shared group file).
 - NEVER assume the system will "remember" a stat change unless it is written into a file.
+
+ENERGY & STAMINA MANAGEMENT RULE (CRITICAL):
+- Every strenuous action, weapon attack, sprint, physical feat, or magical ability costs Energy, Stamina, or Mana according to the character's abilities or World Rules.
+- Resting, sleeping, or catching breath restores Energy/Stamina.
+- Whenever energy changes, you MUST:
+  1. Calculate the new energy: clamp(Current Energy + Delta, 0, Max Energy).
+  2. Update the line in the character's file: "- Energy/Mana/Stamina: NewCurrent / Max"
+  3. Include the character file in the "files" object.
+  4. Include the change in the "updates" array: {"type": "stat", "text": "Energy -X" (or "+X"), "value": -X}
+  5. Reflect the updated energy in the Guide.txt Master Stat Table.
+- NEVER narrate spending or restoring energy without updating the character file. NEVER forget to update the character's energy when it changes.
 
 ENTITY FILE SCHEMA:
 All character/NPC/Entity files MUST follow this structured format for consistency:
@@ -402,9 +413,9 @@ COMPLETE CHARACTER FILES & ZERO MISSING SECTIONS RULE (CRITICAL):
 - It MUST contain every section completely—never omit, shorten, or forget any section.
 
 COMPREHENSIVE STORY & STAT UPDATE RESOLUTION RULE (CRITICAL):
-- Make sure the AI does not forget anything needed to update—such as updating health for example—instead of cutting the story short and not updating it or not finishing that part of the story after that action(s).
+- Make sure the AI does not forget anything needed to update—such as updating health and energy/stamina/mana—instead of cutting the story short and not updating it or not finishing that part of the story after that action(s).
 - NEVER cut the story short. The narrative must fully resolve and finish that part of the story following the player's action(s), describing the full outcomes, impacts, and reactions.
-- Whenever an action results in damage, healing, exhaustion, recovery, or inventory changes, you MUST update the stats immediately (such as updating health for example) both in the 'updates' array AND in the updated file content in 'files' (such as updating the player's health in their character file). Never leave stats un-updated or cut narrative short before concluding the action's aftermath.`;
+- Whenever an action results in damage, healing, exhaustion, energy/stamina expenditure, recovery, or inventory changes, you MUST update the stats immediately (updating health and energy/stamina/mana) both in the 'updates' array AND in the updated file content in 'files' (such as updating the player's energy and health in their character file). Never leave stats un-updated or cut narrative short before concluding the action's aftermath.`;
 
 const ACTION_AUDIT_PROMPT = `TASK: Technical Requirement Audit.
 You are the High-Efficiency Logic Auditor for the Aifinity system.
@@ -418,6 +429,7 @@ INSTRUCTIONS:
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
 6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
+7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY: Check if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana. If energy/stamina changes, you MUST add the character's file ("CharacterName-USERNAME.txt") to "filesToUpdate" and specify the expected energy change.
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -446,6 +458,11 @@ OUTPUT FORMAT (Strict JSON only):
     "activePages": ["Page_1_Surface", "Page_2_Underground"],
     "entitiesToPlace": ["Player_A", "Player_B", "Bandit_1", "Bandit_2", "Chest_01"],
     "spatialNotes": "Player_B entered dungeon; must create new page while preserving surface page for Player_A."
+  },
+  "energyAudit": {
+    "character": "CharacterName",
+    "expectedChange": -10,
+    "reason": "Attack / spell / physical exertion / rest"
   },
   "filesToCreate": ["List of filenames to immediately generate"],
   "filesToUpdate": ["List of filenames that must be modified (Player, NPCs, etc)"],
@@ -561,6 +578,15 @@ export class AIEngine {
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
+          // Auto-include player character file in filesToUpdate if energy or stats are affected
+          const playerFile = this.findPlayerCharacterFile(username);
+          if (playerFile && audit.energyAudit && audit.energyAudit.expectedChange !== 0) {
+            if (!audit.filesToUpdate) audit.filesToUpdate = [];
+            if (!audit.filesToUpdate.includes(playerFile)) {
+              audit.filesToUpdate.push(playerFile);
+            }
+          }
+
           const executionPrompt = `Current Files Context:\n${worldContext}\n\n${spatialContext}\n\n${userHeader}Player action: ${action}\n\nTECHNICAL PLAN (Follow strictly):\n1. Resolve these checks: ${resolvedCheckReport || "None"}\n2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}\n3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}\n4. Temporal Shift: ${timeShiftNotice}\n5. Map Update Required: ${mapReq}\n\nProcess this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
 
 CRITICAL REMINDERS:
@@ -570,7 +596,7 @@ CRITICAL REMINDERS:
    - CRITICAL: Do NOT omit pages for players who did not take this turn. If players are separated, return ALL pages in the "pages" array.
    - Every entity, NPC, obstacle, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
 4. WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
-5. STATS: Use MATH FORMULAS ONLY for stats.
+5. STATS & ENERGY: Whenever energy, stamina, or mana is expended or restored (from attacks, abilities, spells, sprinting, physical exertion, or resting), you MUST update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the change in the "updates" array (e.g. {"type": "stat", "text": "Energy -10", "value": -10}). NEVER forget to update the character's energy when it changes.
 6. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".`;
 
           const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite');
@@ -1028,7 +1054,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       ).join(' ');
 
       const followUpPrompt = `PREVIOUS CONTEXT: ${userPrompt}\n\n[SYSTEM: Probability Engine Results]\n\n${resultReport}\n\nBased on these FAIR and FINAL results, generate the highly detailed narrative and extensive file updates. Calculate exact dynamic outcomes (e.g., damage = base * probability result) WITHOUT using dice notation. 
-      CRITICAL: You MUST include the exact text "${fullDetailsHtml}" at the very beginning or end of your narrative so the player can click to see the full mathematical details. Do not alter the formatting of that string. Include the Check Name and Result (e.g. "[Jump: Failure]") natively in the narrative text as well.`;
+      CRITICAL: You MUST include the exact text "${fullDetailsHtml}" at the very beginning or end of your narrative so the player can click to see the full mathematical details. Do not alter the formatting of that string. Include the Check Name and Result (e.g. "[Jump: Failure]") natively in the narrative text as well.
+      CRITICAL STAT & ENERGY UPDATE: If this action, attack, ability, or spell consumes or restores stamina, mana, or energy (or causes damage), you MUST include the updated "CharacterName-USERNAME.txt" in your 'files' object with the exact updated Energy/Mana/Stamina value in [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the stat change in the 'updates' array.`;
 
       // We make a fresh call with the context combined, as we don't maintain a full chat history object here 
       // (The FS is the history source of truth).
@@ -1254,8 +1281,314 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     return thresholds;
   }
 
+  /**
+   * Helper to locate the player character file from either an incoming files object or the local file system.
+   */
+  private findPlayerCharacterFile(username?: string, filesObj?: any): string | null {
+    const listFromFiles = filesObj ? Object.keys(filesObj) : [];
+    const listFromFs = this.fs.list();
+    const candidateFiles = Array.from(new Set([...listFromFiles, ...listFromFs]));
+
+    if (username) {
+      const cleanUser = username.replace(/\s*\(guest\)$/i, '').trim().toLowerCase();
+      const rawUser = username.trim().toLowerCase();
+      
+      const match = candidateFiles.find(f => {
+        if (!f.endsWith('.txt')) return false;
+        const lower = f.toLowerCase();
+        return lower.endsWith(`-${rawUser}.txt`) ||
+               lower.endsWith(`_${rawUser}.txt`) ||
+               lower.endsWith(` ${rawUser}.txt`) ||
+               lower.endsWith(`-${cleanUser}.txt`) ||
+               lower.endsWith(`_${cleanUser}.txt`) ||
+               lower.endsWith(` ${cleanUser}.txt`) ||
+               lower.replace(/\.txt$/, '').trim().endsWith(cleanUser);
+      });
+      if (match) return match;
+    }
+
+    // Fallback: search for character files (has [NAME & DESCRIPTION] or [STATS & MODIFIERS] with Energy/Mana/Stamina)
+    const characterFile = candidateFiles.find(f => {
+      if (!f.endsWith('.txt')) return false;
+      if (f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt' || f.startsWith('Map_') || f.startsWith('temp_') || f.startsWith('debug_')) return false;
+      const content = filesObj && filesObj[f]
+        ? (typeof filesObj[f] === 'string' ? filesObj[f] : filesObj[f].content)
+        : this.fs.read(f);
+      return typeof content === 'string' &&
+             (content.includes('[STATS & MODIFIERS]') || content.includes('[NAME & DESCRIPTION]') || content.includes('Energy/Mana/Stamina:'));
+    });
+
+    return characterFile || null;
+  }
+
+  /**
+   * Parses current and max Energy/Mana/Stamina from character file text.
+   */
+  private parseCharacterEnergy(content: string): { prefix: string; current: number; max: number; suffix: string; rawLine: string } | null {
+    if (!content) return null;
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const match = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Energy(?:\/(?:Mana|Stamina))*|Stamina(?:\/(?:Energy|Mana))*|Mana(?:\/(?:Energy|Stamina))*)(?:\s*\/\s*(?:Mana|Stamina|Energy))*(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+      if (match) {
+        const current = parseFloat(match[2]);
+        const max = parseFloat(match[3]);
+        if (!isNaN(current) && !isNaN(max)) {
+          return {
+            prefix: match[1],
+            current,
+            max,
+            suffix: match[4] || '',
+            rawLine: line
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Replaces or inserts the Energy line in character file content with new current value.
+   */
+  private updateCharacterEnergyInContent(content: string, newCurrent: number): string {
+    const parsed = this.parseCharacterEnergy(content);
+    if (parsed) {
+      const clamped = Math.max(0, Math.min(parsed.max, Math.round(newCurrent)));
+      const updatedLine = `${parsed.prefix}${clamped} / ${parsed.max}${parsed.suffix}`;
+      return content.replace(parsed.rawLine, updatedLine);
+    }
+
+    // If no existing energy line, insert under - Health: or [STATS & MODIFIERS]
+    const clamped = Math.max(0, Math.round(newCurrent));
+    const healthMatch = content.match(/^(\s*[-*•]?\s*Health[:=].*)$/im);
+    if (healthMatch) {
+      return content.replace(healthMatch[0], `${healthMatch[0]}\n- Energy/Mana/Stamina: ${clamped} / 100`);
+    }
+
+    const statsHeaderIdx = content.indexOf('[STATS & MODIFIERS]');
+    if (statsHeaderIdx >= 0) {
+      const insertPos = statsHeaderIdx + '[STATS & MODIFIERS]'.length;
+      return content.slice(0, insertPos) + `\n- Energy/Mana/Stamina: ${clamped} / 100` + content.slice(insertPos);
+    }
+
+    return content;
+  }
+
+  /**
+   * Extracts energy delta from updates array.
+   */
+  private extractEnergyDeltaFromUpdates(updates: UpdateItem[]): number | null {
+    if (!updates || !Array.isArray(updates)) return null;
+    let totalDelta = 0;
+    let found = false;
+
+    for (const u of updates) {
+      if (!u || !u.text) continue;
+      const textLower = u.text.toLowerCase();
+      const isEnergyRelated = textLower.includes('energy') || textLower.includes('stamina') || textLower.includes('mana');
+      if (!isEnergyRelated) continue;
+
+      if (typeof u.value === 'number' && u.value !== 0) {
+        totalDelta += u.value;
+        found = true;
+      } else {
+        const numMatch = u.text.match(/([+-]?\s*\d+(?:\.\d+)?)/);
+        if (numMatch) {
+          let val = parseFloat(numMatch[1].replace(/\s+/g, ''));
+          if (!isNaN(val)) {
+            if (textLower.includes('spent') || textLower.includes('cost') || textLower.includes('lost') || textLower.includes('drain') || textLower.includes('exhaust')) {
+              val = -Math.abs(val);
+            } else if (textLower.includes('restor') || textLower.includes('recov') || textLower.includes('gain') || textLower.includes('heal')) {
+              val = Math.abs(val);
+            }
+            totalDelta += val;
+            found = true;
+          }
+        }
+      }
+    }
+
+    return found ? totalDelta : null;
+  }
+
+  /**
+   * Extracts explicit energy changes from narrative text.
+   */
+  private extractEnergyDeltaFromText(text: string): number | null {
+    if (!text) return null;
+    const bracketMatch = text.match(/[\[\(](?:Energy|Stamina|Mana)[:\s]*([+-]?\s*\d+(?:\.\d+)?)[\]\)]/i);
+    if (bracketMatch) {
+      const val = parseFloat(bracketMatch[1].replace(/\s+/g, ''));
+      if (!isNaN(val) && val !== 0) return val;
+    }
+
+    const spentMatch = text.match(/(?:spent|cost|costs|consumed|drained|used|lost)\s+(\d+(?:\.\d+)?)\s*(?:energy|stamina|mana|points of energy|points of stamina)/i);
+    if (spentMatch) {
+      const val = parseFloat(spentMatch[1]);
+      if (!isNaN(val) && val > 0) return -val;
+    }
+
+    const restoreMatch = text.match(/(?:restored|recovered|gained|regained|regenerated)\s+(\d+(?:\.\d+)?)\s*(?:energy|stamina|mana|points of energy|points of stamina)/i);
+    if (restoreMatch) {
+      const val = parseFloat(restoreMatch[1]);
+      if (!isNaN(val) && val > 0) return val;
+    }
+
+    return null;
+  }
+
+  /**
+   * Automatically verifies and synchronizes character energy between updates,
+   * narrative, and the character file. Guarantees that character energy is never forgotten.
+   */
+  private syncPlayerEnergy(data: AIResponse, username?: string) {
+    if (!data) return;
+
+    // 1. Locate the player's character file
+    const targetFile = this.findPlayerCharacterFile(username, data.files);
+    if (!targetFile) return;
+
+    // Existing content in file system before this turn
+    const existingContent = this.fs.read(targetFile);
+
+    // Incoming content in data.files (if provided by AI)
+    let incomingFileData = data.files ? data.files[targetFile] : null;
+    let incomingContent: string | null = null;
+    if (incomingFileData) {
+      incomingContent = typeof incomingFileData === 'string'
+        ? incomingFileData
+        : (typeof incomingFileData === 'object' && incomingFileData.content ? incomingFileData.content : null);
+    }
+
+    const baselineContent = existingContent || incomingContent;
+    if (!baselineContent) return;
+
+    const existingEnergy = this.parseCharacterEnergy(baselineContent);
+    if (!existingEnergy) return;
+
+    // 2. Extract energy delta from updates or narrative
+    const deltaFromUpdates = this.extractEnergyDeltaFromUpdates(data.updates || []);
+    const deltaFromNarrative = this.extractEnergyDeltaFromText(data.narrative || '');
+    let detectedDelta = deltaFromUpdates !== null ? deltaFromUpdates : deltaFromNarrative;
+
+    // 2b. Check if action or narrative used an ability or attack from character file with an explicit stamina/energy cost
+    if (detectedDelta === null && existingContent) {
+      const narrativeLower = (data.narrative || '').toLowerCase();
+      const costMatches = Array.from(existingContent.matchAll(/([A-Za-z0-9\s'-]+)[:=][^\n]*(?:Stamina Cost|Energy Cost|Cost)[:\s]*(\d+(?:\.\d+)?)\s*(?:Mana|Energy|Stamina)?/gi));
+      for (const m of costMatches) {
+        const abilityName = m[1].replace(/^[-*•]\s*/, '').trim().toLowerCase();
+        const costVal = parseFloat(m[2]);
+        if (abilityName.length > 2 && costVal > 0 && narrativeLower.includes(abilityName)) {
+          detectedDelta = -costVal;
+          break;
+        }
+      }
+    }
+
+    // 3. Check if the AI already updated the energy in incomingContent
+    if (incomingContent && existingContent) {
+      const incomingEnergy = this.parseCharacterEnergy(incomingContent);
+      if (incomingEnergy && incomingEnergy.current !== existingEnergy.current) {
+        // AI already properly updated energy in the character file
+        const actualDelta = incomingEnergy.current - existingEnergy.current;
+        if (data.updates && Array.isArray(data.updates)) {
+          const hasEnergyUpdate = data.updates.some(u =>
+            u.text && (u.text.toLowerCase().includes('energy') || u.text.toLowerCase().includes('stamina') || u.text.toLowerCase().includes('mana'))
+          );
+          if (!hasEnergyUpdate) {
+            data.updates.push({
+              type: 'stat',
+              text: `Energy ${actualDelta > 0 ? '+' : ''}${actualDelta}`,
+              value: actualDelta
+            });
+          }
+        }
+        return;
+      }
+    }
+
+    // 4. If AI forgot to update the file but an energy delta occurred:
+    if (detectedDelta !== null && detectedDelta !== 0) {
+      const newCurrent = Math.max(0, Math.min(existingEnergy.max, Math.round(existingEnergy.current + detectedDelta)));
+
+      if (incomingContent) {
+        // Character file was in data.files, update its energy line
+        const updatedContent = this.updateCharacterEnergyInContent(incomingContent, newCurrent);
+        if (typeof data.files![targetFile] === 'object' && (data.files![targetFile] as any).content !== undefined) {
+          (data.files![targetFile] as any).content = updatedContent;
+        } else {
+          data.files![targetFile] = updatedContent;
+        }
+      } else {
+        // Character file was omitted from data.files: read existing, update, and add to data.files
+        if (existingContent) {
+          const updatedContent = this.updateCharacterEnergyInContent(existingContent, newCurrent);
+          if (!data.files || typeof data.files !== 'object') data.files = {};
+          data.files[targetFile] = updatedContent;
+        }
+      }
+
+      // Ensure data.updates has the update item
+      if (data.updates && Array.isArray(data.updates) && deltaFromUpdates === null) {
+        data.updates.push({
+          type: 'stat',
+          text: `Energy ${detectedDelta > 0 ? '+' : ''}${detectedDelta}`,
+          value: detectedDelta
+        });
+      }
+
+      // 5. If Guide.txt is present, synchronize the Master Stat Table
+      const guideKey = data.files && data.files['Guide.txt'] ? 'Guide.txt' : (this.fs.read('Guide.txt') ? 'Guide.txt' : null);
+      if (guideKey) {
+        const rawGuide = data.files && data.files['Guide.txt']
+          ? (typeof data.files['Guide.txt'] === 'string' ? data.files['Guide.txt'] : (data.files['Guide.txt'] as any).content)
+          : this.fs.read('Guide.txt');
+
+        if (typeof rawGuide === 'string' && rawGuide.length > 0) {
+          const charBaseName = targetFile.replace(/\.txt$/, '').split('-')[0].trim();
+          if (charBaseName && rawGuide.includes(charBaseName)) {
+            const lines = rawGuide.split('\n');
+            let modifiedGuide = false;
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (line.includes(charBaseName) && (line.includes('|') || line.toLowerCase().includes('energy'))) {
+                const energyPattern = /(\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\b)/g;
+                const matches = Array.from(line.matchAll(energyPattern));
+                if (matches.length >= 2) {
+                  const secondMatch = matches[1];
+                  const oldEnergyStr = secondMatch[0];
+                  const maxVal = oldEnergyStr.split('/')[1].trim();
+                  lines[i] = line.replace(oldEnergyStr, `${newCurrent}/${maxVal}`);
+                  modifiedGuide = true;
+                } else if (line.toLowerCase().includes('energy')) {
+                  const singleMatch = line.match(/(energy[:=\s]+)(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?/i);
+                  if (singleMatch) {
+                    const maxVal = singleMatch[3] || existingEnergy.max;
+                    lines[i] = line.replace(singleMatch[0], `Energy: ${newCurrent}/${maxVal}`);
+                    modifiedGuide = true;
+                  }
+                }
+              }
+            }
+            if (modifiedGuide) {
+              const updatedGuide = lines.join('\n');
+              if (!data.files || typeof data.files !== 'object') data.files = {};
+              if (typeof data.files['Guide.txt'] === 'object' && (data.files['Guide.txt'] as any).content !== undefined) {
+                (data.files['Guide.txt'] as any).content = updatedGuide;
+              } else {
+                data.files['Guide.txt'] = updatedGuide;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   private processResponseData(data: AIResponse, username?: string) {
     if (!data) return;
+
+    // Ensure character energy is always properly updated and in sync
+    this.syncPlayerEnergy(data, username);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username
