@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   X,
   Zap,
@@ -15,8 +15,7 @@ import {
   UserPlus,
   AlertCircle,
   Copy,
-  Check,
-  Wallet
+  Check
 } from 'lucide-react';
 import {
   ACTION_PACKS,
@@ -27,12 +26,6 @@ import {
   ActionStatus
 } from '../services/actionLimitService';
 import { UserProfile, recordPaymentTransaction, isDefaultAdmin } from '../services/authService';
-import {
-  getPayoutSettings,
-  updatePayoutSettings,
-  PayoutSettings,
-  DEFAULT_PAYOUT_SETTINGS
-} from '../services/adminService';
 
 interface MarketModalProps {
   isOpen: boolean;
@@ -61,7 +54,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'packs' | 'subscriptions' | 'apikey'>(initialTab);
   const [selectedItem, setSelectedItem] = useState<{ type: 'pack' | 'tier'; data: ActionPack | SubscriptionTier } | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'venmo' | 'cash_app' | 'google_pay' | 'card'>('venmo');
+  const [paymentMethod, setPaymentMethod] = useState<'google_pay' | 'card'>('google_pay');
   const [cardNumber, setCardNumber] = useState('');
   const [cardExp, setCardExp] = useState('');
   const [cardCvc, setCardCvc] = useState('');
@@ -69,14 +62,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   const [cardError, setCardError] = useState<string | null>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-
-  // Payout configuration (routes funds directly to Chloe)
-  const [payoutSettings, setPayoutSettings] = useState<PayoutSettings>(DEFAULT_PAYOUT_SETTINGS);
-  const [showAdminPayoutEdit, setShowAdminPayoutEdit] = useState(false);
-  const [editVenmo, setEditVenmo] = useState(DEFAULT_PAYOUT_SETTINGS.venmoHandle || '');
-  const [editCashApp, setEditCashApp] = useState(DEFAULT_PAYOUT_SETTINGS.cashAppHandle || '');
-  const [payoutSavedMsg, setPayoutSavedMsg] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Guest warning prompt state
   const [guestNoticeOpen, setGuestNoticeOpen] = useState(false);
@@ -91,7 +76,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     timestamp: string;
     actionDelta?: number;
     newTier?: string;
-    recipient?: string;
   } | null>(null);
 
   const [copiedTxId, setCopiedTxId] = useState(false);
@@ -99,16 +83,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   // Custom API Key input
   const [customKeyInput, setCustomKeyInput] = useState(() => localStorage.getItem('aimud_apikey') || '');
   const [keySavedMessage, setKeySavedMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      getPayoutSettings().then((settings) => {
-        setPayoutSettings(settings);
-        setEditVenmo(settings.venmoHandle || '');
-        setEditCashApp(settings.cashAppHandle || '');
-      });
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -176,24 +150,12 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     setIsProcessingPayment(true);
 
     try {
-      let resolvedPaymentMethodName = 'Venmo';
-      let txPrefix = 'venmo';
-      let recipientDestination = payoutSettings.venmoHandle || payoutSettings.recipientEmail;
+      let resolvedPaymentMethodName = 'Google Pay';
+      let txPrefix = 'gpay';
 
-      if (paymentMethod === 'venmo') {
-        resolvedPaymentMethodName = 'Venmo';
-        txPrefix = 'venmo';
-        recipientDestination = payoutSettings.venmoHandle || payoutSettings.recipientEmail;
-        await new Promise(res => setTimeout(res, 600));
-      } else if (paymentMethod === 'cash_app') {
-        resolvedPaymentMethodName = 'Cash App';
-        txPrefix = 'cashapp';
-        recipientDestination = payoutSettings.cashAppHandle || payoutSettings.recipientEmail;
-        await new Promise(res => setTimeout(res, 600));
-      } else if (paymentMethod === 'google_pay') {
+      if (paymentMethod === 'google_pay') {
         resolvedPaymentMethodName = 'Google Pay';
         txPrefix = 'gpay';
-        recipientDestination = payoutSettings.recipientEmail;
         let gpayCompleted = false;
 
         // Check for official Google Pay API loaded in index.html
@@ -278,7 +240,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       } else {
         resolvedPaymentMethodName = 'Card / Stripe';
         txPrefix = 'card';
-        recipientDestination = payoutSettings.recipientEmail;
         // Stripe / Card authorization simulation
         await new Promise(res => setTimeout(res, 900));
       }
@@ -295,9 +256,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         itemType: selectedItem.type,
         paymentMethod: resolvedPaymentMethodName,
         status: 'completed',
-        createdAt: nowIso,
-        recipient: recipientDestination,
-        notes: `Direct payout to Chloe (${recipientDestination})`
+        createdAt: nowIso
       });
 
       // Apply benefits to user profile
@@ -323,8 +282,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         paymentMethod: resolvedPaymentMethodName,
         timestamp: new Date().toLocaleString(),
         actionDelta,
-        newTier,
-        recipient: recipientDestination
+        newTier
       });
       setIsProcessingPayment(false);
     } catch (err: any) {
@@ -338,32 +296,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     navigator.clipboard.writeText(id);
     setCopiedTxId(true);
     setTimeout(() => setCopiedTxId(false), 2000);
-  };
-
-  const handleCopyField = (fieldName: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handleSavePayoutSettings = async () => {
-    if (!currentUser || !isAdmin) return;
-    setPayoutSavedMsg(null);
-    const res = await updatePayoutSettings(currentUser, {
-      venmoHandle: editVenmo.trim(),
-      cashAppHandle: editCashApp.trim()
-    });
-    if (res.success) {
-      setPayoutSettings(prev => ({
-        ...prev,
-        venmoHandle: editVenmo.trim(),
-        cashAppHandle: editCashApp.trim()
-      }));
-      setPayoutSavedMsg('Saved! Payment destination updated.');
-      setTimeout(() => setPayoutSavedMsg(null), 3000);
-    } else {
-      setPayoutSavedMsg(res.error || 'Failed to save settings.');
-    }
   };
 
   const handleSaveApiKey = () => {
@@ -415,77 +347,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             <X size={18} />
           </button>
         </div>
-
-        {/* Creator Payout Routing Toolbar (For Admin / Owner) */}
-        {isAdmin && (
-          <div className="bg-amber-950/30 border-b border-amber-500/30 px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
-            <div className="flex items-center gap-2 text-amber-300">
-              <Crown size={13} className="text-amber-400 shrink-0" />
-              <span className="text-[11px]">
-                <strong>Owner Payouts:</strong> Customer payments route to your accounts (<strong>{payoutSettings.venmoHandle || payoutSettings.recipientEmail}</strong> / <strong>{payoutSettings.cashAppHandle || '$cashtag'}</strong>)
-              </span>
-            </div>
-            <button
-              onClick={() => setShowAdminPayoutEdit(!showAdminPayoutEdit)}
-              className="text-[10px] font-semibold text-amber-300 hover:text-amber-100 underline px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 transition-colors"
-            >
-              {showAdminPayoutEdit ? 'Hide Settings' : 'Edit Venmo & Cash App'}
-            </button>
-          </div>
-        )}
-
-        {/* Admin Payout Settings Drawer */}
-        {isAdmin && showAdminPayoutEdit && (
-          <div className="bg-neutral-950 border-b border-amber-500/30 p-3.5 space-y-2.5 text-xs shrink-0 animate-in slide-in-from-top-1">
-            <div className="flex justify-between items-center">
-              <h4 className="font-bold text-amber-300 text-xs flex items-center gap-1.5">
-                <Wallet size={14} />
-                Payment Destination Configuration
-              </h4>
-              <span className="text-[10px] text-neutral-400 font-mono">
-                Recipient Email: {payoutSettings.recipientEmail}
-              </span>
-            </div>
-            <p className="text-neutral-400 text-[11px]">
-              When players purchase action packs or memberships, payments go directly to your Venmo handle or Cash App Cashtag:
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-neutral-400 text-[10px] uppercase font-mono mb-1">Venmo Username / Phone / Email</label>
-                <input
-                  type="text"
-                  value={editVenmo}
-                  onChange={(e) => setEditVenmo(e.target.value)}
-                  placeholder="@Chloe-Alba or chloe.a.alba.1@gmail.com"
-                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-white font-mono text-xs focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-neutral-400 text-[10px] uppercase font-mono mb-1">Cash App $Cashtag</label>
-                <input
-                  type="text"
-                  value={editCashApp}
-                  onChange={(e) => setEditCashApp(e.target.value)}
-                  placeholder="$ChloeAlba"
-                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-white font-mono text-xs focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between pt-1">
-              {payoutSavedMsg ? (
-                <span className="text-emerald-400 text-xs font-mono">{payoutSavedMsg}</span>
-              ) : (
-                <span className="text-neutral-500 text-[10px]">Changes update instantly for all players purchasing in the market.</span>
-              )}
-              <button
-                onClick={handleSavePayoutSettings}
-                className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded text-xs transition-colors"
-              >
-                Save Payout Destination
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Guest Warning Banner if not logged in */}
         {isGuest && (
@@ -642,8 +503,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       <span>{transactionReceipt.paymentMethod}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-neutral-400">Destination:</span>
-                      <span className="text-amber-300 font-semibold">{transactionReceipt.recipient || payoutSettings.recipientEmail}</span>
+                      <span className="text-neutral-400">Status:</span>
+                      <span className="text-emerald-400 font-semibold">Completed & Verified</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-neutral-400">Account:</span>
@@ -683,44 +544,12 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     </div>
                   )}
 
-                  {/* Payment Method Selector: Venmo, Cash App, Google Pay, Card */}
+                  {/* Payment Method Selector: Google Pay, Card */}
                   <div>
                     <label className="text-[11px] text-neutral-400 font-mono block mb-1.5">
                       Select Payment Method:
                     </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {/* Venmo */}
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod('venmo')}
-                        className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
-                          paymentMethod === 'venmo'
-                            ? 'border-blue-400 bg-blue-950/50 text-white shadow-sm'
-                            : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
-                        }`}
-                      >
-                        <div className="w-6 h-6 rounded-full bg-[#008CFF] text-white flex items-center justify-center font-black text-xs">
-                          V
-                        </div>
-                        <span className="font-bold text-xs">Venmo</span>
-                      </button>
-
-                      {/* Cash App */}
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod('cash_app')}
-                        className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
-                          paymentMethod === 'cash_app'
-                            ? 'border-emerald-400 bg-emerald-950/50 text-white shadow-sm'
-                            : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
-                        }`}
-                      >
-                        <div className="w-6 h-6 rounded-full bg-[#00D632] text-white flex items-center justify-center font-black text-xs">
-                          $
-                        </div>
-                        <span className="font-bold text-xs">Cash App</span>
-                      </button>
-
+                    <div className="grid grid-cols-2 gap-2">
                       {/* Google Pay */}
                       <button
                         type="button"
@@ -746,156 +575,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         }`}
                       >
                         <CreditCard size={18} />
-                        <span className="text-xs font-medium">Card</span>
+                        <span className="text-xs font-medium">Credit / Debit Card</span>
                       </button>
                     </div>
                   </div>
-
-                  {/* VENMO PAYMENT BOX */}
-                  {paymentMethod === 'venmo' && (
-                    <div className="bg-blue-950/20 border border-blue-800/60 rounded-xl p-3.5 sm:p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[#008CFF] text-white flex items-center justify-center font-bold text-xs">
-                            V
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-bold text-white">Pay via Venmo</h4>
-                            <p className="text-[11px] text-blue-300">Funds go directly to Chloe's Venmo</p>
-                          </div>
-                        </div>
-                        <a
-                          href={`https://venmo.com/${(payoutSettings.venmoHandle || '').replace('@', '')}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] px-2.5 py-1 rounded bg-[#008CFF] hover:bg-[#0070cc] text-white font-semibold flex items-center gap-1 transition-colors"
-                        >
-                          Open Venmo <ExternalLink size={11} />
-                        </a>
-                      </div>
-
-                      <div className="bg-black/50 border border-neutral-800 rounded-lg p-3 space-y-2 text-xs font-mono">
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">Recipient / Handle:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-white font-bold">{payoutSettings.venmoHandle || payoutSettings.recipientEmail}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('venmo', payoutSettings.venmoHandle || payoutSettings.recipientEmail)}
-                              className="text-[10px] text-blue-400 hover:text-blue-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'venmo' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">Exact Amount:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-emerald-400 font-bold">${selectedItem.data.price.toFixed(2)}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('venmo_amount', selectedItem.data.price.toFixed(2))}
-                              className="text-[10px] text-blue-400 hover:text-blue-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'venmo_amount' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">Payment Note / Memo:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-neutral-300 text-[11px]">Aifinity - {selectedItem.data.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('venmo_note', `Aifinity - ${selectedItem.data.name} (${currentUser?.email || currentUser?.username})`)}
-                              className="text-[10px] text-blue-400 hover:text-blue-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'venmo_note' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-neutral-400 leading-normal">
-                        Send ${selectedItem.data.price} to <strong>{payoutSettings.venmoHandle || payoutSettings.recipientEmail}</strong> on Venmo, then click below to immediately credit your account.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* CASH APP PAYMENT BOX */}
-                  {paymentMethod === 'cash_app' && (
-                    <div className="bg-emerald-950/20 border border-emerald-800/60 rounded-xl p-3.5 sm:p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[#00D632] text-white flex items-center justify-center font-bold text-xs">
-                            $
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-bold text-white">Pay via Cash App</h4>
-                            <p className="text-[11px] text-emerald-300">Funds go directly to Chloe's Cash App</p>
-                          </div>
-                        </div>
-                        <a
-                          href={`https://cash.app/${(payoutSettings.cashAppHandle || '').replace('$', '')}/${selectedItem.data.price}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] px-2.5 py-1 rounded bg-[#00D632] hover:bg-[#00ba2c] text-black font-bold flex items-center gap-1 transition-colors"
-                        >
-                          Open Cash App <ExternalLink size={11} />
-                        </a>
-                      </div>
-
-                      <div className="bg-black/50 border border-neutral-800 rounded-lg p-3 space-y-2 text-xs font-mono">
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">Cashtag / Handle:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-white font-bold">{payoutSettings.cashAppHandle || payoutSettings.recipientEmail}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('cashapp', payoutSettings.cashAppHandle || payoutSettings.recipientEmail)}
-                              className="text-[10px] text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'cashapp' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">Exact Amount:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-emerald-400 font-bold">${selectedItem.data.price.toFixed(2)}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('cashapp_amount', selectedItem.data.price.toFixed(2))}
-                              className="text-[10px] text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'cashapp_amount' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center">
-                          <span className="text-neutral-400">For / Memo:</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-neutral-300 text-[11px]">Aifinity - {selectedItem.data.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyField('cashapp_note', `Aifinity - ${selectedItem.data.name} (${currentUser?.email || currentUser?.username})`)}
-                              className="text-[10px] text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 bg-neutral-800 rounded"
-                            >
-                              {copiedField === 'cashapp_note' ? 'Copied!' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-neutral-400 leading-normal">
-                        Send ${selectedItem.data.price} to <strong>{payoutSettings.cashAppHandle || payoutSettings.recipientEmail}</strong> on Cash App, then click below to immediately credit your account.
-                      </p>
-                    </div>
-                  )}
 
                   {/* CREDIT CARD FORM */}
                   {paymentMethod === 'card' && (
@@ -957,32 +640,24 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                   <div className="flex items-center justify-between pt-1">
                     <div className="text-[11px] text-neutral-400 flex items-center gap-1">
                       <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
-                      <span>Direct payout to Chloe ({payoutSettings.recipientEmail})</span>
+                      <span>Encrypted & secure transaction</span>
                     </div>
 
                     <button
                       disabled={isProcessingPayment}
                       onClick={handleProcessPayment}
                       className={`px-5 py-2 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all cursor-pointer shadow-lg ${
-                        paymentMethod === 'venmo'
-                          ? 'bg-[#008CFF] hover:bg-[#0077dd] text-white'
-                          : paymentMethod === 'cash_app'
-                            ? 'bg-[#00D632] hover:bg-[#00ba2c] text-black font-extrabold'
-                            : paymentMethod === 'google_pay'
-                              ? 'bg-white text-black hover:bg-neutral-100'
-                              : 'bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950'
+                        paymentMethod === 'google_pay'
+                          ? 'bg-white text-black hover:bg-neutral-100'
+                          : 'bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950'
                       } ${isProcessingPayment ? 'opacity-70 cursor-wait' : ''}`}
                     >
                       {isProcessingPayment ? (
                         <span>Processing Order...</span>
-                      ) : paymentMethod === 'venmo' ? (
-                        <>I've Sent the Venmo Payment (${selectedItem.data.price})</>
-                      ) : paymentMethod === 'cash_app' ? (
-                        <>I've Sent the Cash App Payment (${selectedItem.data.price})</>
                       ) : paymentMethod === 'google_pay' ? (
-                        <>Pay with <span className="font-black">G Pay</span> (${selectedItem.data.price})</>
+                        <>Pay with <span className="font-black">G Pay</span> (${selectedItem.data.price.toFixed(2)})</>
                       ) : (
-                        <>Confirm & Pay ${selectedItem.data.price}</>
+                        <>Pay with Card (${selectedItem.data.price.toFixed(2)})</>
                       )}
                     </button>
                   </div>
