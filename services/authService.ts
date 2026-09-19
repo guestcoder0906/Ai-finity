@@ -467,6 +467,11 @@ export async function loginWithGoogle(): Promise<{
     if (err.code === 'auth/popup-closed-by-user') {
       return { error: 'Sign in popup closed.' };
     }
+    if (err.code === 'auth/unauthorized-domain') {
+      return {
+        error: 'Domain authorization required: "aifinity-rpg.com" and "www.aifinity-rpg.com" must be added to Authorized Domains in your Firebase Console (Authentication > Settings > Authorized domains). You can also sign up or log in immediately using Email & Password below.'
+      };
+    }
     return { error: err.message || 'Google sign in failed.' };
   }
 }
