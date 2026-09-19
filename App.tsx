@@ -206,26 +206,50 @@ function App() {
   // Active game username depending on gameMode
   const activeGameUsername = gameMode === 'multiplayer' ? (username || getMultiplayerUsername(roomState?.players || [])) : effectiveSingleplayerName;
 
+  // Robust Welcome page route detector
+  const isWelcomeRouteActive = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const path = (window.location.pathname || '').toLowerCase().replace(/\/+$/, '');
+    const hash = (window.location.hash || '').toLowerCase();
+    
+    // Direct path or subpath check (e.g. /welcome, /welcome/)
+    if (path === '/welcome' || path.endsWith('/welcome')) {
+      return true;
+    }
+    // Hash routing check (e.g. #/welcome, #welcome)
+    if (hash === '#/welcome' || hash === '#welcome' || hash.includes('welcome')) {
+      return true;
+    }
+    // Query param redirect check from static 404 handlers
+    try {
+      const search = new URLSearchParams(window.location.search || '');
+      const param = search.get('route') || search.get('p') || search.get('page') || search.get('redirect');
+      if (param && param.toLowerCase().includes('welcome')) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  };
+
   // Route state for /welcome and /
   const [currentPath, setCurrentPath] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      const hash = window.location.hash;
-      if (path === '/welcome' || hash === '#/welcome' || hash === '#welcome') {
+      if (isWelcomeRouteActive()) {
         return '/welcome';
       }
+      return window.location.pathname || '/';
     }
-    return window.location.pathname || '/';
+    return '/';
   });
 
   useEffect(() => {
     const handleLocationChange = () => {
-      const path = window.location.pathname;
-      const hash = window.location.hash;
-      if (path === '/welcome' || hash === '#/welcome' || hash === '#welcome') {
+      if (isWelcomeRouteActive()) {
         setCurrentPath('/welcome');
       } else {
-        setCurrentPath(path);
+        setCurrentPath(window.location.pathname || '/');
       }
     };
     window.addEventListener('popstate', handleLocationChange);
@@ -237,11 +261,13 @@ function App() {
   }, []);
 
   const handleEnterGame = () => {
-    if (window.location.pathname === '/welcome') {
-      window.history.pushState({}, '', '/');
-    }
-    if (window.location.hash.includes('welcome')) {
-      window.location.hash = '';
+    if (typeof window !== 'undefined') {
+      if (isWelcomeRouteActive()) {
+        window.history.pushState({}, '', '/');
+        if (window.location.hash.includes('welcome')) {
+          window.location.hash = '';
+        }
+      }
     }
     setCurrentPath('/');
   };
