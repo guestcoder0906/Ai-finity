@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
+import { WeightInventoryEngine, CharacterPhysicalStats } from '../services/weightInventoryEngine';
 
 interface SidebarProps {
   files: string[];
@@ -423,11 +424,164 @@ const Sidebar: React.FC<SidebarProps> = ({
                       <span className="text-blue-400 font-semibold truncate">{displayName}</span>
                     </div>
                     {isExpanded && (
-                      <div
-                        className="p-2 border-t border-neutral-700 bg-black text-gray-400 whitespace-pre-wrap text-[10px] md:text-xs leading-relaxed"
-                        onClick={handleContentClick}
-                      >
-                        <span dangerouslySetInnerHTML={{ __html: parseLinks(formatContent(content)) }} />
+                      <div className="border-t border-neutral-700 bg-black">
+                        {(() => {
+                          const isEntity = content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]') || content.includes('[CONTAINERS') || content.includes('[INVENTORY');
+                          if (!isEntity) return null;
+
+                          const pStats = WeightInventoryEngine.parseCharacterStatsAndInventory(content);
+                          if (!pStats || (!pStats.dimensionsApply && pStats.bodyWeight === 0 && pStats.containers.length === 0)) return null;
+
+                          const isOverLift = pStats.totalCarriedWeight > pStats.maxLiftStrength;
+                          const ratio = pStats.encumbranceRatio;
+                          let barColor = 'bg-emerald-500';
+                          if (isOverLift) barColor = 'bg-red-600 animate-pulse';
+                          else if (ratio > 50) barColor = 'bg-amber-500';
+                          else if (ratio > 20) barColor = 'bg-yellow-500';
+
+                          const meterWidth = Math.min(100, Math.max(2, (pStats.totalCarriedWeight / Math.max(1, pStats.maxLiftStrength)) * 100));
+
+                          return (
+                            <div className="p-2.5 bg-neutral-900/90 border-b border-neutral-800 text-[11px] font-sans space-y-2">
+                              {/* Character Physical Dimensions & Body Weight */}
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1.5 border-b border-neutral-800">
+                                <div className="flex items-center gap-1.5 text-gray-200 font-semibold">
+                                  <Scale size={13} className="text-cyan-400" />
+                                  <span>Physical Profile</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-neutral-700">
+                                    Weight: <strong className="text-white">{pStats.bodyWeight} lbs</strong>
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-neutral-700">
+                                    Dims: <strong className="text-white">{pStats.dimensionsApply ? (pStats.dimensionsRaw || `${pStats.height || '?'} x ${pStats.width || '?'}`) : 'Incorporeal'}</strong>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Encumbrance Meter & Status */}
+                              <div>
+                                <div className="flex justify-between items-center text-[10px] mb-1">
+                                  <span className="text-gray-400 flex items-center gap-1">
+                                    <Package size={11} className="text-gray-400" />
+                                    Carried: <strong className="text-white">{pStats.totalCarriedWeight} lbs</strong> / {pStats.bodyWeight} lbs ({ratio}%)
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] uppercase tracking-wide ${
+                                    isOverLift
+                                      ? 'bg-red-950 text-red-400 border border-red-800'
+                                      : !pStats.encumbranceApplies
+                                        ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                                        : pStats.isEncumbered
+                                          ? 'bg-yellow-950 text-yellow-300 border border-yellow-800'
+                                          : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                  }`}>
+                                    {isOverLift
+                                      ? 'Overburdened (Cannot Lift)'
+                                      : !pStats.encumbranceApplies
+                                        ? 'Immune to Encumbrance'
+                                        : pStats.isEncumbered
+                                          ? `Encumbered (>${pStats.encumbranceThreshold}% Slower Speed)`
+                                          : `Unencumbered (Good <=${pStats.encumbranceThreshold}%)`}
+                                  </span>
+                                </div>
+
+                                {/* Visual Progress Bar */}
+                                <div className="w-full bg-neutral-950 h-2 rounded-full overflow-hidden border border-neutral-800 relative">
+                                  {pStats.encumbranceApplies && (
+                                    <div
+                                      className="absolute top-0 bottom-0 w-0.5 bg-yellow-400/60 z-10"
+                                      style={{ left: `${Math.min(100, (pStats.encumbranceThreshold / 100) * (pStats.bodyWeight / Math.max(1, pStats.maxLiftStrength)) * 100)}%` }}
+                                      title={`${pStats.encumbranceThreshold}% Encumbrance Threshold`}
+                                    />
+                                  )}
+                                  <div className={`h-full ${!pStats.encumbranceApplies ? 'bg-indigo-500' : barColor} transition-all duration-300`} style={{ width: `${meterWidth}%` }} />
+                                </div>
+
+                                <div className="flex justify-between text-[9px] text-gray-500 mt-1">
+                                  <span>0 lbs</span>
+                                  {pStats.encumbranceApplies ? (
+                                    <span className="text-yellow-500">{pStats.encumbranceThreshold}% Threshold ({Math.round(pStats.bodyWeight * (pStats.encumbranceThreshold / 100))} lbs)</span>
+                                  ) : (
+                                    <span className="text-indigo-400 italic">{pStats.encumbranceImmunityReason || 'Dynamic Biology: Immune'}</span>
+                                  )}
+                                  <span>Max Lift: {pStats.maxLiftStrength} lbs</span>
+                                </div>
+                              </div>
+
+                              {/* Speed & Mobility */}
+                              <div className="flex items-center justify-between text-[10px] bg-neutral-950/60 p-1.5 rounded border border-neutral-800/80">
+                                <span className="text-gray-400 flex items-center gap-1">
+                                  <Gauge size={11} className="text-cyan-400" />
+                                  Effective Speed:
+                                </span>
+                                <div className="flex gap-2">
+                                  <span className={pStats.isEncumbered ? 'text-yellow-400 font-mono font-medium' : 'text-emerald-400 font-mono'}>
+                                    Walk: {pStats.currentWalkingSpeed} m/s
+                                  </span>
+                                  <span className={pStats.isEncumbered ? 'text-yellow-400 font-mono font-medium' : 'text-emerald-400 font-mono'}>
+                                    Run: {pStats.currentRunningSpeed} m/s
+                                  </span>
+                                  {pStats.isEncumbered && (
+                                    <span className="text-[9px] text-yellow-500 font-semibold">(Penalty Active)</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Containers & Overflow Detection */}
+                              {pStats.containers.length > 0 && (
+                                <div className="space-y-1 pt-1 border-t border-neutral-800">
+                                  <div className="text-[10px] text-gray-400 font-medium flex items-center gap-1">
+                                    <Package size={11} className="text-blue-400" />
+                                    Equipped Containers ({pStats.containers.length}):
+                                  </div>
+                                  {pStats.containers.map((cont, ci) => (
+                                    <div key={ci} className="bg-neutral-950/80 p-1.5 rounded border border-neutral-800 text-[10px]">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-blue-300 font-medium">{cont.name}</span>
+                                        <span className="text-gray-400 font-mono text-[9px]">
+                                          Max Space: {cont.maxDimensions.raw || '18x12"'} | Weight: {cont.totalWeight} lbs
+                                        </span>
+                                      </div>
+                                      {cont.hasOverflow && (
+                                        <div className="mt-1 flex items-center gap-1 text-[9px] text-amber-400 bg-amber-950/50 p-1 rounded border border-amber-800/60">
+                                          <AlertTriangle size={11} className="text-amber-400 shrink-0" />
+                                          <span>Container Overflow: item exceeds dimensions and risks dropping during story!</span>
+                                        </div>
+                                      )}
+                                      {cont.items.length > 0 && (
+                                        <div className="mt-1 text-[9px] text-gray-400 pl-1 border-l border-neutral-800 space-y-0.5">
+                                          {cont.items.map((it, ii) => (
+                                            <div key={ii} className="flex justify-between items-center">
+                                              <span className={it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}>
+                                                • {it.name} {it.isOverflow && '⚠️ (Overflow: Risks Dropping)'}
+                                              </span>
+                                              <span className="font-mono text-gray-500">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Stored Items (Not on Person) */}
+                              {pStats.storedItems.length > 0 && (
+                                <div className="text-[9px] text-gray-500 italic bg-neutral-950 p-1 rounded border border-neutral-800/60 flex items-center justify-between">
+                                  <span>📦 {pStats.storedItems.length} items owned & stored off-person</span>
+                                  <span className="text-gray-600">(Excluded from carried weight)</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        <div
+                          className="p-2 text-gray-400 whitespace-pre-wrap text-[10px] md:text-xs leading-relaxed"
+                          onClick={handleContentClick}
+                        >
+                          <span dangerouslySetInnerHTML={{ __html: parseLinks(formatContent(content)) }} />
+                        </div>
                       </div>
                     )}
                   </div>

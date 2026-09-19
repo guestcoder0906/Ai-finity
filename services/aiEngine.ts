@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { FileSystem } from "./fileSystem";
 import { AIResponse, CheckDef } from "../types";
+import { WeightInventoryEngine } from "./weightInventoryEngine";
 
 interface DetectedModifier {
   label: string;
@@ -125,14 +126,30 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 [NAME & DESCRIPTION]
 - Full Name: ...
 - Description: (Extensive, detailed physical & psychological profile)
-- Physical Dimensions: (Size, Height, Weight, Wingspan, etc.)
+- Physical Dimensions: (Height, Width, Depth e.g. "Height: 5'11\", Width: 20\", Depth: 12\"" - unless one or none applies based on AI's inference of character, e.g. "None (Incorporeal/Ghost)" or "None (Formless)")
+- Body Weight: (Exact body weight e.g. "165 lbs", or "0 lbs / Incorporeal")
 
 [STATS & MODIFIERS]
 - Health: (Current / Max)
 - Energy/Mana/Stamina: (Current / Max)
-- Speed: (Walking: Xm/s, Running: Ym/s, etc.)
+- Speed: (Walking: Xm/s, Running: Ym/s - dynamically updated or reverted based on context, terrain, injuries, and encumbrance)
 - Primary Attributes: (Use the probability engine modifier format: "stat: base probability engine + X%(1000) + effects")
+  * Strength: (e.g. "strength: base probability engine + 0%(1000) + effects; Lift Multiplier: 1.0x")
+- Max Lift Strength: (Exact max weight this character can lift based on body weight and strength multiplier, e.g. "165 lbs (100% of body weight for average human with 1.0x strength modifier; anything heavier is impossible to lift without machinery or magic)")
+- Encumbrance Threshold & Effects: (DYNAMIC per character/race/biology. For standard baseline humans: default 20% of body weight, where carried weight at 21%+ causes a slower speed penalty until dropped. For Slimes, Oozes, Incorporeal/Ghosts, Telekinetics, or certain monsters/races, this is DYNAMIC - e.g. "Immune (Slime biology absorbs items internally without slowdown)" or "None (Incorporeal)" or custom higher thresholds. Never force human penalties onto creatures whose biology is unaffected!)
 - Armor: (Threshold format: "armor: material base X (immunities/resistances)")
+
+[CONTAINERS & CARRIED GEAR]
+- Containers Equipped/Carried: (Carrying loose items REQUIRES at least one container the character can equip or carry, such as a Backpack, Satchel, Pouch, or Belt Bag. Each container has max space dimensions, e.g. "Leather Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs, Weight: 2 lbs". Containers hold items not exceeding their dimensions; if forced to overflow, some items might drop or get knocked down by accident during movement/combat!)
+- Equipped Gear & Armor: (List all worn armor, jewelry, and weapons held in hands with exact weight and dimensions)
+  * Format: "Item Name: Weight: X lbs. Dimensions: HxWxD inches. (Technical stats/properties)"
+- Carried Inventory (Inside Containers): (List of items carried inside each container with detectable weight and dimensions format)
+  * Standard detectable format examples: "feather 0 weight 3x0 inch", "Medium geode 1 pound and 3x5 inches", "Iron Dagger: 2 lbs, 12x2 inches. Container: [Backpack]"
+  * Overflow rule: If an item's dimensions exceed the container's space dimensions (e.g. a 60-inch staff placed inside an 18-inch backpack), flag it: "(Overflow: Yes - exceeds container dimensions; risks dropping or being knocked down by accident during story)"
+- Total Carried Weight on Person: (The code automatically sums all weight of equipped gear, armor, containers, and items inside containers, e.g. "24 lbs / 165 lbs (14.5% body weight - Good: Unencumbered)")
+
+[OWNED / STORED ITEMS (NOT ON PERSON)]
+- (List of items owned by character that are NOT on their person - stored at home, bank vault, campsite chest, stash, wagon, or mount. Their weight is strictly NOT added to the character's carried weight)
 
 [ATTACKS & COMBAT ACTIONS]
 - List every physical attack or standard action this entity can perform.
@@ -146,22 +163,22 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 - If this entity has NO magic or special abilities, write "None".
 - CRITICAL: Character-specific abilities belong ONLY in this character's file. Do NOT put them in WorldRules.txt or other files.
 
-[INVENTORY & EQUIPMENT]
-- Items: (Detailed list with weights/dimensions)
-- Equipped: (What is currently being used)
-
 [STATUS EFFECTS & LORE]
-- Effects: (List with expiration timestamps: [Status:Type_ID(Expires: TIMESTAMP)])
-- Background/Biometrics: (Deep lore, unique traits)
+- Effects: (List with expiration timestamps: [Status:Type_ID(Expires: TIMESTAMP; Effects: ...; Revert: ...)])
+  * Example of temporary weight/stat alteration: [Status:Lightweight_Boulder(Expires: 3:15:00 PM - Oct 12, 2026; TempWeight: 1 lb; BaseWeight: 500 lbs)] - Automatically reverts to BaseWeight upon expiration unless modified by another effect.
+  * Example of encumbrance penalty: [Status:Encumbered_Speed_Penalty(Expires: When weight < 21%; SpeedPenalty: -30%)]
+- Background/Biometrics: (Deep lore, unique physical traits)
 ---
 
 ITEM & WEAPON TECHNICAL SCHEMA:
-All weapons and tools MUST include exhaustive technical rules and mathematical modifiers. 
-Every weapon file (global or unique) MUST follow this template:
+All weapons, tools, containers, and items MUST include detectable weight and dimensions, exhaustive technical rules, and mathematical modifiers:
 [IDENTIFICATION]
 - Name: ...
-- Category: (e.g., Heavy Slashing, Light Piercing, Tool, etc.)
-- Material: (e.g., High-Carbon Steel, Iron)
+- Category: (e.g., Heavy Slashing, Light Piercing, Container, Tool, Consumable, Incorporeal)
+- Weight: (Detectable format: e.g. "0 weight", "1 pound", "4 lbs", or "None (Incorporeal/Ghost)")
+- Dimensions: (Detectable format: e.g. "3x0 inch", "3x5 inches", "18x12x8 inches", "18 inches tall by 12 inches area", or "None (Incorporeal)")
+- Container Space Capacity: (If container: max dimensions it can hold without overflow, e.g. "Max Space Dimensions: 18 inches tall by 12 inches area, Max Weight: 40 lbs")
+- Material: (e.g., High-Carbon Steel, Iron, Hardened Leather)
 
 [TECHNICAL RULES]
 - Damage Type: (e.g., Slashing, Impact, Thermal)
@@ -173,7 +190,7 @@ Every weapon file (global or unique) MUST follow this template:
 - Modifiers: (Explicit probability engine bonuses: "accuracy: +5%(1000)", "parry: +10%(1000)")
 
 [SPECIAL PROPERTIES & LIMITATIONS]
-- List unique effects and physical limitations.
+- List unique effects, physical limitations, and active temporary spells (with expiration and revert values).
 ---
 
 GROUP ENTITY RULE:
@@ -400,6 +417,7 @@ INSTRUCTIONS:
 3. AUDIT FOR MAP: Determine if the player moved or the environment changed.
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
+6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -469,7 +487,7 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and any initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. If the initialization involves any uncertain event, return "checks".\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and any initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If the initialization involves any uncertain event, return "checks".\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
           const res = await this.handleRequest(prompt, undefined, username);
           resolve(res);
         } catch (e) {
@@ -1300,22 +1318,60 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       for (const [filename, fileData] of Object.entries(data.files)) {
         if (fileData === null || (typeof fileData === 'object' && fileData.content === null)) {
           this.fs.delete(filename);
-        } else if (typeof fileData === 'string') {
-          const existing = this.fs.read(filename);
-          if (existing === fileData) continue;
-          if (filename === 'CurrentMap.json') {
-            this.writeMapSafe(fileData);
-          } else {
-            this.fs.write(filename, fileData);
+        } else {
+          let contentStr = typeof fileData === 'string' ? fileData : (fileData as any).content;
+          if (typeof contentStr === 'object') {
+            contentStr = JSON.stringify(contentStr);
           }
-        } else if (fileData && typeof fileData === 'object' && (fileData as any).content) {
-          const contentStr = typeof (fileData as any).content === 'object' ? JSON.stringify((fileData as any).content) : (fileData as any).content;
+          const displayName = (typeof fileData === 'object' && (fileData as any).displayName) ? (fileData as any).displayName : undefined;
+
+          // Auto-synchronize weight, dimensions, containers, and encumbrance on character files
+          if (typeof contentStr === 'string' && filename.endsWith('.txt') && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CONTAINERS') || contentStr.includes('[INVENTORY'))) {
+            try {
+              const activeTime = this.fs.read('WorldTime.txt') || undefined;
+              const syncResult = WeightInventoryEngine.syncCharacterFileContent(contentStr, activeTime);
+              contentStr = syncResult.updatedContent;
+
+              if (data.updates && Array.isArray(data.updates)) {
+                const stats = syncResult.stats;
+                if (stats.isEncumbered) {
+                  const hasEncumberedUpdate = data.updates.some(u => u.text && u.text.toLowerCase().includes('encumber'));
+                  if (!hasEncumberedUpdate) {
+                    data.updates.push({
+                      type: 'status',
+                      text: `Encumbered: ${stats.totalCarriedWeight} lbs (${stats.encumbranceRatio}% body wt) - Speed reduced to ${stats.currentWalkingSpeed} m/s`,
+                      value: -1
+                    });
+                  }
+                }
+                for (const cont of stats.containers) {
+                  if (cont.hasOverflow) {
+                    for (const item of cont.items) {
+                      if (item.isOverflow) {
+                        const hasOverflowUpdate = data.updates.some(u => u.text && u.text.includes(item.name) && u.text.includes('overflow'));
+                        if (!hasOverflowUpdate) {
+                          data.updates.push({
+                            type: 'misc',
+                            text: `Warning: [${item.name}] overflows [${cont.name}] dimensions - risks dropping!`,
+                            value: 0
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.error("Weight & encumbrance sync error", err);
+            }
+          }
+
           const existing = this.fs.read(filename);
           if (existing === contentStr) continue;
           if (filename === 'CurrentMap.json') {
             this.writeMapSafe(contentStr);
           } else {
-            this.fs.write(filename, contentStr, (fileData as any).displayName);
+            this.fs.write(filename, contentStr, displayName);
           }
         }
       }
