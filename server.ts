@@ -92,45 +92,62 @@ async function startServer() {
       const amountInCents = Math.round(amount * 100);
       const safeItemName = String(itemName || 'Market Purchase').replace(/[^\w\s\-\.\,\(\)]/gi, '').trim() || 'Market Purchase';
       const safeUsername = String(username || 'Player').replace(/[^\w\s\-\.]/gi, '').trim() || 'Player';
+      const isSubscription = itemType === 'tier' || itemId === 'adventurer' || itemId === 'legendary' || itemId === 'celestial';
       const stripe = getStripe();
 
       if (stripe) {
         try {
-          const session = await stripe.checkout.sessions.create({
+          const sessionParams: any = {
             line_items: [{
               price_data: {
                 currency: 'usd',
                 product_data: {
                   name: `Aifinity: ${safeItemName}`,
-                  description: itemType === 'pack'
-                    ? `Action Pack (${actionDelta || 0} Actions) for ${safeUsername}`
-                    : `${safeItemName} Subscription for ${safeUsername}`
+                  description: isSubscription
+                    ? `${safeItemName} Monthly Subscription for ${safeUsername}`
+                    : `Action Pack (${actionDelta || 0} Actions) for ${safeUsername}`
                 },
-                unit_amount: amountInCents
+                unit_amount: amountInCents,
+                ...(isSubscription ? { recurring: { interval: 'month' } } : {})
               },
               quantity: 1
             }],
-            mode: 'payment',
+            mode: isSubscription ? 'subscription' : 'payment',
             customer_email: userEmail && userEmail.includes('@') ? userEmail : undefined,
             metadata: {
               userId: String(userId || ''),
               username: safeUsername,
               itemName: safeItemName,
-              itemType: String(itemType || 'pack'),
+              itemType: isSubscription ? 'tier' : 'pack',
               itemId: String(itemId || ''),
               actionDelta: String(actionDelta || 0),
               amount: String(amount)
             },
             success_url: `${origin}/?stripe_session_id={CHECKOUT_SESSION_ID}&stripe_status=success`,
             cancel_url: `${origin}/?stripe_status=cancelled`
-          });
+          };
+
+          if (isSubscription) {
+            sessionParams.subscription_data = {
+              metadata: {
+                userId: String(userId || ''),
+                username: safeUsername,
+                itemName: safeItemName,
+                itemType: 'tier',
+                itemId: String(itemId || ''),
+                amount: String(amount)
+              }
+            };
+          }
+
+          const session = await stripe.checkout.sessions.create(sessionParams);
 
           // Cache in session store
           checkoutSessionStore.set(session.id, {
             id: session.id,
             amount,
             itemName: safeItemName,
-            itemType: String(itemType || 'pack'),
+            itemType: isSubscription ? 'tier' : 'pack',
             itemId: String(itemId || ''),
             actionDelta: Number(actionDelta || 0),
             userId: String(userId || ''),
@@ -138,7 +155,7 @@ async function startServer() {
             username: safeUsername,
             paid: false,
             createdAt: new Date().toISOString(),
-            paymentMethod: 'Stripe Checkout'
+            paymentMethod: isSubscription ? 'Stripe Monthly Subscription' : 'Stripe Checkout'
           });
 
           return res.json({
@@ -321,7 +338,7 @@ async function startServer() {
     }
   });
 
-  // Sync and restore all completed Stripe purchases for a user (by UID, email, username, and customer details)
+  // Sync and restore all completed Stripe purchases & active monthly subscriptions for a user
   app.get('/api/stripe/sync-user-purchases', async (req, res) => {
     try {
       const userId = (req.query.userId as string || '').trim();
@@ -334,12 +351,17 @@ async function startServer() {
 
       const stripe = getStripe();
       if (!stripe) {
-        return res.json({ success: true, purchases: [] });
+        return res.json({ success: true, purchases: [], activeSubscription: null });
       }
 
-      const sessions = await stripe.checkout.sessions.list({ limit: 100 });
+      const [sessions, subscriptions] = await Promise.all([
+        stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] })),
+        stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }))
+      ]);
+
       const completedPurchases: any[] = [];
       const seenIds = new Set<string>();
+      const userCustomerIds = new Set<string>();
 
       for (const s of sessions.data) {
         const isPaid = s.payment_status === 'paid' || s.status === 'complete';
@@ -348,21 +370,17 @@ async function startServer() {
 
         const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
         const sUid = (s.metadata?.userId || '').trim();
-        const sName = (s.customer_details?.name || '').toLowerCase().trim();
         const sUsername = (s.metadata?.username || '').toLowerCase().trim();
 
         let isMatch = false;
 
         // Strict purchase attribution: each purchase is uniquely attached ONLY to the exact account it was bought on.
-        // A purchase must never be lumped across accounts.
         if (userId) {
           if (sUid) {
-            // If the purchase has a stored userId, it must match this user's UID exactly.
             if (sUid === userId) {
               isMatch = true;
             }
           } else if (username && sUsername) {
-            // If the purchase lacked a UID in metadata but has a username, match by username exactly
             if (sUsername === username) {
               isMatch = true;
             }
@@ -372,7 +390,6 @@ async function startServer() {
             isMatch = true;
           }
         } else if (email && !sUid && !sUsername) {
-          // Only fallback to email if the transaction had no user account identifiers attached
           if (sEmail && sEmail === email) {
             isMatch = true;
           }
@@ -380,6 +397,9 @@ async function startServer() {
 
         if (isMatch) {
           seenIds.add(s.id);
+          if (s.customer) {
+            userCustomerIds.add(typeof s.customer === 'string' ? s.customer : s.customer.id);
+          }
           const attachedUsername = s.metadata?.username || username || '';
           completedPurchases.push({
             id: s.id,
@@ -392,21 +412,103 @@ async function startServer() {
             userId: sUid || userId,
             username: attachedUsername,
             customerName: s.customer_details?.name || attachedUsername || 'Customer',
-            paymentMethod: 'Stripe Checkout',
+            paymentMethod: s.mode === 'subscription' ? 'Stripe Monthly Subscription' : 'Stripe Checkout',
             status: 'completed',
             createdAt: new Date(s.created * 1000).toISOString()
           });
         }
       }
 
+      // Find active monthly subscription attached to this exact account
+      let activeSub: any = null;
+      for (const sub of subscriptions.data) {
+        const subUid = (sub.metadata?.userId || '').trim();
+        const subUsername = (sub.metadata?.username || '').trim().toLowerCase();
+        const subCustomer = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+        const isSubMatch =
+          (userId && subUid === userId) ||
+          (username && subUsername === username) ||
+          (subCustomer && userCustomerIds.has(subCustomer));
+
+        if (isSubMatch) {
+          const isLive = sub.status === 'active' || sub.status === 'trialing';
+          const tierId = (sub.metadata?.itemId as any) ||
+            (sub.items.data[0]?.price?.unit_amount === 499 ? 'adventurer' :
+             sub.items.data[0]?.price?.unit_amount === 999 ? 'legendary' :
+             sub.items.data[0]?.price?.unit_amount === 1499 ? 'celestial' : 'adventurer');
+
+          const periodEnd = new Date(sub.current_period_end * 1000).toISOString();
+
+          if (isLive || !activeSub) {
+            activeSub = {
+              id: sub.id,
+              tierId,
+              itemName: tierId === 'celestial' ? 'Celestial Tier' : tierId === 'legendary' ? 'Legendary Tier' : 'Adventurer Tier',
+              status: sub.status,
+              periodEnd,
+              cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end),
+              customerId: subCustomer
+            };
+            if (isLive) break; // Found active live subscription
+          }
+        }
+      }
+
       res.json({
         success: true,
         count: completedPurchases.length,
-        purchases: completedPurchases
+        purchases: completedPurchases,
+        activeSubscription: activeSub
       });
     } catch (err: any) {
       console.error('Failed to sync user Stripe purchases:', err);
       res.status(500).json({ error: 'SYNC_FAILED', message: err.message });
+    }
+  });
+
+  // Cancel an active monthly subscription
+  app.post('/api/stripe/cancel-subscription', async (req, res) => {
+    try {
+      const { userId, subscriptionId } = req.body;
+      if (!userId && !subscriptionId) {
+        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'User ID or Subscription ID is required.' });
+      }
+
+      const stripe = getStripe();
+      if (!stripe) {
+        return res.json({ success: true, message: 'Subscription cancelled in test mode.' });
+      }
+
+      let subToCancelId = subscriptionId;
+
+      // If subscriptionId wasn't passed directly, find the user's active subscription
+      if (!subToCancelId) {
+        const subs = await stripe.subscriptions.list({ limit: 100, status: 'active' });
+        for (const s of subs.data) {
+          if (s.metadata?.userId === userId) {
+            subToCancelId = s.id;
+            break;
+          }
+        }
+      }
+
+      if (!subToCancelId) {
+        return res.status(404).json({ error: 'NOT_FOUND', message: 'No active subscription found for this account.' });
+      }
+
+      // Cancel the subscription immediately or at period end
+      const cancelledSub = await stripe.subscriptions.cancel(subToCancelId);
+
+      res.json({
+        success: true,
+        message: 'Monthly subscription successfully cancelled.',
+        status: cancelledSub.status,
+        subscriptionId: cancelledSub.id
+      });
+    } catch (err: any) {
+      console.error('Failed to cancel Stripe subscription:', err);
+      res.status(500).json({ error: 'CANCEL_FAILED', message: err.message });
     }
   });
 

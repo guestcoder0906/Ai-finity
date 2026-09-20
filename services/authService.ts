@@ -37,6 +37,11 @@ export interface UserProfile {
   dailyActionsUsed?: number;
   dailyActionsDate?: string;
   subscriptionExpiresAt?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripeCustomerId?: string | null;
+  subscriptionStatus?: 'active' | 'canceled' | 'past_due' | 'unpaid' | 'none';
+  subscriptionPeriodEnd?: string | null;
+  subscriptionCancelAtPeriodEnd?: boolean;
   modActionsGrantedToday?: number;
   modActionsGrantedDate?: string;
 }

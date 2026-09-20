@@ -39,7 +39,8 @@ import {
 import {
   createRealStripeCheckoutSession,
   checkStripeSessionStatus,
-  syncUserPurchasesFromStripe
+  syncUserPurchasesFromStripe,
+  cancelStripeSubscription
 } from '../services/stripeCheckoutService';
 import { ReceiptModal } from './ReceiptModal';
 import { ReceiptsList } from './ReceiptsList';
@@ -107,7 +108,31 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   const [waitingSessionId, setWaitingSessionId] = useState<string | null>(null);
   const [isSyncingPurchases, setIsSyncingPurchases] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+  const [isCancellingSubscription, setIsCancellingSubscription] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelSuccessMessage, setCancelSuccessMessage] = useState<string | null>(null);
+  const [cancelErrorMessage, setCancelErrorMessage] = useState<string | null>(null);
   const pollingIntervalRef = React.useRef<number | null>(null);
+
+  // Direct cancellation of active monthly subscription
+  const handleCancelSubscription = async () => {
+    if (!currentUser?.uid) return;
+    setIsCancellingSubscription(true);
+    setCancelErrorMessage(null);
+    try {
+      const res = await cancelStripeSubscription(currentUser.uid, currentUser.stripeSubscriptionId);
+      const updated = await ActionLimitService.cancelSubscription(currentUser, guestId);
+      if (onProfileUpdated) onProfileUpdated({ ...updated });
+      onStatusUpdated();
+      setShowCancelConfirm(false);
+      setCancelSuccessMessage(res.message || 'Your monthly subscription has been successfully cancelled.');
+      setTimeout(() => setCancelSuccessMessage(null), 8000);
+    } catch (err: any) {
+      setCancelErrorMessage(err.message || 'Failed to cancel subscription.');
+    } finally {
+      setIsCancellingSubscription(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -1284,12 +1309,115 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           {/* TAB 2: Monthly Memberships */}
           {activeTab === 'subscriptions' && (
             <div className="space-y-4">
-              <div>
-                <h3 className="text-base font-semibold text-white">Monthly Memberships</h3>
-                <p className="text-xs text-neutral-400">
-                  Unlock permanent multiple adventure saves, community publishing, and unlimited gameplay.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-semibold text-white">Monthly Memberships</h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">
+                      Renews Monthly • Cancel Anytime
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400">
+                    Recurring monthly subscriptions attached strictly to your account. Unlock permanent adventure slots, glowing names, and bonus daily actions.
+                  </p>
+                </div>
               </div>
+
+              {/* Cancel Success / Error Notifications */}
+              {cancelSuccessMessage && (
+                <div className="p-3 bg-emerald-950/60 border border-emerald-800/80 rounded-xl text-xs text-emerald-300 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                    <span>{cancelSuccessMessage}</span>
+                  </div>
+                  <button
+                    onClick={() => setCancelSuccessMessage(null)}
+                    className="text-emerald-400 hover:text-white text-xs font-bold"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {cancelErrorMessage && (
+                <div className="p-3 bg-rose-950/60 border border-rose-800/80 rounded-xl text-xs text-rose-300 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-rose-400 shrink-0" />
+                    <span>{cancelErrorMessage}</span>
+                  </div>
+                  <button
+                    onClick={() => setCancelErrorMessage(null)}
+                    className="text-rose-400 hover:text-white text-xs font-bold"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Active Subscription Banner & Cancellation Controls */}
+              {currentUser && effectiveStatus.tier !== 'free' && (
+                <div className="bg-gradient-to-r from-neutral-900 via-neutral-900 to-indigo-950/40 border border-indigo-900/60 rounded-xl p-4 sm:p-5 shadow-lg">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 shrink-0 mt-0.5">
+                        <Crown size={20} />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-white capitalize">
+                            {effectiveStatus.tier} Monthly Plan
+                          </span>
+                          <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Active Subscription
+                          </span>
+                          <span className="text-[11px] text-neutral-400 font-mono">
+                            Attached to: <strong className="text-neutral-200">{currentUser.username}</strong>
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-400">
+                          {currentUser.subscriptionExpiresAt ? (
+                            <>Current billing cycle active until <strong className="text-neutral-200">{new Date(currentUser.subscriptionExpiresAt).toLocaleDateString()}</strong></>
+                          ) : (
+                            <>Active monthly plan auto-renewing every 30 days.</>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+                      {!showCancelConfirm ? (
+                        <button
+                          onClick={() => setShowCancelConfirm(true)}
+                          className="px-3.5 py-2 text-xs font-semibold text-rose-300 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-800/60 rounded-lg transition-all"
+                        >
+                          Cancel Subscription
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-neutral-950 p-1.5 rounded-lg border border-rose-900/80">
+                          <span className="text-[11px] text-rose-300 font-medium px-2">
+                            Confirm cancellation?
+                          </span>
+                          <button
+                            onClick={handleCancelSubscription}
+                            disabled={isCancellingSubscription}
+                            className="px-2.5 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-50"
+                          >
+                            {isCancellingSubscription ? 'Cancelling...' : 'Yes, Cancel'}
+                          </button>
+                          <button
+                            onClick={() => setShowCancelConfirm(false)}
+                            disabled={isCancellingSubscription}
+                            className="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded transition-colors"
+                          >
+                            Keep Plan
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {SUBSCRIPTION_TIERS.map((tier) => {

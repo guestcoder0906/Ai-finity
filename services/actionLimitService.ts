@@ -500,7 +500,14 @@ export class ActionLimitService {
   public static async activateSubscription(
     user: UserProfile | null,
     tier: UserTier,
-    guestId?: string
+    guestId?: string,
+    subscriptionDetails?: {
+      subscriptionId?: string;
+      customerId?: string;
+      periodEnd?: string;
+      status?: string;
+      cancelAtPeriodEnd?: boolean;
+    }
   ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('Guests cannot buy subscriptions. Please log in or sign up first.');
@@ -523,11 +530,16 @@ export class ActionLimitService {
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
-    const expiresStr = expiresAt.toISOString();
+    const expiresStr = subscriptionDetails?.periodEnd || expiresAt.toISOString();
 
     user.tier = tier;
     user.actionCredits = newCredits;
     user.subscriptionExpiresAt = expiresStr;
+    user.stripeSubscriptionId = subscriptionDetails?.subscriptionId || user.stripeSubscriptionId || null;
+    user.stripeCustomerId = subscriptionDetails?.customerId || user.stripeCustomerId || null;
+    user.subscriptionStatus = (subscriptionDetails?.status as any) || 'active';
+    user.subscriptionPeriodEnd = expiresStr;
+    user.subscriptionCancelAtPeriodEnd = subscriptionDetails?.cancelAtPeriodEnd || false;
     user.canSaveMultipleAdventures = true;
     user.canPostCommunityAdventures = true;
     if (tier === 'legendary' || tier === 'celestial') {
@@ -547,6 +559,11 @@ export class ActionLimitService {
       tier,
       actionCredits: newCredits,
       subscriptionExpiresAt: expiresStr,
+      stripeSubscriptionId: user.stripeSubscriptionId,
+      stripeCustomerId: user.stripeCustomerId,
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: expiresStr,
+      subscriptionCancelAtPeriodEnd: user.subscriptionCancelAtPeriodEnd,
       canSaveMultipleAdventures: true,
       canPostCommunityAdventures: true,
       ...(tier === 'legendary' || tier === 'celestial' ? { showGlowingName: true } : {})
@@ -666,6 +683,9 @@ export class ActionLimitService {
 
     user.tier = 'free';
     user.subscriptionExpiresAt = undefined;
+    user.stripeSubscriptionId = null;
+    user.subscriptionStatus = 'canceled';
+    user.subscriptionPeriodEnd = null;
     if (!isAdminOrMod) {
       user.canSaveMultipleAdventures = false;
       user.canPostCommunityAdventures = false;
@@ -682,12 +702,104 @@ export class ActionLimitService {
     await updateUserProfile(user.uid, {
       tier: 'free',
       subscriptionExpiresAt: null as any,
+      stripeSubscriptionId: null as any,
+      subscriptionStatus: 'canceled',
+      subscriptionPeriodEnd: null as any,
       ...(!isAdminOrMod ? {
         canSaveMultipleAdventures: false,
         canPostCommunityAdventures: false,
         showGlowingName: false
       } : {})
     });
+
+    return user;
+  }
+
+  /**
+   * Automatically synchronizes user profile with real-time Stripe subscription status
+   * Attaches subscription strictly to this account, auto-updating active tiers or downgrading upon cancellation
+   */
+  public static async syncSubscriptionState(
+    user: UserProfile | null,
+    activeSub: {
+      id: string;
+      tierId: UserTier;
+      status: string;
+      periodEnd: string;
+      cancelAtPeriodEnd?: boolean;
+      customerId?: string;
+    } | null,
+    guestId?: string
+  ): Promise<UserProfile> {
+    if (!user || !user.uid) return user as any;
+
+    const isAdminOrMod = user.role === 'admin' || user.role === 'mod';
+    const today = this.getTodayDateString();
+    const status = this.getActionStatus(user, guestId);
+
+    if (activeSub && (activeSub.status === 'active' || activeSub.status === 'trialing')) {
+      const isNewTier = user.tier !== activeSub.tierId;
+      user.tier = activeSub.tierId;
+      user.stripeSubscriptionId = activeSub.id;
+      user.stripeCustomerId = activeSub.customerId || user.stripeCustomerId || null;
+      user.subscriptionStatus = 'active';
+      user.subscriptionExpiresAt = activeSub.periodEnd;
+      user.subscriptionPeriodEnd = activeSub.periodEnd;
+      user.subscriptionCancelAtPeriodEnd = activeSub.cancelAtPeriodEnd || false;
+      user.canSaveMultipleAdventures = true;
+      user.canPostCommunityAdventures = true;
+      if (activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial') {
+        user.showGlowingName = true;
+      }
+
+      this.saveLocalState(user, guestId, {
+        tier: activeSub.tierId,
+        actionCredits: user.actionCredits || 0,
+        dailyActionsUsed: status.dailyFreeUsed,
+        dailyActionsDate: today
+      });
+
+      await updateUserProfile(user.uid, {
+        tier: activeSub.tierId,
+        stripeSubscriptionId: activeSub.id,
+        stripeCustomerId: user.stripeCustomerId,
+        subscriptionStatus: 'active',
+        subscriptionExpiresAt: activeSub.periodEnd,
+        subscriptionPeriodEnd: activeSub.periodEnd,
+        subscriptionCancelAtPeriodEnd: activeSub.cancelAtPeriodEnd || false,
+        canSaveMultipleAdventures: true,
+        canPostCommunityAdventures: true,
+        ...(activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial' ? { showGlowingName: true } : {})
+      });
+    } else if (!activeSub && user.stripeSubscriptionId && !isAdminOrMod) {
+      // The user had a Stripe subscription recorded, but it is no longer active in Stripe
+      user.tier = 'free';
+      user.subscriptionStatus = 'canceled';
+      user.subscriptionExpiresAt = undefined;
+      user.stripeSubscriptionId = null;
+      user.subscriptionPeriodEnd = null;
+      user.canSaveMultipleAdventures = false;
+      user.canPostCommunityAdventures = false;
+      user.showGlowingName = false;
+
+      this.saveLocalState(user, guestId, {
+        tier: 'free',
+        actionCredits: user.actionCredits || 0,
+        dailyActionsUsed: status.dailyFreeUsed,
+        dailyActionsDate: today
+      });
+
+      await updateUserProfile(user.uid, {
+        tier: 'free',
+        subscriptionStatus: 'canceled',
+        subscriptionExpiresAt: null as any,
+        stripeSubscriptionId: null as any,
+        subscriptionPeriodEnd: null as any,
+        canSaveMultipleAdventures: false,
+        canPostCommunityAdventures: false,
+        showGlowingName: false
+      });
+    }
 
     return user;
   }

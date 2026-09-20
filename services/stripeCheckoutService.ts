@@ -132,8 +132,18 @@ export async function checkStripeSessionStatus(sessionId: string): Promise<{
   }
 }
 
+export interface StripeActiveSubscription {
+  id: string;
+  tierId: 'adventurer' | 'legendary' | 'celestial';
+  itemName: string;
+  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'unpaid';
+  periodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  customerId?: string;
+}
+
 /**
- * Syncs and retrieves all completed Stripe purchases for a user
+ * Syncs and retrieves all completed Stripe purchases and active monthly subscriptions for a user
  */
 export async function syncUserPurchasesFromStripe(
   userId: string,
@@ -142,6 +152,7 @@ export async function syncUserPurchasesFromStripe(
 ): Promise<{
   success: boolean;
   count: number;
+  activeSubscription?: StripeActiveSubscription | null;
   purchases: Array<{
     id: string;
     amount: number;
@@ -162,12 +173,70 @@ export async function syncUserPurchasesFromStripe(
     const url = `/api/stripe/sync-user-purchases?userId=${encodeURIComponent(userId)}&email=${encodeURIComponent(email || '')}&username=${encodeURIComponent(username || '')}`;
     const res = await fetch(url);
     if (!res.ok) {
-      return { success: false, count: 0, purchases: [] };
+      return { success: false, count: 0, purchases: [], activeSubscription: null };
     }
     const data = await res.json();
     return data;
   } catch (err) {
     console.error('Failed to sync Stripe purchases:', err);
-    return { success: false, count: 0, purchases: [] };
+    return { success: false, count: 0, purchases: [], activeSubscription: null };
   }
+}
+
+/**
+ * Cancels a user's active monthly Stripe subscription
+ */
+export async function cancelStripeSubscription(
+  userId: string,
+  subscriptionId?: string | null
+): Promise<{ success: boolean; message: string; status?: string }> {
+  const res = await fetch('/api/stripe/cancel-subscription', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify({
+      userId,
+      subscriptionId: subscriptionId || undefined
+    })
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.success) {
+    throw new Error(data?.message || 'Failed to cancel subscription.');
+  }
+
+  return data;
+}
+
+/**
+ * Creates a Stripe Customer Portal session URL for managing subscription/payment methods
+ */
+export async function createStripeCustomerPortalSession(
+  userId: string,
+  origin?: string
+): Promise<string> {
+  const clientOrigin =
+    origin ||
+    (typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com');
+
+  const res = await fetch('/api/stripe/create-portal-session', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify({
+      userId,
+      origin: clientOrigin
+    })
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.url) {
+    throw new Error(data?.message || 'Unable to open Stripe Customer Portal.');
+  }
+
+  return data.url;
 }

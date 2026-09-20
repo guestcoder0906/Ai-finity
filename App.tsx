@@ -275,6 +275,18 @@ function App() {
           }
         }
 
+        if (syncRes.activeSubscription !== undefined) {
+          const syncedUser = await ActionLimitService.syncSubscriptionState(
+            user,
+            syncRes.activeSubscription as any,
+            guestId
+          );
+          if (syncedUser) {
+            setCurrentUser({ ...syncedUser });
+            setActionStatus(ActionLimitService.getActionStatus(syncedUser, guestId));
+          }
+        }
+
         if (newlyFoundPurchases) {
           const updated = await ActionLimitService.applyRestoredPurchases(
             user,
