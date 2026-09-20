@@ -162,6 +162,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       setProcessingMessage('Connecting to Stripe...');
 
       try {
+        const clientOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com';
         const response = await fetch('/api/stripe/create-checkout-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -173,7 +174,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
             userId: currentUser.uid,
             userEmail: currentUser.email || '',
-            username: currentUser.username || ''
+            username: currentUser.username || '',
+            origin: clientOrigin
           })
         });
 
@@ -186,9 +188,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setIsProcessingPayment(false);
         setProcessingMessage(null);
 
-        // Open checkout in new window / tab
-        const checkoutWindow = window.open(data.url, '_blank');
-        if (!checkoutWindow) {
+        // Safely navigate to Stripe Checkout session
+        try {
+          window.location.assign(data.url);
+        } catch {
           window.location.href = data.url;
         }
         return;

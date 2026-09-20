@@ -52,12 +52,18 @@ async function startServer() {
         });
       }
 
-      const { amount, itemName, itemType, itemId, actionDelta, userId, userEmail, username } = req.body;
+      const { amount, itemName, itemType, itemId, actionDelta, userId, userEmail, username, origin: clientOrigin } = req.body;
       if (!amount || typeof amount !== 'number' || amount <= 0) {
         return res.status(400).json({ error: 'INVALID_AMOUNT', message: 'Valid amount in USD is required.' });
       }
 
-      const origin = req.headers.origin || `http://${req.headers.host || 'localhost:3000'}`;
+      let origin = clientOrigin || req.headers.origin;
+      if (!origin) {
+        const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'https');
+        const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'www.aifinity-rpg.com';
+        origin = `${proto}://${host}`;
+      }
+      origin = String(origin).replace(/\/+$/, '');
       const amountInCents = Math.round(amount * 100);
 
       const session = await stripe.checkout.sessions.create({

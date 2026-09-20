@@ -257,7 +257,12 @@ function App() {
     const stripeStatusParam = urlParams.get('stripe_status');
 
     if (sessionId) {
-      window.history.replaceState({}, '', window.location.pathname);
+      try {
+        const cleanPath = window.location.pathname || '/';
+        window.history.replaceState({}, '', cleanPath);
+      } catch (e) {
+        console.warn('History replaceState skipped:', e);
+      }
       fetch(`/api/stripe/verify-checkout-session?sessionId=${encodeURIComponent(sessionId)}`)
         .then(res => res.json())
         .then(async (data) => {
@@ -296,7 +301,12 @@ function App() {
           console.error('Failed to verify Stripe checkout session:', err);
         });
     } else if (stripeStatusParam === 'cancelled') {
-      window.history.replaceState({}, '', window.location.pathname);
+      try {
+        const cleanPath = window.location.pathname || '/';
+        window.history.replaceState({}, '', cleanPath);
+      } catch (e) {
+        console.warn('History replaceState skipped:', e);
+      }
       setStripeReturnMessage({
         type: 'info',
         text: 'Stripe Checkout was cancelled.'
