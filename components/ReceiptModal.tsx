@@ -146,16 +146,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 Billed To
               </span>
               <div className="font-bold text-white print:text-black text-sm">
-                {currentUser?.username || transaction.recipient || 'Player'}
+                {transaction.customerName || currentUser?.username || transaction.recipient || 'Chloe Alba'}
               </div>
               <div className="text-neutral-400 print:text-gray-600 text-[11px]">
-                {currentUser?.email || transaction.recipient || 'Guest Player'}
+                {transaction.email || currentUser?.email || 'Customer'}
               </div>
-              {transaction.userId && (
-                <div className="text-[10px] text-neutral-500 font-mono mt-1 truncate">
-                  UID: {transaction.userId}
-                </div>
-              )}
+              <div className="text-[10px] text-neutral-400 font-mono mt-1 truncate">
+                Attached Account: <span className="text-amber-400 font-semibold">{transaction.attachedUsername || transaction.recipient || currentUser?.username || 'User'}</span>
+                {transaction.userId && (
+                  <span className="text-neutral-500 block text-[9px]">UID: {transaction.userId}</span>
+                )}
+              </div>
             </div>
 
             <div className="p-3 bg-black/40 print:bg-gray-50 rounded-xl border border-neutral-800 print:border-gray-300">

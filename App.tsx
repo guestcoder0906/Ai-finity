@@ -249,9 +249,14 @@ function App() {
                   paymentMethod: 'Stripe Checkout',
                   status: 'completed',
                   createdAt: p.createdAt,
+                  customerName: p.customerName || 'Chloe Alba',
+                  email: p.email || user.email || undefined,
+                  attachedUsername: p.username || user.username || 'Adventurer',
+                  recipient: p.username || user.username || user.email || 'Adventurer',
+                  notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
                   actionDelta: p.actionDelta,
                   newTier: p.itemType === 'tier' ? p.itemId : undefined,
-                  userId: user.uid
+                  userId: p.userId || user.uid
                 };
                 await recordPaymentTransaction(user.uid, tx);
                 existingIds.add(p.id);
@@ -259,18 +264,17 @@ function App() {
             }
 
             if (hasNewPurchases) {
-              let updated = user;
-              if (totalNewCredits > 0) {
-                updated = await ActionLimitService.addPurchasedCredits(updated, totalNewCredits, guestId);
-              }
-              if (highestTier) {
-                updated = await ActionLimitService.activateSubscription(updated, highestTier as any, guestId);
-              }
+              const updated = await ActionLimitService.applyRestoredPurchases(
+                user,
+                totalNewCredits,
+                highestTier as any,
+                guestId
+              );
               setCurrentUser({ ...updated });
               setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
               setStripeReturnMessage({
                 type: 'success',
-                text: `🎉 Stripe Purchases Restored! Added ${totalNewCredits} actions to your account.`
+                text: `🎉 Stripe Purchases Restored! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to your account.`
               });
             }
           }

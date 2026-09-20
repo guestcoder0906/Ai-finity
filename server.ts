@@ -361,25 +361,13 @@ async function startServer() {
 
         let isMatch = false;
 
+        // Strict account attribution: each purchase belongs uniquely to the specific account it was purchased on
         if (userId && sUid && sUid === userId) {
-          isMatch = true;
-        } else if (email && sEmail && sEmail === email) {
           isMatch = true;
         } else if (username && sUsername && sUsername === username) {
           isMatch = true;
-        } else if (isChloeUser) {
-          // Chloe's purchases across accounts / email aliases (aslinkyferret, oasisofgrace, chloe.a.alba.1, or Customer Name Chloe Alba)
-          if (
-            sName.includes('chloe') ||
-            sName.includes('alba') ||
-            sEmail.includes('chloe') ||
-            sEmail.includes('aslinkyferret') ||
-            sEmail.includes('oasisofgrace') ||
-            sUid === 'DutjeBlM9cU1kvf2O2LIJKZdQ0K2' ||
-            sUid === 'nvrwShet4Tdh3Xp4vwBrTrRsa1J3'
-          ) {
-            isMatch = true;
-          }
+        } else if (email && sEmail && sEmail === email) {
+          isMatch = true;
         }
 
         if (isMatch) {
@@ -393,6 +381,7 @@ async function startServer() {
             actionDelta: parseInt(s.metadata?.actionDelta, 10) || (s.amount_total === 99 ? 50 : s.amount_total === 299 ? 200 : 0),
             email: sEmail || email,
             userId: sUid || userId,
+            username: s.metadata?.username || '',
             customerName: s.customer_details?.name || 'Chloe Alba',
             paymentMethod: 'Stripe Checkout',
             status: 'completed',

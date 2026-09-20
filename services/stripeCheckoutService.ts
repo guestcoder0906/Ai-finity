@@ -151,6 +151,7 @@ export async function syncUserPurchasesFromStripe(
     actionDelta: number;
     email: string;
     userId: string;
+    username?: string;
     customerName?: string;
     paymentMethod: string;
     status: 'completed';

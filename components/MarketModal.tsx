@@ -164,9 +164,12 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               paymentMethod: 'Stripe Checkout',
               status: 'completed',
               createdAt: p.createdAt,
-              recipient: currentUser.username || currentUser.email || 'Adventurer',
+              customerName: p.customerName || 'Chloe Alba',
+              email: p.email || currentUser.email || undefined,
+              attachedUsername: p.username || currentUser.username || 'Adventurer',
+              recipient: p.username || currentUser.username || currentUser.email || 'Adventurer',
               notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
-              userId: currentUser.uid,
+              userId: p.userId || currentUser.uid,
               actionDelta: p.actionDelta,
               newTier: p.itemType === 'tier' ? p.itemId : undefined
             };
@@ -176,11 +179,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         }
 
         let updated = currentUser;
-        if (totalNewCredits > 0) {
-          updated = await ActionLimitService.addPurchasedCredits(updated, totalNewCredits, guestId);
-        }
-        if (highestTier) {
-          updated = await ActionLimitService.activateSubscription(updated, highestTier as any, guestId);
+        if (totalNewCredits > 0 || highestTier) {
+          updated = await ActionLimitService.applyRestoredPurchases(
+            currentUser,
+            totalNewCredits,
+            highestTier as any,
+            guestId
+          );
         }
 
         if (updated) {
@@ -191,7 +196,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         if (newlyRestoredCount > 0) {
           setSyncStatusMessage({
             type: 'success',
-            text: `🎉 Restored ${newlyRestoredCount} Stripe purchase(s)! Added +${totalNewCredits} actions to your account.`
+            text: `🎉 Restored ${newlyRestoredCount} Stripe purchase(s)! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to your account.`
           });
         } else {
           setSyncStatusMessage({

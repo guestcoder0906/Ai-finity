@@ -556,6 +556,76 @@ export class ActionLimitService {
   }
 
   /**
+   * Atomically applies both action packs and subscription tier upgrades to a user's account
+   * ensuring that action packs are never overwritten by subscriptions and vice versa.
+   */
+  public static async applyRestoredPurchases(
+    user: UserProfile | null,
+    addedCredits: number,
+    newTier: UserTier | null,
+    guestId?: string
+  ): Promise<UserProfile> {
+    if (!user || !user.uid) {
+      throw new Error('User must be logged in to restore purchases.');
+    }
+
+    const status = this.getActionStatus(user, guestId);
+    const today = this.getTodayDateString();
+
+    let resolvedTier: UserTier = user.tier || status.tier || 'free';
+    let expiresStr = user.subscriptionExpiresAt;
+
+    // If subscription is being restored/activated
+    let tierBonusActions = 0;
+    if (newTier) {
+      resolvedTier = newTier;
+      if (!expiresStr || new Date(expiresStr).getTime() < Date.now()) {
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 30);
+        expiresStr = expiresAt.toISOString();
+      }
+      if (newTier === 'adventurer') {
+        tierBonusActions = 300;
+      } else if (newTier === 'legendary') {
+        tierBonusActions = 600;
+      } else if (newTier === 'celestial') {
+        tierBonusActions = 1000;
+      }
+    }
+
+    const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
+    // Total credits = existing + packs + subscription bonuses (if any newly restored)
+    const finalCredits = currentCredits + addedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
+
+    user.tier = resolvedTier;
+    user.actionCredits = finalCredits;
+    user.subscriptionExpiresAt = expiresStr;
+    user.canSaveMultipleAdventures = true;
+    user.canPostCommunityAdventures = true;
+    if (resolvedTier === 'legendary' || resolvedTier === 'celestial') {
+      user.showGlowingName = true;
+    }
+
+    this.saveLocalState(user, guestId, {
+      tier: resolvedTier,
+      actionCredits: finalCredits,
+      dailyActionsUsed: status.dailyFreeUsed,
+      dailyActionsDate: today
+    });
+
+    await updateUserProfile(user.uid, {
+      tier: resolvedTier,
+      actionCredits: finalCredits,
+      subscriptionExpiresAt: expiresStr || null as any,
+      canSaveMultipleAdventures: true,
+      canPostCommunityAdventures: true,
+      ...(resolvedTier === 'legendary' || resolvedTier === 'celestial' ? { showGlowingName: true } : {})
+    });
+
+    return user;
+  }
+
+  /**
    * Helper to activate subscription by UID directly (e.g. from Stripe redirect)
    */
   public static async activateSubscriptionByUid(

@@ -85,9 +85,12 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
                 paymentMethod: 'Stripe Checkout',
                 status: 'completed',
                 createdAt: p.createdAt,
-                recipient: currentUser.username || currentUser.email || 'Adventurer',
+                customerName: p.customerName || 'Chloe Alba',
+                email: p.email || currentUser.email || undefined,
+                attachedUsername: p.username || currentUser.username || 'Adventurer',
+                recipient: p.username || currentUser.username || currentUser.email || 'Adventurer',
                 notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
-                userId: currentUser.uid,
+                userId: p.userId || currentUser.uid,
                 actionDelta: p.actionDelta,
                 newTier: p.itemType === 'tier' ? p.itemId : undefined
               };
@@ -98,15 +101,16 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
 
           if (newFound > 0) {
             let updated = currentUser;
-            if (newCredits > 0) {
-              updated = await ActionLimitService.addPurchasedCredits(updated, newCredits);
-            }
-            if (highestTier) {
-              updated = await ActionLimitService.activateSubscription(updated, highestTier as any);
+            if (newCredits > 0 || highestTier) {
+              updated = await ActionLimitService.applyRestoredPurchases(
+                currentUser,
+                newCredits,
+                highestTier as any
+              );
             }
             if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
             if (onStatusUpdated) onStatusUpdated();
-            setSyncNotice(`Restored ${newFound} Stripe order(s) and credited actions!`);
+            setSyncNotice(`🎉 Restored ${newFound} Stripe order(s) (+${newCredits} actions${highestTier ? ` & ${highestTier} tier` : ''})!`);
           }
         }
       } catch (syncErr) {
@@ -157,9 +161,12 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
               paymentMethod: 'Stripe Checkout',
               status: 'completed',
               createdAt: p.createdAt,
-              recipient: currentUser.username || currentUser.email || 'Adventurer',
+              customerName: p.customerName || 'Chloe Alba',
+              email: p.email || currentUser.email || undefined,
+              attachedUsername: p.username || currentUser.username || 'Adventurer',
+              recipient: p.username || currentUser.username || currentUser.email || 'Adventurer',
               notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
-              userId: currentUser.uid,
+              userId: p.userId || currentUser.uid,
               actionDelta: p.actionDelta,
               newTier: p.itemType === 'tier' ? p.itemId : undefined
             };
@@ -169,11 +176,12 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
         }
 
         let updated = currentUser;
-        if (newCredits > 0) {
-          updated = await ActionLimitService.addPurchasedCredits(updated, newCredits);
-        }
-        if (highestTier) {
-          updated = await ActionLimitService.activateSubscription(updated, highestTier as any);
+        if (newCredits > 0 || highestTier) {
+          updated = await ActionLimitService.applyRestoredPurchases(
+            currentUser,
+            newCredits,
+            highestTier as any
+          );
         }
         if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
         if (onStatusUpdated) onStatusUpdated();
@@ -182,7 +190,7 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
         setTransactions(updatedRecords);
 
         if (newFound > 0) {
-          setSyncNotice(`🎉 Successfully restored ${newFound} Stripe order(s) totaling +${newCredits} actions!`);
+          setSyncNotice(`🎉 Successfully restored ${newFound} Stripe order(s) totaling +${newCredits} actions${highestTier ? ` & ${highestTier} tier` : ''}!`);
         } else {
           setSyncNotice(`Verified ${syncRes.count} Stripe transaction(s). All purchases are already up-to-date on your account.`);
         }
@@ -387,6 +395,14 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
                         <>
                           <span>•</span>
                           <span className="text-yellow-400 font-mono">{tx.newTier} Tier</span>
+                        </>
+                      )}
+                      {(tx.attachedUsername || tx.recipient) && (
+                        <>
+                          <span>•</span>
+                          <span className="text-neutral-400 font-mono">
+                            Account: <span className="text-neutral-300 font-semibold">{tx.attachedUsername || tx.recipient}</span>
+                          </span>
                         </>
                       )}
                     </div>

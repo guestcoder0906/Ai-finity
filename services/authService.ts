@@ -421,6 +421,9 @@ export interface PaymentTransactionRecord {
   status: 'completed' | 'failed' | 'pending';
   createdAt: string;
   recipient?: string;
+  customerName?: string;
+  email?: string;
+  attachedUsername?: string;
   notes?: string;
   userId?: string;
   actionDelta?: number;
