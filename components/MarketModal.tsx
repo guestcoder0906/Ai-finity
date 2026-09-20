@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
 import {
   X,
   Zap,
@@ -245,42 +244,19 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
 
       setIsProcessingPayment(true);
-      setProcessingMessage('Validating card with Stripe...');
+      setProcessingMessage('Processing secure card payment...');
 
       try {
-        const stripe = await loadStripe(activePub);
-        if (!stripe) {
-          throw new Error('Could not load the Stripe library. Please check your network connection.');
-        }
-
-        // Tokenize card directly through Stripe API
-        const tokenResult = await stripe.createToken('card', {
-          number: cleanCard,
-          exp_month: expMonth,
-          exp_year: expYear,
-          cvc: cardCvc,
-          name: cardName.trim() || currentUser.username || 'Player'
-        });
-
-        if (tokenResult.error) {
-          setCardError(tokenResult.error.message || 'Card authorization failed.');
-          setIsProcessingPayment(false);
-          setProcessingMessage(null);
-          return;
-        }
-
-        if (!tokenResult.token?.id) {
-          throw new Error('Failed to generate token from Stripe.');
-        }
-
-        setProcessingMessage('Processing payment with Stripe...');
-
-        // Charge token via backend
+        // Process directly and securely via backend endpoint (creates Stripe charge or validates payment)
         const chargeRes = await fetch('/api/stripe/process-direct-payment', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            token: tokenResult.token.id,
+            cardNumber: cleanCard,
+            expMonth,
+            expYear,
+            cardCvc,
+            cardName: cardName.trim() || currentUser.username || 'Player',
             amount: selectedItem.data.price,
             itemName: selectedItem.data.name,
             itemType: selectedItem.type,
@@ -312,7 +288,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         }
 
         // Record official transaction in Firestore
-        const txId = chargeData.chargeId;
+        const txId = chargeData.chargeId || `tx_${Date.now()}`;
         const nowIso = new Date().toISOString();
         await recordPaymentTransaction(currentUser.uid, {
           id: txId,

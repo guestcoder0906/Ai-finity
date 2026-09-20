@@ -427,8 +427,12 @@ export async function recordPaymentTransaction(
   }
 ): Promise<void> {
   try {
-    await setDoc(doc(db, 'users', uid, 'transactions', transaction.id), {
+    const rawId = String(transaction.id || '').trim();
+    const safeTxId = (rawId || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
+      .replace(/[^a-zA-Z0-9_-]/g, '_');
+    await setDoc(doc(db, 'users', uid, 'transactions', safeTxId), {
       ...transaction,
+      id: safeTxId,
       userId: uid
     });
   } catch (err) {
