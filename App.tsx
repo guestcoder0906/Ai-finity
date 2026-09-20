@@ -249,7 +249,7 @@ function App() {
                   paymentMethod: 'Stripe Checkout',
                   status: 'completed',
                   createdAt: p.createdAt,
-                  customerName: p.customerName || 'Chloe Alba',
+                  customerName: p.customerName || p.username || user.username || 'Adventurer',
                   email: p.email || user.email || undefined,
                   attachedUsername: p.username || user.username || 'Adventurer',
                   recipient: p.username || user.username || user.email || 'Adventurer',
@@ -436,6 +436,7 @@ function App() {
               }
             }
 
+            const txUsername = meta.username || pending?.username || currentUser?.username || '';
             const txRecord: PaymentTransactionRecord = {
               id: sessionId,
               amount,
@@ -444,6 +445,11 @@ function App() {
               paymentMethod: 'Stripe Checkout',
               status: 'completed',
               createdAt: new Date().toISOString(),
+              customerName: data.customerName || (data.customerEmail ? data.customerEmail.split('@')[0] : (currentUser?.username || 'Customer')),
+              email: data.customerEmail || currentUser?.email || undefined,
+              attachedUsername: txUsername || currentUser?.username || 'Adventurer',
+              recipient: txUsername || currentUser?.username || currentUser?.email || 'Adventurer',
+              notes: itemType === 'pack' ? `Added ${actionDelta} actions` : `Activated ${itemName}`,
               actionDelta: actionDelta > 0 ? actionDelta : undefined,
               newTier: itemType === 'tier' ? (itemId || itemName) : undefined,
               userId: targetUid || undefined

@@ -146,7 +146,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 Billed To
               </span>
               <div className="font-bold text-white print:text-black text-sm">
-                {transaction.customerName || currentUser?.username || transaction.recipient || 'Chloe Alba'}
+                {transaction.customerName || transaction.attachedUsername || currentUser?.username || transaction.recipient || 'Adventurer'}
               </div>
               <div className="text-neutral-400 print:text-gray-600 text-[11px]">
                 {transaction.email || currentUser?.email || 'Customer'}

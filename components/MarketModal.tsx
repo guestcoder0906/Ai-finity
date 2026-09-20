@@ -449,6 +449,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     paymentMethod: 'Stripe Checkout',
                     status: 'completed',
                     createdAt: new Date().toISOString(),
+                    customerName: currentUser.username || 'Adventurer',
+                    email: currentUser.email || undefined,
+                    attachedUsername: currentUser.username || 'Adventurer',
                     recipient: currentUser.username || currentUser.email || 'Adventurer',
                     notes: selectedItem.type === 'pack' ? `Added ${delta} actions` : `Activated ${selectedItem.data.name}`,
                     userId: currentUser.uid,
@@ -599,7 +602,15 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           itemType: selectedItem.type,
           paymentMethod: chargeData.paymentMethodDetails || 'Credit Card (Stripe)',
           status: 'completed',
-          createdAt: nowIso
+          createdAt: nowIso,
+          customerName: currentUser.username || 'Adventurer',
+          email: currentUser.email || undefined,
+          attachedUsername: currentUser.username || 'Adventurer',
+          recipient: currentUser.username || currentUser.email || 'Adventurer',
+          notes: selectedItem.type === 'pack' ? `Added ${actionDelta} actions` : `Activated ${selectedItem.data.name}`,
+          userId: currentUser.uid,
+          actionDelta,
+          newTier
         });
 
         if (onProfileUpdated && updatedProfile) {

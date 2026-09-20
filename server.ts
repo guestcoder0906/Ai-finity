@@ -361,17 +361,34 @@ async function startServer() {
 
         let isMatch = false;
 
-        // Strict account attribution: each purchase belongs uniquely to the specific account it was purchased on
-        if (userId && sUid && sUid === userId) {
-          isMatch = true;
-        } else if (username && sUsername && sUsername === username) {
-          isMatch = true;
-        } else if (email && sEmail && sEmail === email) {
-          isMatch = true;
+        // Strict purchase attribution: each purchase is uniquely attached ONLY to the exact account it was bought on.
+        // A purchase must never be lumped across accounts.
+        if (userId) {
+          if (sUid) {
+            // If the purchase has a stored userId, it must match this user's UID exactly.
+            if (sUid === userId) {
+              isMatch = true;
+            }
+          } else if (username && sUsername) {
+            // If the purchase lacked a UID in metadata but has a username, match by username exactly
+            if (sUsername === username) {
+              isMatch = true;
+            }
+          }
+        } else if (username) {
+          if (sUsername && sUsername === username) {
+            isMatch = true;
+          }
+        } else if (email && !sUid && !sUsername) {
+          // Only fallback to email if the transaction had no user account identifiers attached
+          if (sEmail && sEmail === email) {
+            isMatch = true;
+          }
         }
 
         if (isMatch) {
           seenIds.add(s.id);
+          const attachedUsername = s.metadata?.username || username || '';
           completedPurchases.push({
             id: s.id,
             amount: (s.amount_total || 0) / 100,
@@ -381,8 +398,8 @@ async function startServer() {
             actionDelta: parseInt(s.metadata?.actionDelta, 10) || (s.amount_total === 99 ? 50 : s.amount_total === 299 ? 200 : 0),
             email: sEmail || email,
             userId: sUid || userId,
-            username: s.metadata?.username || '',
-            customerName: s.customer_details?.name || 'Chloe Alba',
+            username: attachedUsername,
+            customerName: s.customer_details?.name || attachedUsername || 'Customer',
             paymentMethod: 'Stripe Checkout',
             status: 'completed',
             createdAt: new Date(s.created * 1000).toISOString()
