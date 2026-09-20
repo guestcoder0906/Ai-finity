@@ -137,7 +137,8 @@ export async function checkStripeSessionStatus(sessionId: string): Promise<{
  */
 export async function syncUserPurchasesFromStripe(
   userId: string,
-  email?: string
+  email?: string,
+  username?: string
 ): Promise<{
   success: boolean;
   count: number;
@@ -150,13 +151,14 @@ export async function syncUserPurchasesFromStripe(
     actionDelta: number;
     email: string;
     userId: string;
+    customerName?: string;
     paymentMethod: string;
     status: 'completed';
     createdAt: string;
   }>;
 }> {
   try {
-    const url = `/api/stripe/sync-user-purchases?userId=${encodeURIComponent(userId)}&email=${encodeURIComponent(email || '')}`;
+    const url = `/api/stripe/sync-user-purchases?userId=${encodeURIComponent(userId)}&email=${encodeURIComponent(email || '')}&username=${encodeURIComponent(username || '')}`;
     const res = await fetch(url);
     if (!res.ok) {
       return { success: false, count: 0, purchases: [] };

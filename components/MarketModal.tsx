@@ -134,7 +134,11 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     });
 
     try {
-      const syncRes = await syncUserPurchasesFromStripe(currentUser.uid, currentUser.email || undefined);
+      const syncRes = await syncUserPurchasesFromStripe(
+        currentUser.uid,
+        currentUser.email || undefined,
+        currentUser.username || undefined
+      );
       if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
         const existingTx = getLocalTransactions(currentUser.uid);
         const existingIds = new Set(existingTx.map((t) => t.id));
@@ -1467,6 +1471,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                 currentUser={currentUser}
                 onViewReceipt={(tx) => setSelectedReceiptForInvoice(tx)}
                 onOpenMarket={() => setActiveTab('packs')}
+                onProfileUpdated={onProfileUpdated}
+                onStatusUpdated={onStatusUpdated}
               />
             </div>
           )}

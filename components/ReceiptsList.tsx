@@ -17,22 +17,32 @@ import {
 import {
   UserProfile,
   PaymentTransactionRecord,
-  getUserTransactions
+  getUserTransactions,
+  recordPaymentTransaction,
+  getLocalTransactions
 } from '../services/authService';
+import { syncUserPurchasesFromStripe } from '../services/stripeCheckoutService';
+import { ActionLimitService } from '../services/actionLimitService';
 
 interface ReceiptsListProps {
   currentUser: UserProfile | null;
   onViewReceipt: (tx: PaymentTransactionRecord) => void;
   onOpenMarket?: () => void;
+  onProfileUpdated?: (user: UserProfile) => void;
+  onStatusUpdated?: () => void;
 }
 
 export const ReceiptsList: React.FC<ReceiptsListProps> = ({
   currentUser,
   onViewReceipt,
-  onOpenMarket
+  onOpenMarket,
+  onProfileUpdated,
+  onStatusUpdated
 }) => {
   const [transactions, setTransactions] = useState<PaymentTransactionRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -44,12 +54,145 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
     }
     setLoading(true);
     try {
+      // First, attempt to auto-sync any recent Stripe checkout sessions
+      try {
+        const syncRes = await syncUserPurchasesFromStripe(
+          currentUser.uid,
+          currentUser.email || undefined,
+          currentUser.username || undefined
+        );
+        if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
+          const localList = getLocalTransactions(currentUser.uid);
+          const existingIds = new Set(localList.map((t) => t.id));
+          let newCredits = 0;
+          let highestTier: string | null = null;
+          let newFound = 0;
+
+          for (const p of syncRes.purchases) {
+            if (!existingIds.has(p.id)) {
+              newFound++;
+              if (p.itemType === 'pack' && p.actionDelta > 0) {
+                newCredits += p.actionDelta;
+              } else if (p.itemType === 'tier' && p.itemId) {
+                highestTier = p.itemId;
+              }
+
+              const tx: PaymentTransactionRecord = {
+                id: p.id,
+                amount: p.amount,
+                itemName: p.itemName,
+                itemType: p.itemType,
+                paymentMethod: 'Stripe Checkout',
+                status: 'completed',
+                createdAt: p.createdAt,
+                recipient: currentUser.username || currentUser.email || 'Adventurer',
+                notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
+                userId: currentUser.uid,
+                actionDelta: p.actionDelta,
+                newTier: p.itemType === 'tier' ? p.itemId : undefined
+              };
+              await recordPaymentTransaction(currentUser.uid, tx);
+              existingIds.add(p.id);
+            }
+          }
+
+          if (newFound > 0) {
+            let updated = currentUser;
+            if (newCredits > 0) {
+              updated = await ActionLimitService.addPurchasedCredits(updated, newCredits);
+            }
+            if (highestTier) {
+              updated = await ActionLimitService.activateSubscription(updated, highestTier as any);
+            }
+            if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
+            if (onStatusUpdated) onStatusUpdated();
+            setSyncNotice(`Restored ${newFound} Stripe order(s) and credited actions!`);
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Stripe auto-check in receipts list failed:', syncErr);
+      }
+
       const records = await getUserTransactions(currentUser.uid);
       setTransactions(records);
     } catch (err) {
       console.warn('Failed to load user transactions:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManualSync = async () => {
+    if (!currentUser?.uid) return;
+    setIsSyncing(true);
+    setSyncNotice(null);
+    try {
+      const syncRes = await syncUserPurchasesFromStripe(
+        currentUser.uid,
+        currentUser.email || undefined,
+        currentUser.username || undefined
+      );
+
+      if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
+        const localList = getLocalTransactions(currentUser.uid);
+        const existingIds = new Set(localList.map((t) => t.id));
+        let newCredits = 0;
+        let highestTier: string | null = null;
+        let newFound = 0;
+
+        for (const p of syncRes.purchases) {
+          if (!existingIds.has(p.id)) {
+            newFound++;
+            if (p.itemType === 'pack' && p.actionDelta > 0) {
+              newCredits += p.actionDelta;
+            } else if (p.itemType === 'tier' && p.itemId) {
+              highestTier = p.itemId;
+            }
+
+            const tx: PaymentTransactionRecord = {
+              id: p.id,
+              amount: p.amount,
+              itemName: p.itemName,
+              itemType: p.itemType,
+              paymentMethod: 'Stripe Checkout',
+              status: 'completed',
+              createdAt: p.createdAt,
+              recipient: currentUser.username || currentUser.email || 'Adventurer',
+              notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
+              userId: currentUser.uid,
+              actionDelta: p.actionDelta,
+              newTier: p.itemType === 'tier' ? p.itemId : undefined
+            };
+            await recordPaymentTransaction(currentUser.uid, tx);
+            existingIds.add(p.id);
+          }
+        }
+
+        let updated = currentUser;
+        if (newCredits > 0) {
+          updated = await ActionLimitService.addPurchasedCredits(updated, newCredits);
+        }
+        if (highestTier) {
+          updated = await ActionLimitService.activateSubscription(updated, highestTier as any);
+        }
+        if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
+        if (onStatusUpdated) onStatusUpdated();
+
+        const updatedRecords = await getUserTransactions(currentUser.uid);
+        setTransactions(updatedRecords);
+
+        if (newFound > 0) {
+          setSyncNotice(`🎉 Successfully restored ${newFound} Stripe order(s) totaling +${newCredits} actions!`);
+        } else {
+          setSyncNotice(`Verified ${syncRes.count} Stripe transaction(s). All purchases are already up-to-date on your account.`);
+        }
+      } else {
+        setSyncNotice('No Stripe transactions were found matching your account.');
+      }
+    } catch (e: any) {
+      setSyncNotice('Could not connect to Stripe. Please try again.');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -106,6 +249,15 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
             </div>
           )}
           <button
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            title="Restore Stripe purchases across accounts"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-mono transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={isSyncing ? 'animate-spin text-amber-400' : ''} />
+            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Restore Stripe Orders'}</span>
+          </button>
+          <button
             onClick={loadTransactions}
             title="Refresh transactions"
             className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors"
@@ -114,6 +266,21 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
           </button>
         </div>
       </div>
+
+      {syncNotice && (
+        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-xs text-amber-200 font-mono flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-amber-400 shrink-0" />
+            <span>{syncNotice}</span>
+          </div>
+          <button
+            onClick={() => setSyncNotice(null)}
+            className="text-amber-400/80 hover:text-white text-xs px-1.5 py-0.5"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (

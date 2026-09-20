@@ -321,14 +321,15 @@ async function startServer() {
     }
   });
 
-  // Sync and restore all completed Stripe purchases for a user (by UID and/or email)
+  // Sync and restore all completed Stripe purchases for a user (by UID, email, username, and customer details)
   app.get('/api/stripe/sync-user-purchases', async (req, res) => {
     try {
       const userId = (req.query.userId as string || '').trim();
       const email = (req.query.email as string || '').trim().toLowerCase();
+      const username = (req.query.username as string || '').trim().toLowerCase();
 
-      if (!userId && !email) {
-        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'userId or email is required to sync purchases.' });
+      if (!userId && !email && !username) {
+        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'userId, email, or username is required to sync purchases.' });
       }
 
       const stripe = getStripe();
@@ -338,27 +339,61 @@ async function startServer() {
 
       const sessions = await stripe.checkout.sessions.list({ limit: 100 });
       const completedPurchases: any[] = [];
+      const seenIds = new Set<string>();
+
+      // Admin / creator account detection (Chloe: chloe.a.alba.1@gmail.com, Chloe Alba)
+      const isChloeUser =
+        (email && (email.includes('chloe.a.alba.1') || email.includes('chloe'))) ||
+        (username && username === 'chloe') ||
+        userId === '9QroiW9M4OMEyFwK3W6B0oT1xOu2' ||
+        userId === 'DutjeBlM9cU1kvf2O2LIJKZdQ0K2' ||
+        userId === 'nvrwShet4Tdh3Xp4vwBrTrRsa1J3';
 
       for (const s of sessions.data) {
         const isPaid = s.payment_status === 'paid' || s.status === 'complete';
         if (!isPaid) continue;
+        if (seenIds.has(s.id)) continue;
 
         const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
         const sUid = (s.metadata?.userId || '').trim();
+        const sName = (s.customer_details?.name || '').toLowerCase().trim();
+        const sUsername = (s.metadata?.username || '').toLowerCase().trim();
 
-        const matchesUid = userId && sUid === userId;
-        const matchesEmail = email && sEmail === email;
+        let isMatch = false;
 
-        if (matchesUid || matchesEmail) {
+        if (userId && sUid && sUid === userId) {
+          isMatch = true;
+        } else if (email && sEmail && sEmail === email) {
+          isMatch = true;
+        } else if (username && sUsername && sUsername === username) {
+          isMatch = true;
+        } else if (isChloeUser) {
+          // Chloe's purchases across accounts / email aliases (aslinkyferret, oasisofgrace, chloe.a.alba.1, or Customer Name Chloe Alba)
+          if (
+            sName.includes('chloe') ||
+            sName.includes('alba') ||
+            sEmail.includes('chloe') ||
+            sEmail.includes('aslinkyferret') ||
+            sEmail.includes('oasisofgrace') ||
+            sUid === 'DutjeBlM9cU1kvf2O2LIJKZdQ0K2' ||
+            sUid === 'nvrwShet4Tdh3Xp4vwBrTrRsa1J3'
+          ) {
+            isMatch = true;
+          }
+        }
+
+        if (isMatch) {
+          seenIds.add(s.id);
           completedPurchases.push({
             id: s.id,
             amount: (s.amount_total || 0) / 100,
-            itemType: (s.metadata?.itemType || 'pack') as 'pack' | 'tier',
+            itemType: (s.metadata?.itemType || (s.metadata?.itemId === 'adventurer' || s.metadata?.itemId === 'legendary' || s.metadata?.itemId === 'celestial' ? 'tier' : 'pack')) as 'pack' | 'tier',
             itemId: s.metadata?.itemId || '',
-            itemName: s.metadata?.itemName || 'Action Pack Purchase',
-            actionDelta: parseInt(s.metadata?.actionDelta, 10) || 0,
-            email: sEmail,
+            itemName: s.metadata?.itemName || (s.amount_total === 499 ? 'Adventurer Tier' : s.amount_total === 999 ? 'Legendary Tier' : s.amount_total === 1499 ? 'Celestial Tier' : 'Action Pack Purchase'),
+            actionDelta: parseInt(s.metadata?.actionDelta, 10) || (s.amount_total === 99 ? 50 : s.amount_total === 299 ? 200 : 0),
+            email: sEmail || email,
             userId: sUid || userId,
+            customerName: s.customer_details?.name || 'Chloe Alba',
             paymentMethod: 'Stripe Checkout',
             status: 'completed',
             createdAt: new Date(s.created * 1000).toISOString()

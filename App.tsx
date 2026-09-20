@@ -219,7 +219,11 @@ function App() {
 
         // Auto-sync completed Stripe purchases for logged-in user
         try {
-          const syncRes = await syncUserPurchasesFromStripe(user.uid, user.email || undefined);
+          const syncRes = await syncUserPurchasesFromStripe(
+            user.uid,
+            user.email || undefined,
+            user.username || undefined
+          );
           if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
             const existingTx = getLocalTransactions(user.uid);
             const existingIds = new Set(existingTx.map((t) => t.id));
