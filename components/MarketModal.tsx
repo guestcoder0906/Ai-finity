@@ -589,8 +589,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     </div>
                   )}
 
-                  {/* Stripe & Google Pay Live Status Banner */}
-                  <div className="p-3 rounded-lg border bg-neutral-950/80 space-y-1.5 font-mono text-xs">
+                  {/* Stripe Live Status Banner */}
+                  <div className="p-3 rounded-lg border bg-neutral-950/80 font-mono text-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className={`w-2 h-2 rounded-full ${
@@ -608,12 +608,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         Zero Simulation • Real Processing
                       </span>
                     </div>
-
-                    {!stripeStatus?.configured && (
-                      <p className="text-[11px] text-amber-300/90 font-sans pt-1 border-t border-neutral-800">
-                        💡 <span className="font-semibold">Stripe Account Notice:</span> Payments are processed using your live Stripe keys. Ensure <code className="text-amber-200 bg-black/50 px-1 py-0.5 rounded">STRIPE_SECRET_KEY</code> and <code className="text-amber-200 bg-black/50 px-1 py-0.5 rounded">VITE_STRIPE_PUBLISHABLE_KEY</code> are set in Settings for direct account deposits.
-                      </p>
-                    )}
                   </div>
 
                   {/* Payment Method Selector: Stripe 1-Click, Card */}
