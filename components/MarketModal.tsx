@@ -26,7 +26,7 @@ import {
   ActionStatus
 } from '../services/actionLimitService';
 import { UserProfile, recordPaymentTransaction, isDefaultAdmin } from '../services/authService';
-import { createOrFallbackStripeCheckout } from '../services/stripeCheckoutService';
+import { createRealStripeCheckoutSession } from '../services/stripeCheckoutService';
 
 interface MarketModalProps {
   isOpen: boolean;
@@ -166,18 +166,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     // 1. STRIPE CHECKOUT FLOW (Official Stripe-hosted checkout supporting Google Pay, Apple Pay, Cards, Link)
     if (paymentMethod === 'stripe_checkout') {
       setIsProcessingPayment(true);
-      setProcessingMessage('Connecting to Stripe...');
+      setProcessingMessage('Connecting to Stripe Checkout...');
 
       try {
         const delta = selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0;
-        const result = await createOrFallbackStripeCheckout({
+        const result = await createRealStripeCheckoutSession({
           amount: selectedItem.data.price,
           itemName: selectedItem.data.name,
           itemType: selectedItem.type,
           itemId: selectedItem.data.id,
           actionDelta: delta,
-          user: currentUser,
-          publishableKey: activePub
+          user: currentUser
         });
 
         if (result.url) {
@@ -185,7 +184,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           setIsProcessingPayment(false);
           setProcessingMessage(null);
 
-          // Redirect cleanly to official Stripe checkout
+          // Redirect user to official Stripe hosted checkout page
           if (typeof window !== 'undefined') {
             try {
               window.location.href = result.url;
@@ -197,47 +196,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           return;
         }
 
-        // If direct or static environment fallback
-        let actionDelta: number | undefined;
-        let newTier: string | undefined;
-
-        if (selectedItem.type === 'pack') {
-          const pack = selectedItem.data as ActionPack;
-          await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
-          actionDelta = pack.actions;
-        } else {
-          const tier = selectedItem.data as SubscriptionTier;
-          await ActionLimitService.activateSubscription(currentUser, tier.id);
-          newTier = tier.name;
-        }
-
-        const txId = `tx_stripe_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        await recordPaymentTransaction(currentUser.uid, {
-          id: txId,
-          amount: selectedItem.data.price,
-          itemName: selectedItem.data.name,
-          itemType: selectedItem.type,
-          paymentMethod: 'Stripe 1-Click (Verified)',
-          status: 'completed',
-          createdAt: new Date().toISOString()
-        });
-
-        onStatusUpdated();
-        setTransactionReceipt({
-          id: txId,
-          itemName: selectedItem.data.name,
-          amount: selectedItem.data.price,
-          paymentMethod: 'Stripe 1-Click (Verified)',
-          timestamp: new Date().toLocaleString(),
-          actionDelta,
-          newTier,
-          stripePaymentIntentId: txId,
-          mode: isLiveMode ? 'live' : 'test'
-        });
-
-        setIsProcessingPayment(false);
-        setProcessingMessage(null);
-        return;
+        throw new Error('Stripe did not return a valid checkout URL.');
       } catch (err: any) {
         console.error('Stripe Checkout session error (full):', err);
         const detailedMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err));
@@ -256,7 +215,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
     }
 
-    // 2. DIRECT CREDIT / DEBIT CARD FLOW (Real tokenization with Stripe.js and direct server charge)
+    // 2. DIRECT CREDIT / DEBIT CARD FLOW (Processed by Stripe API)
     if (paymentMethod === 'card') {
       const cleanCard = cardNumber.replace(/[\s-]/g, '');
       if (!cleanCard || cleanCard.length < 13 || cleanCard.length > 19 || !/^\d+$/.test(cleanCard)) {
@@ -282,66 +241,46 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
 
       setIsProcessingPayment(true);
-      setProcessingMessage('Processing secure card payment...');
+      setProcessingMessage('Processing payment with Stripe...');
 
       try {
+        const chargeRes = await fetch('/api/stripe/process-direct-payment', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            cardNumber: cleanCard,
+            expMonth,
+            expYear,
+            cardCvc,
+            cardName: cardName.trim() || currentUser.username || 'Player',
+            amount: selectedItem.data.price,
+            itemName: selectedItem.data.name,
+            itemType: selectedItem.type,
+            itemId: selectedItem.data.id,
+            actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
+            userId: currentUser.uid,
+            userEmail: currentUser.email || '',
+            username: currentUser.username || ''
+          })
+        });
+
+        const contentType = chargeRes.headers.get('content-type') || '';
         let chargeData: any = null;
-        try {
-          // Process directly and securely via backend endpoint (creates Stripe charge or validates payment)
-          const chargeRes = await fetch('/api/stripe/process-direct-payment', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              cardNumber: cleanCard,
-              expMonth,
-              expYear,
-              cardCvc,
-              cardName: cardName.trim() || currentUser.username || 'Player',
-              amount: selectedItem.data.price,
-              itemName: selectedItem.data.name,
-              itemType: selectedItem.type,
-              itemId: selectedItem.data.id,
-              actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
-              userId: currentUser.uid,
-              userEmail: currentUser.email || '',
-              username: currentUser.username || ''
-            })
-          });
-
-          const contentType = chargeRes.headers.get('content-type') || '';
-          if (chargeRes.ok && contentType.includes('application/json')) {
-            chargeData = await chargeRes.json();
-          } else if (chargeRes.status === 404 || !contentType.includes('application/json')) {
-            // Static hosting direct fallback
-            chargeData = {
-              success: true,
-              chargeId: `ch_direct_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              paymentMethodDetails: `Card (•••• ${cleanCard.slice(-4)}) [Verified]`
-            };
-          } else {
-            const errJson = await chargeRes.json().catch(() => ({}));
-            throw new Error(errJson.message || 'Payment was declined by card issuer.');
-          }
-        } catch (fetchErr: any) {
-          if (fetchErr.message?.includes('declined')) {
-            throw fetchErr;
-          }
-          // If network / proxy issue, safely fallback
-          chargeData = {
-            success: true,
-            chargeId: `ch_direct_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            paymentMethodDetails: `Card (•••• ${cleanCard.slice(-4)}) [Verified]`
-          };
+        if (contentType.includes('application/json')) {
+          chargeData = await chargeRes.json().catch(() => null);
         }
 
-        if (!chargeData || !chargeData.success) {
-          throw new Error(chargeData?.message || 'Payment was declined by card issuer.');
+        if (!chargeRes.ok || !chargeData || !chargeData.success) {
+          const errMsg = chargeData?.message || `Payment processing failed (HTTP ${chargeRes.status}).`;
+          const errObj = new Error(errMsg);
+          (errObj as any).serverPayload = chargeData;
+          throw errObj;
         }
 
-        // Apply purchased credits or subscription
+        // Apply purchased credits or subscription only upon verified charge
         let actionDelta: number | undefined;
         let newTier: string | undefined;
 
@@ -374,19 +313,21 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           itemName: selectedItem.data.name,
           amount: selectedItem.data.price,
           paymentMethod: chargeData.paymentMethodDetails || 'Credit Card (Stripe)',
+          receiptUrl: chargeData.receiptUrl,
           timestamp: new Date().toLocaleString(),
           actionDelta,
           newTier,
           stripePaymentIntentId: txId,
           mode: isLiveMode ? 'live' : 'test'
         });
+
         setIsProcessingPayment(false);
         setProcessingMessage(null);
         return;
       } catch (err: any) {
-        console.error('Stripe card charge error (full):', err);
-        const detailedMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err));
-        setPaymentError(`Card Payment Error: ${detailedMessage}`);
+        console.error('Card payment error:', err);
+        const detailedMessage = err.message || (typeof err === 'string' ? err : 'Payment processing failed.');
+        setPaymentError(`Payment Failed: ${detailedMessage}`);
         setPaymentDebugDetails({
           errorName: err.name || 'Error',
           errorMessage: err.message,

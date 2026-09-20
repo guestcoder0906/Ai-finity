@@ -20,6 +20,17 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Enable CORS & proper headers for custom domains (aifinity-rpg.com) and Cloud Run
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   app.use(express.json());
 
   // Health check
@@ -179,72 +190,64 @@ async function startServer() {
       const safeUsername = String(username || 'Player').replace(/[^\w\s\-\.]/gi, '').trim() || 'Player';
       const stripe = getStripe();
 
-      // If Stripe secret key is present, execute genuine Stripe charge
-      if (stripe) {
-        let chargeSource = token;
-
-        // If direct card information is supplied instead of a pre-existing token, create a token via Stripe Node SDK
-        if (!chargeSource && cardNumber) {
-          const cleanNum = String(cardNumber).replace(/[\s-]/g, '');
-          const cardToken = await stripe.tokens.create({
-            card: {
-              number: cleanNum,
-              exp_month: parseInt(String(expMonth), 10),
-              exp_year: parseInt(String(expYear), 10),
-              cvc: String(cardCvc || '').trim(),
-              name: String(cardName || safeUsername).trim()
-            }
-          });
-          chargeSource = cardToken.id;
-        }
-
-        if (!chargeSource) {
-          return res.status(400).json({
-            error: 'MISSING_PAYMENT_DETAILS',
-            message: 'Card details or payment token are required.'
-          });
-        }
-
-        const charge = await stripe.charges.create({
-          amount: amountInCents,
-          currency: 'usd',
-          source: chargeSource,
-          description: `Aifinity: ${safeItemName} for ${safeUsername}`,
-          receipt_email: userEmail && userEmail.includes('@') ? userEmail : undefined,
-          metadata: {
-            userId: String(userId || ''),
-            username: safeUsername,
-            itemName: safeItemName,
-            itemType: String(itemType || ''),
-            itemId: String(itemId || ''),
-            actionDelta: String(actionDelta || 0),
-            amount: String(amount)
-          }
-        });
-
-        return res.json({
-          success: true,
-          chargeId: charge.id,
-          receiptUrl: charge.receipt_url,
-          amount: charge.amount / 100,
-          status: charge.status,
-          paymentMethodDetails: charge.payment_method_details?.card
-            ? `${charge.payment_method_details.card.brand.toUpperCase()} •••• ${charge.payment_method_details.card.last4}`
-            : 'Card (Stripe)'
+      // Require Stripe configuration for real payments
+      if (!stripe) {
+        return res.status(400).json({
+          error: 'STRIPE_NOT_CONFIGURED',
+          message: 'STRIPE_SECRET_KEY is not configured in server environment variables. Please configure your Stripe Secret Key to accept real payments.'
         });
       }
 
-      // If Stripe is not configured in development/preview, safely complete simulated transaction
-      const last4 = cardNumber ? String(cardNumber).replace(/[\s-]/g, '').slice(-4) : '4242';
-      const simulatedId = `ch_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      let chargeSource = token;
+
+      // If direct card information is supplied instead of a pre-existing token, create a token via Stripe Node SDK
+      if (!chargeSource && cardNumber) {
+        const cleanNum = String(cardNumber).replace(/[\s-]/g, '');
+        const cardToken = await stripe.tokens.create({
+          card: {
+            number: cleanNum,
+            exp_month: parseInt(String(expMonth), 10),
+            exp_year: parseInt(String(expYear), 10),
+            cvc: String(cardCvc || '').trim(),
+            name: String(cardName || safeUsername).trim()
+          }
+        });
+        chargeSource = cardToken.id;
+      }
+
+      if (!chargeSource) {
+        return res.status(400).json({
+          error: 'MISSING_PAYMENT_DETAILS',
+          message: 'Card details or payment token are required.'
+        });
+      }
+
+      const charge = await stripe.charges.create({
+        amount: amountInCents,
+        currency: 'usd',
+        source: chargeSource,
+        description: `Aifinity: ${safeItemName} for ${safeUsername}`,
+        receipt_email: userEmail && userEmail.includes('@') ? userEmail : undefined,
+        metadata: {
+          userId: String(userId || ''),
+          username: safeUsername,
+          itemName: safeItemName,
+          itemType: String(itemType || ''),
+          itemId: String(itemId || ''),
+          actionDelta: String(actionDelta || 0),
+          amount: String(amount)
+        }
+      });
 
       return res.json({
         success: true,
-        chargeId: simulatedId,
-        amount: amount,
-        status: 'succeeded',
-        paymentMethodDetails: `Card (•••• ${last4 || '4242'}) [Instant Verified]`,
-        isSimulated: true
+        chargeId: charge.id,
+        receiptUrl: charge.receipt_url,
+        amount: charge.amount / 100,
+        status: charge.status,
+        paymentMethodDetails: charge.payment_method_details?.card
+          ? `${charge.payment_method_details.card.brand.toUpperCase()} •••• ${charge.payment_method_details.card.last4}`
+          : 'Card (Stripe)'
       });
     } catch (err: any) {
       console.error('Stripe direct charge error:', err);
