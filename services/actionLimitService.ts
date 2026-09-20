@@ -469,6 +469,19 @@ export class ActionLimitService {
   }
 
   /**
+   * Helper to credit action packs by UID directly (e.g. from Stripe redirect)
+   */
+  public static async addPurchasedCreditsByUid(
+    uid: string,
+    amount: number
+  ): Promise<UserProfile | null> {
+    const profile = await getUserProfile(uid);
+    if (!profile) return null;
+    await this.addPurchasedCredits(profile, amount);
+    return profile;
+  }
+
+  /**
    * Activates monthly subscription (Adventurer, Legendary, or Celestial)
    * Guests cannot buy subscriptions; user must be logged in.
    */
@@ -484,14 +497,15 @@ export class ActionLimitService {
     const status = this.getActionStatus(user, guestId);
     const today = this.getTodayDateString();
 
-    // Bonus actions per tier: Adventurer = 300, Legendary = 600, Celestial = unlimited
+    // Bonus actions per tier: Adventurer = 300, Legendary = 600, Celestial = unlimited actions
     let bonusActions = 0;
     if (tier === 'adventurer') {
       bonusActions = 300;
     } else if (tier === 'legendary') {
       bonusActions = 600;
     }
-    const newCredits = status.purchasedCredits + bonusActions;
+    const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
+    const newCredits = currentCredits + bonusActions;
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
@@ -500,6 +514,13 @@ export class ActionLimitService {
     user.tier = tier;
     user.actionCredits = newCredits;
     user.subscriptionExpiresAt = expiresStr;
+    user.canSaveMultipleAdventures = true;
+    user.canPostCommunityAdventures = true;
+    if (tier === 'legendary' || tier === 'celestial') {
+      if (user.showGlowingName === undefined) {
+        user.showGlowingName = true;
+      }
+    }
 
     this.saveLocalState(user, guestId, {
       tier,
@@ -511,7 +532,23 @@ export class ActionLimitService {
     await updateUserProfile(user.uid, {
       tier,
       actionCredits: newCredits,
-      subscriptionExpiresAt: expiresStr
+      subscriptionExpiresAt: expiresStr,
+      canSaveMultipleAdventures: true,
+      canPostCommunityAdventures: true,
+      ...(tier === 'legendary' || tier === 'celestial' ? { showGlowingName: true } : {})
     });
+  }
+
+  /**
+   * Helper to activate subscription by UID directly (e.g. from Stripe redirect)
+   */
+  public static async activateSubscriptionByUid(
+    uid: string,
+    tier: UserTier
+  ): Promise<UserProfile | null> {
+    const profile = await getUserProfile(uid);
+    if (!profile) return null;
+    await this.activateSubscription(profile, tier);
+    return profile;
   }
 }

@@ -65,7 +65,7 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
 
-  const isSubscriber = currentUser?.tier === 'adventurer' || currentUser?.tier === 'legendary';
+  const isSubscriber = currentUser?.tier === 'adventurer' || currentUser?.tier === 'legendary' || currentUser?.tier === 'celestial';
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = currentUser?.role === 'mod';
   const isStaff = isAdmin || isMod;
@@ -122,7 +122,7 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
     if (!postTitle.trim()) return;
 
     if (!canPost) {
-      setPostError('Posting adventures to Community Adventures requires Adventurer Tier ($9.99/mo) or special permission granted by an Admin/Mod. Upgrade in the Market to share your adventures with everyone!');
+      setPostError('Posting adventures to Community Adventures requires a membership tier (Adventurer $4.99/mo, Legendary $9.99/mo, or Celestial $14.99/mo) or special permission granted by an Admin/Mod. Upgrade in the Market to share your adventures with everyone!');
       return;
     }
 

@@ -655,12 +655,13 @@ export function generateUniqueGuestMultiplayerName(existingPlayerNames: string[]
   return `Guest${candidate}`;
 }
 
-// Update partial user profile in Firestore
+// Update partial user profile in Firestore and sync in-memory cache
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
   try {
+    updateCachedProfile(uid, updates);
     const userRef = doc(db, 'users', uid);
     await setDoc(userRef, updates, { merge: true });
   } catch (err) {
-    console.error('Failed to update user profile:', err);
+    console.error('Failed to update user profile in Firestore:', err);
   }
 }

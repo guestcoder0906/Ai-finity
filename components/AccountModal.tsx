@@ -408,6 +408,46 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
               </div>
 
+              {/* Active Monthly Membership Card if Subscribed */}
+              {(currentUser.tier === 'adventurer' || currentUser.tier === 'legendary' || currentUser.tier === 'celestial') && (
+                <div className={`p-4 rounded-xl border space-y-2.5 ${
+                  currentUser.tier === 'celestial'
+                    ? 'bg-gradient-to-r from-sky-950/60 via-purple-950/50 to-indigo-950/60 border-cyan-400/60 shadow-[0_0_15px_rgba(56,189,248,0.25)]'
+                    : currentUser.tier === 'legendary'
+                    ? 'bg-gradient-to-r from-amber-950/50 to-yellow-950/40 border-amber-500/60'
+                    : 'bg-blue-950/40 border-blue-500/50'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Crown size={16} className={
+                        currentUser.tier === 'celestial' ? 'text-cyan-300' : currentUser.tier === 'legendary' ? 'text-amber-400' : 'text-blue-400'
+                      } />
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">
+                        Active {currentUser.tier} Membership
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                      Auto-Active
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    {currentUser.tier === 'celestial'
+                      ? 'You have unlocked the highest realm: Infinite actions with zero turn limits, unlimited adventure save slots, community adventure publishing, and celestial glowing name privileges.'
+                      : currentUser.tier === 'legendary'
+                      ? 'You receive 600 monthly bonus actions, unlimited adventure save slots, community adventure publishing, and golden glowing name privileges.'
+                      : 'You receive 300 monthly bonus actions, unlimited adventure save slots, and community adventure publishing privileges.'}
+                  </p>
+
+                  {currentUser.subscriptionExpiresAt && (
+                    <div className="text-[10px] text-neutral-400 font-mono pt-1 border-t border-neutral-800/80 flex items-center justify-between">
+                      <span>Next renewal / expiry:</span>
+                      <span className="text-neutral-200">{new Date(currentUser.subscriptionExpiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Action Limits & Infinite Actions Status */}
               <div className={`p-4 rounded-xl border ${
                 isAdmin || actionStatus.hasInfiniteActions

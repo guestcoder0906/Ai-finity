@@ -442,7 +442,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-neutral-400">Plan: </span>
             <span className={`font-semibold px-2 py-0.5 rounded text-[10px] uppercase ${
-              effectiveStatus.tier === 'legendary'
+              effectiveStatus.tier === 'celestial'
+                ? 'bg-gradient-to-r from-sky-950 to-purple-950 text-cyan-200 border border-cyan-400/60 shadow-[0_0_8px_rgba(56,189,248,0.4)]'
+                : effectiveStatus.tier === 'legendary'
                 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                 : effectiveStatus.tier === 'adventurer'
                   ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'

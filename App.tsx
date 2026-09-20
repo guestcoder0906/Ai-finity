@@ -296,12 +296,21 @@ function App() {
             if (uid) {
               if (meta.itemType === 'pack') {
                 const delta = parseInt(meta.actionDelta, 10) || 0;
-                if (currentUser) {
+                const updated = await ActionLimitService.addPurchasedCreditsByUid(uid, delta);
+                if (updated) {
+                  setCurrentUser({ ...updated });
+                } else if (currentUser) {
                   await ActionLimitService.addPurchasedCredits(currentUser, delta);
+                  setCurrentUser({ ...currentUser });
                 }
               } else if (meta.itemType === 'tier') {
-                if (currentUser && meta.itemId) {
-                  await ActionLimitService.activateSubscription(currentUser, meta.itemId);
+                const targetTier = (meta.itemId || 'adventurer') as any;
+                const updated = await ActionLimitService.activateSubscriptionByUid(uid, targetTier);
+                if (updated) {
+                  setCurrentUser({ ...updated });
+                } else if (currentUser) {
+                  await ActionLimitService.activateSubscription(currentUser, targetTier);
+                  setCurrentUser({ ...currentUser });
                 }
               }
               await recordPaymentTransaction(uid, {
@@ -336,7 +345,7 @@ function App() {
         text: 'Stripe Checkout was cancelled.'
       });
     }
-  }, [currentUser, refreshActionStatus]);
+  }, [refreshActionStatus]);
 
   useEffect(() => {
     const handleLocationChange = () => {

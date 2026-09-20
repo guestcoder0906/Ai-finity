@@ -52,7 +52,7 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
 
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = currentUser?.role === 'mod';
-  const isSubscriber = currentUser?.tier === 'adventurer' || currentUser?.tier === 'legendary';
+  const isSubscriber = currentUser?.tier === 'adventurer' || currentUser?.tier === 'legendary' || currentUser?.tier === 'celestial';
   const canSaveMultiple = Boolean(currentUser?.canSaveMultipleAdventures || isAdmin || isMod || isSubscriber);
 
   const loadList = async () => {
@@ -81,7 +81,7 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
 
     // Free users check: locked if they already have 1 saved adventure and do not have multiple saves permission
     if (!canSaveMultiple && (adventures || []).length >= 1) {
-      setSaveError('Saving multiple adventures is locked for Free users. Upgrade to Adventurer tier ($9.99/mo) in the Market or receive permission from an Admin/Mod to unlock unlimited adventure slots!');
+      setSaveError('Saving multiple adventures is locked for Free users. Upgrade to Adventurer tier ($4.99/mo) in the Market or receive permission from an Admin/Mod to unlock unlimited adventure slots!');
       return;
     }
 
