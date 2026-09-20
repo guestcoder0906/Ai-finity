@@ -63,6 +63,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   const [cardName, setCardName] = useState('');
   const [cardError, setCardError] = useState<string | null>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentDebugDetails, setPaymentDebugDetails] = useState<any>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Guest warning prompt state
@@ -184,9 +185,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           })
         });
 
-        const data = await response.json();
+        let data: any;
+        try {
+          data = await response.json();
+        } catch (jsonErr: any) {
+          throw new Error(`Invalid server response (${response.status}): ${jsonErr.message}`);
+        }
+
         if (!response.ok || !data.url) {
-          throw new Error(data.message || 'Failed to initialize Stripe Checkout session.');
+          const errObj = new Error(data.message || `Stripe session creation failed with HTTP ${response.status}`);
+          (errObj as any).serverPayload = data;
+          throw errObj;
         }
 
         setCheckoutSessionUrl(data.url);
@@ -194,15 +203,27 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setProcessingMessage(null);
 
         // Redirect cleanly to official Stripe checkout
-        try {
-          window.location.assign(data.url);
-        } catch {
-          window.location.href = data.url;
+        if (typeof window !== 'undefined') {
+          try {
+            window.location.href = data.url;
+          } catch (navErr: any) {
+            console.error('Direct window.location.href redirect error:', navErr);
+            window.open(data.url, '_blank');
+          }
         }
         return;
       } catch (err: any) {
-        console.error('Stripe Checkout session error:', err);
-        setPaymentError(err.message || 'Could not start Stripe Checkout. Please verify your Stripe API keys.');
+        console.error('Stripe Checkout session error (full):', err);
+        const detailedMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err));
+        setPaymentError(`Stripe Checkout Error: ${detailedMessage}`);
+        setPaymentDebugDetails({
+          errorName: err.name || 'Error',
+          errorMessage: err.message,
+          errorStack: err.stack,
+          serverPayload: err.serverPayload,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+          timestamp: new Date().toISOString()
+        });
         setIsProcessingPayment(false);
         setProcessingMessage(null);
         return;
@@ -307,8 +328,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setProcessingMessage(null);
         return;
       } catch (err: any) {
-        console.error('Stripe card charge error:', err);
-        setPaymentError(err.message || 'Payment processing failed. Please check your card information.');
+        console.error('Stripe card charge error (full):', err);
+        const detailedMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err));
+        setPaymentError(`Card Payment Error: ${detailedMessage}`);
+        setPaymentDebugDetails({
+          errorName: err.name || 'Error',
+          errorMessage: err.message,
+          errorStack: err.stack,
+          serverPayload: err.serverPayload,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+          timestamp: new Date().toISOString()
+        });
         setIsProcessingPayment(false);
         setProcessingMessage(null);
         return;
@@ -568,9 +598,33 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               ) : (
                 <div className="space-y-3.5">
                   {paymentError && (
-                    <div className="p-2.5 bg-red-950/70 border border-red-800 text-red-300 text-xs rounded-lg flex items-center gap-2">
-                      <AlertCircle size={15} className="shrink-0 text-red-400" />
-                      <span>{paymentError}</span>
+                    <div className="p-3 bg-red-950/80 border border-red-800 text-red-300 text-xs rounded-lg space-y-2">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle size={16} className="shrink-0 text-red-400 mt-0.5" />
+                        <div className="flex-1 font-mono text-xs break-words">
+                          <span className="font-bold text-red-200">Error: </span>
+                          {paymentError}
+                        </div>
+                      </div>
+                      {paymentDebugDetails && (
+                        <div className="pt-2 border-t border-red-900/60 font-mono text-[11px] text-neutral-400 space-y-1 bg-black/40 p-2 rounded">
+                          <div className="font-bold text-neutral-300 text-[10px] uppercase">Diagnostic Debug Info:</div>
+                          <div className="text-red-300 break-all">Message: {paymentDebugDetails.errorMessage || 'Unknown error'}</div>
+                          {paymentDebugDetails.errorStack && (
+                            <pre className="text-[9px] text-neutral-500 whitespace-pre-wrap overflow-x-auto max-h-24 p-1 bg-black/60 rounded border border-neutral-900">
+                              {paymentDebugDetails.errorStack}
+                            </pre>
+                          )}
+                          {paymentDebugDetails.serverPayload && (
+                            <pre className="text-[9px] text-amber-400/80 whitespace-pre-wrap overflow-x-auto max-h-20 p-1 bg-black/60 rounded border border-neutral-900">
+                              {JSON.stringify(paymentDebugDetails.serverPayload, null, 2)}
+                            </pre>
+                          )}
+                          <div className="text-[10px] text-neutral-500">
+                            Time: {paymentDebugDetails.timestamp}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
