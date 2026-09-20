@@ -169,16 +169,30 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         const existingIds = new Set(existingTx.map((t) => t.id));
 
         let totalNewCredits = 0;
-        let highestTier: string | null = null;
         let newlyRestoredCount = 0;
 
+        const tierRank: Record<string, number> = {
+          free: 0,
+          adventurer: 1,
+          legendary: 2,
+          celestial: 3
+        };
+
+        let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
+
         for (const p of syncRes.purchases) {
+          if (p.itemType === 'tier' && p.itemId) {
+            const rank = tierRank[p.itemId] || 0;
+            const currentBestRank = bestPurchasedTier ? tierRank[bestPurchasedTier] : 0;
+            if (rank > currentBestRank) {
+              bestPurchasedTier = p.itemId as any;
+            }
+          }
+
           if (!existingIds.has(p.id)) {
             newlyRestoredCount++;
             if (p.itemType === 'pack' && p.actionDelta > 0) {
               totalNewCredits += p.actionDelta;
-            } else if (p.itemType === 'tier' && p.itemId) {
-              highestTier = p.itemId;
             }
 
             const tx: PaymentTransactionRecord = {
@@ -203,12 +217,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           }
         }
 
+        const currentTierRank = tierRank[currentUser.tier || 'free'] || 0;
+        const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
+        const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
+
         let updated = currentUser;
-        if (totalNewCredits > 0 || highestTier) {
+        if (totalNewCredits > 0 || needsTierUpgrade || (newlyRestoredCount > 0 && bestPurchasedTier)) {
+          const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             totalNewCredits,
-            highestTier as any,
+            targetTier as any,
             guestId
           );
         }
@@ -218,10 +237,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           onStatusUpdated();
         }
 
-        if (newlyRestoredCount > 0) {
+        if (newlyRestoredCount > 0 || needsTierUpgrade) {
           setSyncStatusMessage({
             type: 'success',
-            text: `🎉 Restored ${newlyRestoredCount} Stripe purchase(s)! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to your account.`
+            text: `🎉 Membership Verified! Added +${totalNewCredits} actions${bestPurchasedTier ? ` & activated ${bestPurchasedTier.toUpperCase()} tier` : ''} on your account.`
           });
         } else {
           setSyncStatusMessage({

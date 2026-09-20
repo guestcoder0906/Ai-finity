@@ -223,105 +223,133 @@ function App() {
         user.username || undefined
       );
 
-      if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
-        // Collect known transactions from localStorage
-        const localTx = getLocalTransactions(user.uid);
-        const knownIds = new Set(localTx.map((t) => t.id));
-
-        // Also cross-reference Firestore transactions so cross-device sync is completely seamless
-        try {
-          const firestoreTx = await getUserTransactions(user.uid);
-          firestoreTx.forEach((t) => knownIds.add(t.id));
-        } catch (e) {
-          // ignore
-        }
-
-        let totalNewCredits = 0;
-        let highestTier: string | null = null;
-        let newlyFoundPurchases = false;
-        let latestReceipt: PaymentTransactionRecord | null = null;
-
-        for (const p of syncRes.purchases) {
-          if (!knownIds.has(p.id)) {
-            newlyFoundPurchases = true;
-            knownIds.add(p.id);
-
-            if (p.itemType === 'pack' && p.actionDelta > 0) {
-              totalNewCredits += p.actionDelta;
-            } else if (p.itemType === 'tier' && p.itemId) {
-              highestTier = p.itemId;
-            }
-
-            const tx: PaymentTransactionRecord = {
-              id: p.id,
-              amount: p.amount,
-              itemName: p.itemName,
-              itemType: p.itemType,
-              paymentMethod: 'Stripe Checkout',
-              status: 'completed',
-              createdAt: p.createdAt,
-              customerName: p.customerName || p.username || user.username || 'Adventurer',
-              email: p.email || user.email || undefined,
-              attachedUsername: p.username || user.username || 'Adventurer',
-              recipient: p.username || user.username || user.email || 'Adventurer',
-              notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
-              actionDelta: p.actionDelta,
-              newTier: p.itemType === 'tier' ? p.itemId : undefined,
-              userId: p.userId || user.uid
-            };
-
-            await recordPaymentTransaction(user.uid, tx);
-            latestReceipt = tx;
-          }
-        }
-
+      if (syncRes.success) {
+        // 1. Sync real-time active monthly subscription if present
         if (syncRes.activeSubscription !== undefined) {
-          const syncedUser = await ActionLimitService.syncSubscriptionState(
+          const syncedSubUser = await ActionLimitService.syncSubscriptionState(
             user,
             syncRes.activeSubscription as any,
             guestId
           );
-          if (syncedUser) {
-            setCurrentUser({ ...syncedUser });
-            setActionStatus(ActionLimitService.getActionStatus(syncedUser, guestId));
+          if (syncedSubUser) {
+            user.tier = syncedSubUser.tier;
+            user.stripeSubscriptionId = syncedSubUser.stripeSubscriptionId;
+            user.subscriptionExpiresAt = syncedSubUser.subscriptionExpiresAt;
+            setCurrentUser({ ...syncedSubUser });
+            setActionStatus(ActionLimitService.getActionStatus(syncedSubUser, guestId));
           }
         }
 
-        if (newlyFoundPurchases) {
-          const updated = await ActionLimitService.applyRestoredPurchases(
-            user,
-            totalNewCredits,
-            highestTier as any,
-            guestId
-          );
-          setCurrentUser({ ...updated });
-          setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
+        // 2. Cross-reference all completed purchases attached to this account
+        if (syncRes.purchases && syncRes.purchases.length > 0) {
+          // Collect known transactions from localStorage
+          const localTx = getLocalTransactions(user.uid);
+          const knownIds = new Set(localTx.map((t) => t.id));
 
-          if (latestReceipt) {
-            setVerifiedReceiptTransaction(latestReceipt);
-            setIsReceiptModalOpen(true);
+          // Cross-reference Firestore transactions
+          try {
+            const firestoreTx = await getUserTransactions(user.uid);
+            firestoreTx.forEach((t) => knownIds.add(t.id));
+          } catch (e) {
+            // ignore
           }
 
-          setStripeReturnMessage({
-            type: 'success',
-            text: `🎉 Purchase Confirmed! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to ${user.username}'s account.`
-          });
+          let totalNewCredits = 0;
+          let newlyFoundPurchases = false;
+          let latestReceipt: PaymentTransactionRecord | null = null;
 
-          // Cross-tab broadcast
-          try {
-            localStorage.setItem(
-              'aifinity_payment_sync_event',
-              JSON.stringify({ uid: user.uid, time: Date.now() })
+          const tierRank: Record<string, number> = {
+            free: 0,
+            adventurer: 1,
+            legendary: 2,
+            celestial: 3
+          };
+
+          let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
+
+          for (const p of syncRes.purchases) {
+            if (p.itemType === 'tier' && p.itemId) {
+              const rank = tierRank[p.itemId] || 0;
+              const currentBestRank = bestPurchasedTier ? tierRank[bestPurchasedTier] : 0;
+              if (rank > currentBestRank) {
+                bestPurchasedTier = p.itemId as any;
+              }
+            }
+
+            if (!knownIds.has(p.id)) {
+              newlyFoundPurchases = true;
+              knownIds.add(p.id);
+
+              if (p.itemType === 'pack' && p.actionDelta > 0) {
+                totalNewCredits += p.actionDelta;
+              }
+
+              const tx: PaymentTransactionRecord = {
+                id: p.id,
+                amount: p.amount,
+                itemName: p.itemName,
+                itemType: p.itemType,
+                paymentMethod: p.paymentMethod || 'Stripe Checkout',
+                status: 'completed',
+                createdAt: p.createdAt,
+                customerName: p.customerName || p.username || user.username || 'Adventurer',
+                email: p.email || user.email || undefined,
+                attachedUsername: p.username || user.username || 'Adventurer',
+                recipient: p.username || user.username || user.email || 'Adventurer',
+                notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Activated ${p.itemName}`,
+                actionDelta: p.actionDelta,
+                newTier: p.itemType === 'tier' ? p.itemId : undefined,
+                userId: p.userId || user.uid
+              };
+
+              await recordPaymentTransaction(user.uid, tx);
+              latestReceipt = tx;
+            }
+          }
+
+          const currentTierRank = tierRank[user.tier || 'free'] || 0;
+          const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
+          const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
+
+          if (newlyFoundPurchases || needsTierUpgrade || totalNewCredits > 0) {
+            const targetTier = needsTierUpgrade ? bestPurchasedTier : (newlyFoundPurchases && bestPurchasedTier ? bestPurchasedTier : undefined);
+            const updated = await ActionLimitService.applyRestoredPurchases(
+              user,
+              totalNewCredits,
+              targetTier as any,
+              guestId
             );
-          } catch (e) {}
+            setCurrentUser({ ...updated });
+            setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
 
-          // Clear active checkout markers
-          try {
-            sessionStorage.removeItem('aifinity_active_stripe_checkout');
-            localStorage.removeItem('aifinity_active_stripe_checkout');
-            sessionStorage.removeItem('aifinity_pending_checkout');
-            localStorage.removeItem('aifinity_pending_checkout');
-          } catch (e) {}
+            if (latestReceipt) {
+              setVerifiedReceiptTransaction(latestReceipt);
+              setIsReceiptModalOpen(true);
+            }
+
+            if (newlyFoundPurchases || needsTierUpgrade) {
+              setStripeReturnMessage({
+                type: 'success',
+                text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${totalNewCredits > 0 ? ` with +${totalNewCredits} actions added` : ''}.`
+              });
+            }
+
+            // Cross-tab broadcast
+            try {
+              localStorage.setItem(
+                'aifinity_payment_sync_event',
+                JSON.stringify({ uid: user.uid, time: Date.now() })
+              );
+            } catch (e) {}
+
+            // Clear active checkout markers
+            try {
+              sessionStorage.removeItem('aifinity_active_stripe_checkout');
+              localStorage.removeItem('aifinity_active_stripe_checkout');
+              sessionStorage.removeItem('aifinity_pending_checkout');
+              localStorage.removeItem('aifinity_pending_checkout');
+            } catch (e) {}
+          }
         }
       }
     } catch (syncErr) {

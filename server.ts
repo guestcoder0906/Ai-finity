@@ -206,7 +206,40 @@ async function startServer() {
         return res.status(400).json({ error: 'MISSING_SESSION_ID', message: 'Session ID is required.' });
       }
 
-      // 1. Check in-memory session store first (guarantees exact items and credits)
+      // 1. Query Stripe API if configured
+      const stripe = getStripe();
+      if (stripe) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(sessionId);
+          const isPaid = session.payment_status === 'paid' || session.status === 'complete';
+          const stored = checkoutSessionStore.get(sessionId);
+          return res.json({
+            paid: isPaid,
+            status: session.status,
+            payment_status: session.payment_status,
+            sessionId: session.id,
+            paymentIntentId: session.payment_intent,
+            amount: (session.amount_total || 0) / 100,
+            customerEmail: session.customer_details?.email || session.customer_email || stored?.userEmail || null,
+            metadata: {
+              ...(stored ? {
+                userId: stored.userId,
+                username: stored.username,
+                itemName: stored.itemName,
+                itemType: stored.itemType,
+                itemId: stored.itemId,
+                actionDelta: String(stored.actionDelta),
+                amount: String(stored.amount)
+              } : {}),
+              ...(session.metadata || {})
+            }
+          });
+        } catch (retrieveErr) {
+          console.warn('Stripe checkout session retrieve failed, falling back to cache:', retrieveErr);
+        }
+      }
+
+      // 2. Check in-memory session store fallback
       const stored = checkoutSessionStore.get(sessionId);
       if (stored) {
         return res.json({
@@ -225,27 +258,6 @@ async function startServer() {
             amount: String(stored.amount)
           }
         });
-      }
-
-      // 2. Query Stripe API if configured
-      const stripe = getStripe();
-      if (stripe) {
-        try {
-          const session = await stripe.checkout.sessions.retrieve(sessionId);
-          const isPaid = session.payment_status === 'paid' || session.status === 'complete';
-          return res.json({
-            paid: isPaid,
-            status: session.status,
-            payment_status: session.payment_status,
-            sessionId: session.id,
-            paymentIntentId: session.payment_intent,
-            amount: (session.amount_total || 0) / 100,
-            customerEmail: session.customer_details?.email || session.customer_email,
-            metadata: session.metadata || {}
-          });
-        } catch (retrieveErr) {
-          console.warn('Stripe checkout session retrieve failed, falling back:', retrieveErr);
-        }
       }
 
       // 3. Fallback if session exists but wasn't in cache
@@ -374,25 +386,13 @@ async function startServer() {
 
         let isMatch = false;
 
-        // Strict purchase attribution: each purchase is uniquely attached ONLY to the exact account it was bought on.
-        if (userId) {
-          if (sUid) {
-            if (sUid === userId) {
-              isMatch = true;
-            }
-          } else if (username && sUsername) {
-            if (sUsername === username) {
-              isMatch = true;
-            }
-          }
-        } else if (username) {
-          if (sUsername && sUsername === username) {
-            isMatch = true;
-          }
-        } else if (email && !sUid && !sUsername) {
-          if (sEmail && sEmail === email) {
-            isMatch = true;
-          }
+        // Strict purchase attribution: each purchase is uniquely attached to the exact account it was bought on.
+        if (userId && sUid && sUid === userId) {
+          isMatch = true;
+        } else if (username && sUsername && sUsername === username) {
+          isMatch = true;
+        } else if (email && sEmail && sEmail === email && (!sUid || sUid === userId)) {
+          isMatch = true;
         }
 
         if (isMatch) {
