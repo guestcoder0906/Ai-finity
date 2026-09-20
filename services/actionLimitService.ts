@@ -5,7 +5,7 @@ export interface ActionPack {
   name: string;
   actions: number;
   price: number;
-  pricePerTurn: string;
+  pricePerTurn?: string;
   badge?: string;
   description: string;
 }
@@ -22,45 +22,40 @@ export interface SubscriptionTier {
 
 export const ACTION_PACKS: ActionPack[] = [
   {
-    id: 'pack_pouch_20',
+    id: 'pack_pouch_50',
     name: 'Pouch Pack',
-    actions: 20,
-    price: 2.99,
-    pricePerTurn: '15¢ per turn',
+    actions: 50,
+    price: 0.99,
     description: 'Quick top-up for a thrilling side quest'
   },
   {
-    id: 'pack_bag_50',
+    id: 'pack_bag_100',
     name: 'Bag Pack',
-    actions: 50,
-    price: 4.99,
-    pricePerTurn: '10¢ per turn',
+    actions: 100,
+    price: 1.99,
     description: 'Great for an extended gaming session'
   },
   {
-    id: 'pack_chest_150',
+    id: 'pack_chest_250',
     name: 'Chest Pack',
-    actions: 150,
-    price: 9.99,
-    pricePerTurn: '6¢ per turn',
+    actions: 250,
+    price: 4.99,
     description: 'Deep world exploration with rich encounters'
   },
   {
-    id: 'pack_treasure_300',
+    id: 'pack_treasure_500',
     name: 'Treasure Pack',
-    actions: 300,
-    price: 14.99,
-    pricePerTurn: '5¢ per turn',
+    actions: 500,
+    price: 9.99,
     description: 'Huge supply for serious RPG campaign builders'
   },
   {
-    id: 'pack_royal_500',
+    id: 'pack_royal_800',
     name: 'Royal Pack',
-    actions: 500,
-    price: 19.99,
-    pricePerTurn: '4¢ per turn',
+    actions: 800,
+    price: 14.99,
     badge: 'Best Value 🔥',
-    description: 'Maximum power and lowest price per turn'
+    description: 'Maximum power and top tier pack'
   }
 ];
 
@@ -80,12 +75,12 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
   {
     id: 'adventurer',
     name: '📜 Adventurer Tier',
-    price: 9.99,
+    price: 4.99,
     billingPeriod: 'month',
     badge: 'Popular',
     highlight: true,
     features: [
-      '10 Free daily actions + 200 monthly bonus actions',
+      '10 Free daily actions + 300 monthly bonus actions',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting adventures in Community Adventures',
       'Choose between Full Story, Starting Prompt, or AI Initial World Generation sharing'
@@ -94,16 +89,31 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
   {
     id: 'legendary',
     name: '🌌 Legendary Tier',
-    price: 19.99,
+    price: 9.99,
     billingPeriod: 'month',
-    badge: 'Ultimate 🔥',
+    badge: 'Great Value',
     highlight: true,
     features: [
-      'UNLIMITED actions (rate limits still apply)',
+      '10 Free daily actions + 600 monthly bonus actions',
       '✨ Golden Name in chat, sidebar, multiplayer & community posts',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting in Community Adventures',
       'Priority generation processing'
+    ]
+  },
+  {
+    id: 'celestial',
+    name: '✨ Celestial Tier',
+    price: 14.99,
+    billingPeriod: 'month',
+    badge: 'Unlimited 🔥',
+    highlight: true,
+    features: [
+      'UNLIMITED actions (play infinitely with zero action caps)',
+      '🌌 Celestial Name (glowing cosmic neon styling like Admin)',
+      'Permanent access to saving multiple adventures in Adventures page',
+      'Permanent access to posting in Community Adventures',
+      'Instant VIP priority generation'
     ]
   }
 ];
@@ -194,7 +204,7 @@ export class ActionLimitService {
           }
 
           return {
-            tier: (parsed.tier === 'adventurer' || parsed.tier === 'legendary') ? parsed.tier : 'free',
+            tier: (parsed.tier === 'adventurer' || parsed.tier === 'legendary' || parsed.tier === 'celestial') ? parsed.tier : 'free',
             actionCredits: typeof parsed.actionCredits === 'number' ? parsed.actionCredits : 0,
             dailyActionsUsed: typeof parsed.dailyActionsUsed === 'number' ? parsed.dailyActionsUsed : 0,
             dailyActionsDate: parsed.dailyActionsDate || today
@@ -278,7 +288,7 @@ export class ActionLimitService {
 
     // Authenticated user: profile in Firestore is authoritative
     let tier: UserTier = 'free';
-    if (user.tier === 'adventurer' || user.tier === 'legendary') {
+    if (user.tier === 'adventurer' || user.tier === 'legendary' || user.tier === 'celestial') {
       // Check subscription expiry if present
       if (user.subscriptionExpiresAt) {
         const expires = new Date(user.subscriptionExpiresAt).getTime();
@@ -288,7 +298,7 @@ export class ActionLimitService {
       } else {
         tier = user.tier;
       }
-    } else if (local.tier === 'adventurer' || local.tier === 'legendary') {
+    } else if (local.tier === 'adventurer' || local.tier === 'legendary' || local.tier === 'celestial') {
       tier = local.tier;
     }
 
@@ -310,12 +320,12 @@ export class ActionLimitService {
 
     const dailyFreeTotal = this.TOTAL_DAILY_FREE; // 20 actions in beta phase
     const dailyFreeRemaining = Math.max(0, dailyFreeTotal - dailyUsed);
-    const isUnlimited = hasCustomKey || hasInfinite || tier === 'legendary';
+    const isUnlimited = hasCustomKey || hasInfinite || tier === 'celestial';
     const totalAvailable = isUnlimited ? 999999 : (dailyFreeRemaining + purchasedCredits);
     const canPerformAction = isUnlimited || totalAvailable > 0;
 
-    const canSaveMultiple = Boolean(user.canSaveMultipleAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary');
-    const canPostCommunity = Boolean(user.canPostCommunityAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary');
+    const canSaveMultiple = Boolean(user.canSaveMultipleAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary' || tier === 'celestial');
+    const canPostCommunity = Boolean(user.canPostCommunityAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary' || tier === 'celestial');
 
     return {
       tier,
@@ -459,7 +469,7 @@ export class ActionLimitService {
   }
 
   /**
-   * Activates monthly subscription (Adventurer or Legendary)
+   * Activates monthly subscription (Adventurer, Legendary, or Celestial)
    * Guests cannot buy subscriptions; user must be logged in.
    */
   public static async activateSubscription(
@@ -474,10 +484,12 @@ export class ActionLimitService {
     const status = this.getActionStatus(user, guestId);
     const today = this.getTodayDateString();
 
-    // Adventurer grants +200 actions
+    // Bonus actions per tier: Adventurer = 300, Legendary = 600, Celestial = unlimited
     let bonusActions = 0;
     if (tier === 'adventurer') {
-      bonusActions = 200;
+      bonusActions = 300;
+    } else if (tier === 'legendary') {
+      bonusActions = 600;
     }
     const newCredits = status.purchasedCredits + bonusActions;
 

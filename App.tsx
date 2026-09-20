@@ -1041,17 +1041,21 @@ function App() {
                   <GoldenName
                     name={currentUser.username}
                     role={currentUser.role}
+                    tier={currentUser.tier}
                     showGlowingName={currentUser.showGlowingName}
                     isGolden={currentUser.tier === 'legendary'}
                     className="font-bold text-white"
                   />
                   <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-semibold ${
-                    currentUser.tier === 'legendary'
+                    currentUser.tier === 'celestial'
+                      ? 'bg-gradient-to-r from-sky-950 to-purple-950 text-cyan-200 border border-cyan-400/60 shadow-[0_0_8px_rgba(56,189,248,0.4)] flex items-center gap-0.5'
+                      : currentUser.tier === 'legendary'
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5'
                       : currentUser.tier === 'adventurer'
                         ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                         : 'bg-neutral-800 text-neutral-400'
                   }`}>
+                    {currentUser.tier === 'celestial' && <Sparkles size={9} className="text-cyan-300 animate-pulse" />}
                     {currentUser.tier === 'legendary' && <Crown size={9} />}
                     {currentUser.tier || 'free'}
                   </span>
@@ -1255,11 +1259,20 @@ function App() {
                       <GoldenName
                         name={currentUser.username}
                         role={currentUser.role}
+                        tier={currentUser.tier}
                         showGlowingName={currentUser.showGlowingName}
                         isGolden={currentUser.tier === 'legendary'}
                         className="font-bold text-white text-[11px] truncate"
                       />
-                      <span className="text-[9px] bg-neutral-800 text-neutral-400 px-1 py-0.2 rounded uppercase">
+                      <span className={`text-[9px] px-1 py-0.2 rounded uppercase ${
+                        currentUser.tier === 'celestial'
+                          ? 'bg-gradient-to-r from-sky-950 to-purple-950 text-cyan-200 border border-cyan-400/60'
+                          : currentUser.tier === 'legendary'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : currentUser.tier === 'adventurer'
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                          : 'bg-neutral-800 text-neutral-400'
+                      }`}>
                         {currentUser.tier || 'free'}
                       </span>
                     </div>

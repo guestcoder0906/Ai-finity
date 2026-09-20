@@ -469,6 +469,7 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
                           <span>by</span>
                           <GoldenName
                             name={adv.authorName}
+                            tier={adv.authorTier}
                             isGolden={isLegendary}
                             className="text-xs font-semibold"
                           />

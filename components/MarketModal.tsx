@@ -836,9 +836,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       <div>
                         <div className="flex justify-between items-start mb-2">
                           <h4 className="font-bold text-white text-base">{pack.name}</h4>
-                          <span className="text-xs font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-900/60 px-2 py-0.5 rounded">
-                            {pack.pricePerTurn}
-                          </span>
                         </div>
 
                         <div className="my-2">
@@ -886,16 +883,19 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {SUBSCRIPTION_TIERS.map((tier) => {
                   const isCurrent = effectiveStatus.tier === tier.id;
+                  const isCelestial = tier.id === 'celestial';
                   const isLegendary = tier.id === 'legendary';
 
                   return (
                     <div
                       key={tier.id}
                       className={`relative bg-neutral-950 rounded-xl p-5 border flex flex-col justify-between ${
-                        isLegendary
+                        isCelestial
+                          ? 'border-cyan-400/80 bg-gradient-to-b from-sky-950/40 via-indigo-950/30 to-neutral-950 shadow-[0_0_20px_rgba(56,189,248,0.2)] ring-1 ring-cyan-400/50'
+                          : isLegendary
                           ? 'border-amber-500/80 bg-gradient-to-b from-amber-950/30 via-neutral-950 to-neutral-950 shadow-xl'
                           : tier.highlight
                             ? 'border-blue-500/70 bg-gradient-to-b from-blue-950/20 to-neutral-950'
@@ -904,7 +904,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     >
                       {tier.badge && (
                         <span className={`absolute -top-2.5 right-4 px-2 py-0.5 text-[10px] font-extrabold uppercase rounded-full shadow-md ${
-                          isLegendary
+                          isCelestial
+                            ? 'bg-gradient-to-r from-cyan-400 via-sky-300 to-purple-400 text-black shadow-[0_0_10px_rgba(56,189,248,0.6)]'
+                            : isLegendary
                             ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-black'
                             : 'bg-blue-600 text-white'
                         }`}>
@@ -913,7 +915,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       )}
 
                       <div>
-                        <h4 className={`text-lg font-bold mb-1 ${isLegendary ? 'text-amber-300 flex items-center gap-1.5' : 'text-white'}`}>
+                        <h4 className={`text-base font-bold mb-1 ${
+                          isCelestial
+                            ? 'text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-200 to-purple-300 flex items-center gap-1.5'
+                            : isLegendary
+                            ? 'text-amber-300 flex items-center gap-1.5'
+                            : 'text-white'
+                        }`}>
                           {tier.name}
                         </h4>
 
@@ -930,7 +938,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                           {tier.features.map((feat, idx) => (
                             <div key={idx} className="flex items-start gap-2">
                               <CheckCircle2 size={14} className={`shrink-0 mt-0.5 ${
-                                isLegendary ? 'text-amber-400' : 'text-blue-400'
+                                isCelestial ? 'text-cyan-400' : isLegendary ? 'text-amber-400' : 'text-blue-400'
                               }`} />
                               <span>{feat}</span>
                             </div>
@@ -951,7 +959,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                           <button
                             onClick={() => handleSelectTier(tier)}
                             className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md ${
-                              isLegendary
+                              isCelestial
+                                ? 'bg-gradient-to-r from-cyan-400 via-sky-300 to-purple-400 text-black hover:brightness-110 shadow-[0_0_12px_rgba(56,189,248,0.4)]'
+                                : isLegendary
                                 ? 'bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black hover:brightness-110'
                                 : 'bg-blue-600 hover:bg-blue-500 text-white'
                             }`}

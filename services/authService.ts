@@ -18,7 +18,7 @@ import {
 } from 'firebase/firestore';
 import { auth, googleProvider, db } from './firebase';
 
-export type UserTier = 'free' | 'adventurer' | 'legendary';
+export type UserTier = 'free' | 'adventurer' | 'legendary' | 'celestial';
 export type UserRole = 'user' | 'mod' | 'admin';
 
 export interface UserProfile {

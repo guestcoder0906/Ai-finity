@@ -373,6 +373,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     <GoldenName
                       name={currentUser.username}
                       role={currentUser.role}
+                      tier={currentUser.tier}
                       showGlowingName={currentUser.showGlowingName}
                       isGolden={currentUser.tier === 'legendary'}
                     />
@@ -381,8 +382,16 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="px-2.5 py-1 bg-neutral-900 border border-neutral-800 rounded text-xs text-neutral-300">
-                    Tier: <span className="font-bold text-white uppercase">{currentUser.tier || 'Free'}</span>
+                  <div className={`px-2.5 py-1 rounded text-xs border ${
+                    currentUser.tier === 'celestial'
+                      ? 'bg-gradient-to-r from-sky-950 to-purple-950 border-cyan-400/60 text-cyan-200 shadow-[0_0_8px_rgba(56,189,248,0.4)]'
+                      : currentUser.tier === 'legendary'
+                      ? 'bg-amber-950/70 border-amber-500/50 text-amber-300'
+                      : currentUser.tier === 'adventurer'
+                      ? 'bg-blue-950/70 border-blue-500/50 text-blue-300'
+                      : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+                  }`}>
+                    Tier: <span className="font-bold uppercase">{currentUser.tier || 'Free'}</span>
                   </div>
                   {isAdmin && (
                     <div className="px-2.5 py-1 bg-cyan-950/70 border border-cyan-400/50 rounded text-xs text-cyan-300 font-bold flex items-center gap-1 shadow-[0_0_6px_rgba(56,189,248,0.3)]">
