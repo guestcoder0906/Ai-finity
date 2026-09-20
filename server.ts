@@ -61,7 +61,6 @@ async function startServer() {
       const amountInCents = Math.round(amount * 100);
 
       const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
         line_items: [{
           price_data: {
             currency: 'usd',

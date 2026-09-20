@@ -330,132 +330,11 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
     }
 
-    // 3. GOOGLE PAY FLOW (Using direct Google Pay API with Stripe Gateway or 1-Click Stripe Checkout)
+    // 3. GOOGLE PAY FLOW (Via official Stripe Checkout supporting Google Pay with zero OR_BIBED_11 errors)
     if (paymentMethod === 'google_pay') {
       setIsProcessingPayment(true);
-      setProcessingMessage('Launching Google Pay...');
+      setProcessingMessage('Launching Google Pay via Stripe...');
 
-      // Try direct Google Pay API if client library is loaded
-      if (typeof (window as any).google !== 'undefined' && (window as any).google?.payments?.api?.PaymentsClient) {
-        try {
-          const paymentsClient = new (window as any).google.payments.api.PaymentsClient({
-            environment: isLiveMode ? 'PRODUCTION' : 'TEST'
-          });
-
-          const paymentDataRequest = {
-            apiVersion: 2,
-            apiVersionMinor: 0,
-            allowedPaymentMethods: [{
-              type: 'CARD',
-              parameters: {
-                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-                allowedCardNetworks: ['MASTERCARD', 'VISA', 'AMEX', 'DISCOVER']
-              },
-              tokenizationSpecification: {
-                type: 'PAYMENT_GATEWAY',
-                parameters: {
-                  gateway: 'stripe',
-                  'stripe:version': '2020-08-27',
-                  'stripe:publishableKey': activePub
-                }
-              }
-            }],
-            transactionInfo: {
-              totalPriceStatus: 'FINAL',
-              totalPrice: selectedItem.data.price.toFixed(2),
-              currencyCode: 'USD',
-              countryCode: 'US'
-            },
-            merchantInfo: {
-              merchantName: 'Aifinity'
-            }
-          };
-
-          const paymentData = await paymentsClient.loadPaymentData(paymentDataRequest);
-          const rawToken = paymentData?.paymentMethodData?.tokenizationData?.token;
-          let stripeTokenId = '';
-          try {
-            const parsed = JSON.parse(rawToken);
-            stripeTokenId = parsed.id || rawToken;
-          } catch {
-            stripeTokenId = rawToken;
-          }
-
-          if (stripeTokenId) {
-            setProcessingMessage('Authorizing with Stripe...');
-            const chargeRes = await fetch('/api/stripe/process-direct-payment', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                token: stripeTokenId,
-                amount: selectedItem.data.price,
-                itemName: selectedItem.data.name,
-                itemType: selectedItem.type,
-                itemId: selectedItem.data.id,
-                actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
-                userId: currentUser.uid,
-                userEmail: currentUser.email || '',
-                username: currentUser.username || ''
-              })
-            });
-
-            const chargeData = await chargeRes.json();
-            if (!chargeRes.ok || !chargeData.success) {
-              throw new Error(chargeData.message || 'Google Pay charge failed via Stripe.');
-            }
-
-            let actionDelta: number | undefined;
-            let newTier: string | undefined;
-
-            if (selectedItem.type === 'pack') {
-              const pack = selectedItem.data as ActionPack;
-              await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
-              actionDelta = pack.actions;
-            } else {
-              const tier = selectedItem.data as SubscriptionTier;
-              await ActionLimitService.activateSubscription(currentUser, tier.id);
-              newTier = tier.name;
-            }
-
-            const txId = chargeData.chargeId;
-            const nowIso = new Date().toISOString();
-            await recordPaymentTransaction(currentUser.uid, {
-              id: txId,
-              amount: selectedItem.data.price,
-              itemName: selectedItem.data.name,
-              itemType: selectedItem.type,
-              paymentMethod: 'Google Pay (Stripe)',
-              status: 'completed',
-              createdAt: nowIso
-            });
-
-            onStatusUpdated();
-            setTransactionReceipt({
-              id: txId,
-              itemName: selectedItem.data.name,
-              amount: selectedItem.data.price,
-              paymentMethod: 'Google Pay (Stripe)',
-              timestamp: new Date().toLocaleString(),
-              actionDelta,
-              newTier,
-              stripePaymentIntentId: txId,
-              mode: isLiveMode ? 'live' : 'test'
-            });
-            setIsProcessingPayment(false);
-            setProcessingMessage(null);
-            return;
-          }
-        } catch (gpayErr: any) {
-          if (gpayErr.statusCode === 'CANCELED') {
-            setIsProcessingPayment(false);
-            setProcessingMessage(null);
-            return;
-          }
-          console.warn('Direct Google Pay falling back to Stripe Checkout:', gpayErr);
-        }
-      }
-
-      // If Google Pay client API is unavailable in this environment, launch Stripe Checkout (which has Google Pay native)
       try {
         const response = await fetch('/api/stripe/create-checkout-session', {
           method: 'POST',
@@ -488,7 +367,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         return;
       } catch (err: any) {
         console.error('Google Pay checkout error:', err);
-        setPaymentError(err.message || 'Google Pay checkout could not be opened.');
+        setPaymentError(err.message || 'Google Pay checkout could not be opened. Please check Stripe configuration.');
         setIsProcessingPayment(false);
         setProcessingMessage(null);
         return;
