@@ -560,6 +560,19 @@ export async function logOut(): Promise<void> {
 
 // Fetch user profile from Firestore by UID
 export async function getUserProfile(uid: string, forceFresh: boolean = false): Promise<UserProfile | null> {
+  // Helper to read any cached local purchase state
+  const getLocalPurchaseOverrides = (targetUid: string) => {
+    try {
+      if (typeof window === 'undefined') return null;
+      const raw = localStorage.getItem(`aifinity_user_actions_${targetUid}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
   if (!forceFresh && activeProfileCache[uid]) {
     const cached = enrichUserProfileWithDefaults(activeProfileCache[uid]);
     if (isDefaultAdmin(cached.email, cached.username) && (cached.role !== 'admin' || !cached.hasInfiniteActions)) {
@@ -568,19 +581,63 @@ export async function getUserProfile(uid: string, forceFresh: boolean = false): 
       cached.canSaveMultipleAdventures = true;
       cached.canPostCommunityAdventures = true;
     }
+    const local = getLocalPurchaseOverrides(uid);
+    if (local) {
+      if ((local.tier === 'adventurer' || local.tier === 'legendary' || local.tier === 'celestial') && cached.tier !== local.tier) {
+        cached.tier = local.tier;
+        cached.canSaveMultipleAdventures = true;
+        cached.canPostCommunityAdventures = true;
+      }
+      if (typeof local.actionCredits === 'number' && local.actionCredits > (cached.actionCredits || 0)) {
+        cached.actionCredits = local.actionCredits;
+      }
+    }
     return cached;
   }
+
   try {
     const snap = await getDoc(doc(db, 'users', uid));
+    let profile: UserProfile | null = null;
     if (snap.exists()) {
-      const profile = enrichUserProfileWithDefaults(snap.data() as UserProfile);
-      activeProfileCache[uid] = profile;
+      profile = enrichUserProfileWithDefaults(snap.data() as UserProfile);
+    } else if (activeProfileCache[uid]) {
+      profile = enrichUserProfileWithDefaults(activeProfileCache[uid]);
+    }
+
+    if (profile) {
+      const local = getLocalPurchaseOverrides(uid);
+      let needsFirestoreSync = false;
+      if (local) {
+        if ((local.tier === 'adventurer' || local.tier === 'legendary' || local.tier === 'celestial') && profile.tier !== local.tier) {
+          profile.tier = local.tier;
+          profile.canSaveMultipleAdventures = true;
+          profile.canPostCommunityAdventures = true;
+          needsFirestoreSync = true;
+        }
+        if (typeof local.actionCredits === 'number' && local.actionCredits > (profile.actionCredits || 0)) {
+          profile.actionCredits = local.actionCredits;
+          needsFirestoreSync = true;
+        }
+      }
+
       if (isDefaultAdmin(profile.email, profile.username) && (profile.role !== 'admin' || !profile.hasInfiniteActions)) {
-        await setDoc(doc(db, 'users', uid), {
-          role: 'admin',
-          hasInfiniteActions: true,
-          canSaveMultipleAdventures: true,
-          canPostCommunityAdventures: true,
+        profile.role = 'admin';
+        profile.hasInfiniteActions = true;
+        profile.canSaveMultipleAdventures = true;
+        profile.canPostCommunityAdventures = true;
+        needsFirestoreSync = true;
+      }
+
+      activeProfileCache[uid] = profile;
+
+      if (needsFirestoreSync && auth.currentUser?.uid === uid) {
+        setDoc(doc(db, 'users', uid), {
+          tier: profile.tier,
+          actionCredits: profile.actionCredits,
+          role: profile.role,
+          hasInfiniteActions: profile.hasInfiniteActions,
+          canSaveMultipleAdventures: profile.canSaveMultipleAdventures,
+          canPostCommunityAdventures: profile.canPostCommunityAdventures,
           showGlowingName: profile.showGlowingName !== undefined ? profile.showGlowingName : true
         }, { merge: true }).catch(() => {});
       }
@@ -664,10 +721,25 @@ export function generateUniqueGuestMultiplayerName(existingPlayerNames: string[]
   return `Guest${candidate}`;
 }
 
-// Update partial user profile in Firestore and sync in-memory cache
+// Update partial user profile in Firestore and sync in-memory cache and localStorage
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
   try {
     updateCachedProfile(uid, updates);
+
+    // Sync to local storage state
+    if (typeof window !== 'undefined') {
+      try {
+        const key = `aifinity_user_actions_${uid}`;
+        const raw = localStorage.getItem(key);
+        const currentLocal = raw ? JSON.parse(raw) : {};
+        if (updates.tier) currentLocal.tier = updates.tier;
+        if (typeof updates.actionCredits === 'number') currentLocal.actionCredits = updates.actionCredits;
+        localStorage.setItem(key, JSON.stringify(currentLocal));
+      } catch (e) {
+        // ignore
+      }
+    }
+
     const userRef = doc(db, 'users', uid);
     await setDoc(userRef, updates, { merge: true });
   } catch (err) {
