@@ -455,11 +455,30 @@ async function startServer() {
         }
       }
 
+      // Compute total lifetime action pack credits purchased
+      let totalPackActions = 0;
+      const tierRank: Record<string, number> = { free: 0, adventurer: 1, legendary: 2, celestial: 3 };
+      let highestPurchasedTier: string | null = activeSub?.tierId || null;
+
+      for (const p of completedPurchases) {
+        if (p.itemType === 'pack' && p.actionDelta > 0) {
+          totalPackActions += p.actionDelta;
+        } else if (p.itemType === 'tier' && p.itemId) {
+          const rank = tierRank[p.itemId] || 0;
+          const currentRank = highestPurchasedTier ? (tierRank[highestPurchasedTier] || 0) : 0;
+          if (rank > currentRank) {
+            highestPurchasedTier = p.itemId;
+          }
+        }
+      }
+
       res.json({
         success: true,
         count: completedPurchases.length,
         purchases: completedPurchases,
-        activeSubscription: activeSub
+        activeSubscription: activeSub,
+        totalPackActions,
+        highestPurchasedTier
       });
     } catch (err: any) {
       console.error('Failed to sync user Stripe purchases:', err);

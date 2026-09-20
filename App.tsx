@@ -256,6 +256,7 @@ function App() {
 
           let totalNewCredits = 0;
           let newlyFoundPurchases = false;
+          let totalLifetimePackActions = 0;
           let latestReceipt: PaymentTransactionRecord | null = null;
 
           const tierRank: Record<string, number> = {
@@ -268,6 +269,10 @@ function App() {
           let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
 
           for (const p of syncRes.purchases) {
+            if (p.itemType === 'pack' && p.actionDelta > 0) {
+              totalLifetimePackActions += p.actionDelta;
+            }
+
             if (p.itemType === 'tier' && p.itemId) {
               const rank = tierRank[p.itemId] || 0;
               const currentBestRank = bestPurchasedTier ? tierRank[bestPurchasedTier] : 0;
@@ -310,14 +315,17 @@ function App() {
           const currentTierRank = tierRank[user.tier || 'free'] || 0;
           const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
           const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
+          const currentCredits = user.actionCredits || 0;
+          const creditsNeedFloorFix = totalLifetimePackActions > 0 && currentCredits < totalLifetimePackActions;
 
-          if (newlyFoundPurchases || needsTierUpgrade || totalNewCredits > 0) {
-            const targetTier = needsTierUpgrade ? bestPurchasedTier : (newlyFoundPurchases && bestPurchasedTier ? bestPurchasedTier : undefined);
+          if (newlyFoundPurchases || needsTierUpgrade || totalNewCredits > 0 || creditsNeedFloorFix) {
+            const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
             const updated = await ActionLimitService.applyRestoredPurchases(
               user,
               totalNewCredits,
               targetTier as any,
-              guestId
+              guestId,
+              totalLifetimePackActions > 0 ? totalLifetimePackActions : undefined
             );
             setCurrentUser({ ...updated });
             setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
@@ -327,10 +335,10 @@ function App() {
               setIsReceiptModalOpen(true);
             }
 
-            if (newlyFoundPurchases || needsTierUpgrade) {
+            if (newlyFoundPurchases || needsTierUpgrade || creditsNeedFloorFix) {
               setStripeReturnMessage({
                 type: 'success',
-                text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${totalNewCredits > 0 ? ` with +${totalNewCredits} actions added` : ''}.`
+                text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${updated.actionCredits ? ` with ${updated.actionCredits} action credits` : ''}.`
               });
             }
 

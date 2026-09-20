@@ -153,6 +153,8 @@ export async function syncUserPurchasesFromStripe(
   success: boolean;
   count: number;
   activeSubscription?: StripeActiveSubscription | null;
+  totalPackActions?: number;
+  highestPurchasedTier?: 'adventurer' | 'legendary' | 'celestial' | null;
   purchases: Array<{
     id: string;
     amount: number;

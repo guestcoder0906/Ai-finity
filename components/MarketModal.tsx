@@ -170,6 +170,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
         let totalNewCredits = 0;
         let newlyRestoredCount = 0;
+        let totalLifetimePackActions = 0;
 
         const tierRank: Record<string, number> = {
           free: 0,
@@ -181,6 +182,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
 
         for (const p of syncRes.purchases) {
+          if (p.itemType === 'pack' && p.actionDelta > 0) {
+            totalLifetimePackActions += p.actionDelta;
+          }
+
           if (p.itemType === 'tier' && p.itemId) {
             const rank = tierRank[p.itemId] || 0;
             const currentBestRank = bestPurchasedTier ? tierRank[bestPurchasedTier] : 0;
@@ -220,15 +225,18 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         const currentTierRank = tierRank[currentUser.tier || 'free'] || 0;
         const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
         const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
+        const currentCredits = currentUser.actionCredits || 0;
+        const creditsNeedFloorFix = totalLifetimePackActions > 0 && currentCredits < totalLifetimePackActions;
 
         let updated = currentUser;
-        if (totalNewCredits > 0 || needsTierUpgrade || (newlyRestoredCount > 0 && bestPurchasedTier)) {
+        if (totalNewCredits > 0 || needsTierUpgrade || creditsNeedFloorFix || (newlyRestoredCount > 0 && bestPurchasedTier)) {
           const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             totalNewCredits,
             targetTier as any,
-            guestId
+            guestId,
+            totalLifetimePackActions > 0 ? totalLifetimePackActions : undefined
           );
         }
 
@@ -237,10 +245,10 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           onStatusUpdated();
         }
 
-        if (newlyRestoredCount > 0 || needsTierUpgrade) {
+        if (newlyRestoredCount > 0 || needsTierUpgrade || creditsNeedFloorFix) {
           setSyncStatusMessage({
             type: 'success',
-            text: `🎉 Membership Verified! Added +${totalNewCredits} actions${bestPurchasedTier ? ` & activated ${bestPurchasedTier.toUpperCase()} tier` : ''} on your account.`
+            text: `🎉 Membership Verified! Added ${totalNewCredits > 0 ? `+${totalNewCredits} actions` : `credits`} ${bestPurchasedTier ? `& activated ${bestPurchasedTier.toUpperCase()} tier` : ''} on your account.`
           });
         } else {
           setSyncStatusMessage({

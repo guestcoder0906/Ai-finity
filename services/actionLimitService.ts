@@ -580,7 +580,8 @@ export class ActionLimitService {
     user: UserProfile | null,
     addedCredits: number,
     newTier: UserTier | null,
-    guestId?: string
+    guestId?: string,
+    minActionCreditsFloor?: number
   ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('User must be logged in to restore purchases.');
@@ -589,13 +590,23 @@ export class ActionLimitService {
     const status = this.getActionStatus(user, guestId);
     const today = this.getTodayDateString();
 
+    const tierRank: Record<string, number> = {
+      free: 0,
+      adventurer: 1,
+      legendary: 2,
+      celestial: 3
+    };
+
     let resolvedTier: UserTier = user.tier || status.tier || 'free';
+    if (newTier && (tierRank[newTier] || 0) > (tierRank[resolvedTier] || 0)) {
+      resolvedTier = newTier;
+    }
+
     let expiresStr = user.subscriptionExpiresAt;
 
     // If subscription is being restored/activated
     let tierBonusActions = 0;
-    if (newTier) {
-      resolvedTier = newTier;
+    if (newTier && resolvedTier === newTier) {
       if (!expiresStr || new Date(expiresStr).getTime() < Date.now()) {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 30);
@@ -611,8 +622,13 @@ export class ActionLimitService {
     }
 
     const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
-    // Total credits = existing + packs + subscription bonuses (if any newly restored)
-    const finalCredits = currentCredits + addedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
+    // Total credits = existing + packs + subscription bonuses
+    let finalCredits = currentCredits + addedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
+
+    // If a minimum floor of total purchased credits was provided, ensure credits never drop below it
+    if (typeof minActionCreditsFloor === 'number' && finalCredits < minActionCreditsFloor) {
+      finalCredits = minActionCreditsFloor;
+    }
 
     user.tier = resolvedTier;
     user.actionCredits = finalCredits;
@@ -717,7 +733,7 @@ export class ActionLimitService {
 
   /**
    * Automatically synchronizes user profile with real-time Stripe subscription status
-   * Attaches subscription strictly to this account, auto-updating active tiers or downgrading upon cancellation
+   * Attaches subscription strictly to this account, auto-updating active tiers without breaking single-payment upgrades
    */
   public static async syncSubscriptionState(
     user: UserProfile | null,
@@ -738,7 +754,6 @@ export class ActionLimitService {
     const status = this.getActionStatus(user, guestId);
 
     if (activeSub && (activeSub.status === 'active' || activeSub.status === 'trialing')) {
-      const isNewTier = user.tier !== activeSub.tierId;
       user.tier = activeSub.tierId;
       user.stripeSubscriptionId = activeSub.id;
       user.stripeCustomerId = activeSub.customerId || user.stripeCustomerId || null;
@@ -771,8 +786,14 @@ export class ActionLimitService {
         canPostCommunityAdventures: true,
         ...(activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial' ? { showGlowingName: true } : {})
       });
-    } else if (!activeSub && user.stripeSubscriptionId && !isAdminOrMod) {
-      // The user had a Stripe subscription recorded, but it is no longer active in Stripe
+    } else if (
+      !activeSub &&
+      user.subscriptionStatus === 'canceled' &&
+      user.subscriptionExpiresAt &&
+      new Date(user.subscriptionExpiresAt).getTime() < Date.now() &&
+      !isAdminOrMod
+    ) {
+      // Only downgrade if the subscription was explicitly canceled AND the expiration date has passed
       user.tier = 'free';
       user.subscriptionStatus = 'canceled';
       user.subscriptionExpiresAt = undefined;
