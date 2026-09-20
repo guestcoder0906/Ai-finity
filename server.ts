@@ -57,24 +57,30 @@ async function startServer() {
         return res.status(400).json({ error: 'INVALID_AMOUNT', message: 'Valid amount in USD is required.' });
       }
 
-      let origin = clientOrigin || req.headers.origin;
-      if (!origin) {
+      let origin = String(clientOrigin || req.headers.origin || '').trim();
+      if (!origin || origin === 'null') {
         const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'https');
         const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'www.aifinity-rpg.com';
         origin = `${proto}://${host}`;
       }
-      origin = String(origin).replace(/\/+$/, '');
+      if (!origin.startsWith('http://') && !origin.startsWith('https://')) {
+        origin = `https://${origin}`;
+      }
+      origin = origin.replace(/\/+$/, '');
+
       const amountInCents = Math.round(amount * 100);
+      const safeItemName = String(itemName || 'Market Purchase').replace(/[^\w\s\-\.\,\(\)]/gi, '').trim() || 'Market Purchase';
+      const safeUsername = String(username || 'Player').replace(/[^\w\s\-\.]/gi, '').trim() || 'Player';
 
       const session = await stripe.checkout.sessions.create({
         line_items: [{
           price_data: {
             currency: 'usd',
             product_data: {
-              name: `Aifinity: ${itemName || 'Market Purchase'}`,
+              name: `Aifinity: ${safeItemName}`,
               description: itemType === 'pack'
-                ? `Action Pack (${actionDelta || 0} Actions) for ${username || 'Player'}`
-                : `${itemName} Subscription for ${username || 'Player'}`
+                ? `Action Pack (${actionDelta || 0} Actions) for ${safeUsername}`
+                : `${safeItemName} Subscription for ${safeUsername}`
             },
             unit_amount: amountInCents
           },
@@ -84,8 +90,8 @@ async function startServer() {
         customer_email: userEmail && userEmail.includes('@') ? userEmail : undefined,
         metadata: {
           userId: String(userId || ''),
-          username: String(username || ''),
-          itemName: String(itemName || ''),
+          username: safeUsername,
+          itemName: safeItemName,
           itemType: String(itemType || ''),
           itemId: String(itemId || ''),
           actionDelta: String(actionDelta || 0),

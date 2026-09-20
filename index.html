@@ -47,12 +47,14 @@
 
         // SPA route recovery for static hosting / 404 fallbacks
         try {
-          var params = new URLSearchParams(window.location.search);
-          var redirectParam = params.get('redirect') || params.get('p') || params.get('route');
-          if (redirectParam) {
-            var decoded = decodeURIComponent(redirectParam);
-            if (decoded.toLowerCase().indexOf('welcome') !== -1) {
-              window.history.replaceState(null, '', '/welcome');
+          if (window.location && window.location.search) {
+            var params = new URLSearchParams(window.location.search);
+            var redirectParam = params.get('redirect') || params.get('p') || params.get('route');
+            if (redirectParam) {
+              var decoded = decodeURIComponent(redirectParam);
+              if (decoded.toLowerCase().indexOf('welcome') !== -1 && window.history && window.history.replaceState) {
+                window.history.replaceState({}, '', '/welcome');
+              }
             }
           }
         } catch (e) {

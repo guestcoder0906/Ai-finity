@@ -112,7 +112,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   }, [isOpen]);
 
   // Custom API Key input
-  const [customKeyInput, setCustomKeyInput] = useState(() => localStorage.getItem('aimud_apikey') || '');
+  const [customKeyInput, setCustomKeyInput] = useState(() => {
+    try {
+      return typeof window !== 'undefined' ? localStorage.getItem('aimud_apikey') || '' : '';
+    } catch {
+      return '';
+    }
+  });
   const [keySavedMessage, setKeySavedMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -188,9 +194,18 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setIsProcessingPayment(false);
         setProcessingMessage(null);
 
-        // Safely navigate to Stripe Checkout session
+        // Native link click simulation - completely safe across WebKit, Safari, Chrome and mobile
         try {
-          window.location.assign(data.url);
+          const a = document.createElement('a');
+          a.href = data.url;
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            if (document.body.contains(a)) {
+              document.body.removeChild(a);
+            }
+          }, 300);
         } catch {
           window.location.href = data.url;
         }
@@ -607,9 +622,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                             : 'Stripe: Active & Connected'}
                         </span>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
-                        Zero Simulation • Real Processing
-                      </span>
                     </div>
                   </div>
 
