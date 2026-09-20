@@ -20,6 +20,7 @@ import AdventuresModal from './components/AdventuresModal';
 import CommunityAdventuresModal from './components/CommunityAdventuresModal';
 import AccountModal from './components/AccountModal';
 import GoldenName from './components/GoldenName';
+import { LoadingScreen } from './components/LoadingScreen';
 import {
   UserProfile,
   subscribeToAuth,
@@ -113,6 +114,10 @@ function App() {
   const [authModalInitialTab, setAuthModalInitialTab] = useState<'login' | 'signup'>('signup');
   const [isGuestNameModalOpen, setIsGuestNameModalOpen] = useState(false);
 
+  // App initialization & full loading gate
+  const [isAppFullyLoaded, setIsAppFullyLoaded] = useState<boolean>(false);
+  const [authInitialized, setAuthInitialized] = useState<boolean>(false);
+
   // Guest welcome prompt state (prompt on first visit unless user set "Don't show again")
   const [isGuestWelcomeOpen, setIsGuestWelcomeOpen] = useState(() => {
     try {
@@ -173,9 +178,28 @@ function App() {
         setIsGuestWelcomeOpen(false);
         setIsActionLimitModalOpen(false);
       }
+      setAuthInitialized(true);
     });
     return () => unsubscribe();
   }, [guestId]);
+
+  // Mark full load completion once initial session and auth have settled
+  useEffect(() => {
+    if (authInitialized) {
+      const timer = setTimeout(() => {
+        setIsAppFullyLoaded(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [authInitialized]);
+
+  // Fallback timer to ensure loading screen dismisses even under slow/offline connections
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      setIsAppFullyLoaded(true);
+    }, 2500);
+    return () => clearTimeout(fallbackTimer);
+  }, []);
 
   // Synchronize actionStatus immediately whenever currentUser or guestId changes
   useEffect(() => {
@@ -779,6 +803,11 @@ function App() {
     }
     setIsResetModalOpen(false);
   };
+
+  // While application systems, auth, and state are initializing, display the loading screen
+  if (!isAppFullyLoaded) {
+    return <LoadingScreen statusText="INITIALIZING AIFINITY" />;
+  }
 
   if (currentPath === '/welcome') {
     return <WelcomePage onEnterGame={handleEnterGame} />;

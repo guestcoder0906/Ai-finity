@@ -30,6 +30,16 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #444;
       }
+
+      @keyframes aifinity-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes aifinity-bar {
+        0% { transform: translateX(-100%); width: 40%; }
+        50% { transform: translateX(50%); width: 70%; }
+        100% { transform: translateX(200%); width: 40%; }
+      }
     </style>
     <script>
       (function() {
@@ -64,7 +74,17 @@
     <link rel="stylesheet" href="/index.css">
   </head>
   <body class="bg-black text-gray-200 overflow-hidden">
-    <div id="root"></div>
+    <div id="root">
+      <div id="app-preloader" style="position: fixed; inset: 0; background-color: #0a0a0a; color: #d4d4d4; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99999;">
+        <div style="width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #262626; border-top-color: #f59e0b; animation: aifinity-spin 0.8s linear infinite; margin-bottom: 16px;"></div>
+        <div style="font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #e5e5e5; margin-bottom: 4px;">
+          AIFINITY
+        </div>
+        <div style="font-size: 12px; color: #737373;">
+          Loading...
+        </div>
+      </div>
+    </div>
   <script type="module" src="/index.tsx"></script>
 </body>
 </html>
