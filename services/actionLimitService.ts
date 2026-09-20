@@ -551,4 +551,47 @@ export class ActionLimitService {
     await this.activateSubscription(profile, tier);
     return profile;
   }
+
+  /**
+   * Cancels user's active subscription and reverts to 'free' tier
+   */
+  public static async cancelSubscription(
+    user: UserProfile | null,
+    guestId?: string
+  ): Promise<void> {
+    if (!user || !user.uid) {
+      throw new Error('Must be logged in to cancel subscription.');
+    }
+
+    const today = this.getTodayDateString();
+    const status = this.getActionStatus(user, guestId);
+    const isAdminOrMod = user.role === 'admin' || user.role === 'mod';
+
+    user.tier = 'free';
+    user.subscriptionExpiresAt = undefined;
+    if (!isAdminOrMod) {
+      user.canSaveMultipleAdventures = false;
+      user.canPostCommunityAdventures = false;
+      user.showGlowingName = false;
+    }
+
+    this.saveLocalState(user, guestId, {
+      tier: 'free',
+      actionCredits: user.actionCredits || 0,
+      dailyActionsUsed: status.dailyFreeUsed,
+      dailyActionsDate: today
+    });
+
+    await updateUserProfile(user.uid, {
+      tier: 'free',
+      subscriptionExpiresAt: null as any,
+      ...(!isAdminOrMod ? {
+        canSaveMultipleAdventures: false,
+        canPostCommunityAdventures: false,
+        showGlowingName: false
+      } : {})
+    });
+  }
 }
+
+export default ActionLimitService;

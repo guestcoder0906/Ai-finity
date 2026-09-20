@@ -14,7 +14,7 @@ import {
   grantAdventurePermissions,
   setGlowingNamePreference
 } from '../services/adminService';
-import { ActionStatus } from '../services/actionLimitService';
+import ActionLimitService, { ActionStatus } from '../services/actionLimitService';
 import GoldenName from './GoldenName';
 import {
   X,
@@ -58,6 +58,11 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [glowingEnabled, setGlowingEnabled] = useState<boolean>(
     currentUser?.showGlowingName !== false
   );
+
+  // Subscription cancellation state
+  const [cancelSubConfirm, setCancelSubConfirm] = useState(false);
+  const [cancelSubLoading, setCancelSubLoading] = useState(false);
+  const [cancelSubMessage, setCancelSubMessage] = useState<string | null>(null);
 
   // Staff search & target state
   const [userQuery, setUserQuery] = useState('');
@@ -109,6 +114,32 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     await setGlowingNamePreference(currentUser, next);
     const updated = { ...currentUser, showGlowingName: next };
     onProfileUpdated(updated);
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!currentUser) return;
+    setCancelSubLoading(true);
+    setCancelSubMessage(null);
+    try {
+      await ActionLimitService.cancelSubscription(currentUser);
+      const updatedUser: UserProfile = {
+        ...currentUser,
+        tier: 'free',
+        subscriptionExpiresAt: undefined,
+        ...(currentUser.role !== 'admin' && currentUser.role !== 'mod' ? {
+          canSaveMultipleAdventures: false,
+          canPostCommunityAdventures: false,
+          showGlowingName: false
+        } : {})
+      };
+      onProfileUpdated(updatedUser);
+      setCancelSubConfirm(false);
+      setCancelSubMessage('Your subscription has been cancelled. Your account has returned to the Free Tier.');
+    } catch (err: any) {
+      console.error('Failed to cancel subscription:', err);
+    } finally {
+      setCancelSubLoading(false);
+    }
   };
 
   const handleGrantActions = async () => {
@@ -285,12 +316,12 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   };
 
   return (
-    <div id="account-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 font-mono">
-      <div className="bg-neutral-900 border border-neutral-700 w-full max-w-2xl max-h-[90vh] rounded-xl shadow-2xl flex flex-col overflow-hidden relative">
+    <div id="account-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 font-mono">
+      <div className="bg-neutral-900 border border-neutral-700 w-full max-w-3xl max-h-[92vh] sm:max-h-[88vh] rounded-xl shadow-2xl flex flex-col overflow-hidden relative">
         {/* Modal Top Header */}
-        <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/80 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${
+        <div className="px-4 sm:px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/80 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0 ${
               isAdmin
                 ? 'bg-sky-950 border border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(56,189,248,0.5)]'
                 : isMod
@@ -299,8 +330,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
             }`}>
               {isAdmin ? <Sparkles size={16} /> : isMod ? <Shield size={16} /> : <User size={16} />}
             </div>
-            <div>
-              <h2 className="text-sm font-bold text-white tracking-wider flex items-center gap-2">
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-white tracking-wider flex items-center gap-2 flex-wrap">
                 <span>ACCOUNT DASHBOARD</span>
                 {isAdmin && (
                   <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-400/80 text-cyan-300 font-extrabold uppercase shadow-[0_0_8px_rgba(56,189,248,0.4)]">
@@ -313,14 +344,14 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                   </span>
                 )}
               </h2>
-              <p className="text-[11px] text-neutral-400">Manage profile settings, permissions, and staff tools</p>
+              <p className="text-[11px] text-neutral-400 truncate">Manage profile settings, permissions, and staff tools</p>
             </div>
           </div>
 
           <button
             id="close-account-modal-btn"
             onClick={onClose}
-            className="p-1 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+            className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer shrink-0 ml-2"
             title="Close"
           >
             <X size={18} />
@@ -329,7 +360,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
         {/* Tab Navigation if staff */}
         {isStaff && (
-          <div className="flex border-b border-neutral-800 bg-neutral-950 px-6 shrink-0">
+          <div className="flex border-b border-neutral-800 bg-neutral-950 px-4 sm:px-6 shrink-0">
             <button
               id="account-tab-profile"
               type="button"
@@ -362,14 +393,22 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         )}
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-5 flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto overflow-x-hidden space-y-5 flex-1">
           {activeTab === 'profile' ? (
             <>
+              {/* Status message after cancellation */}
+              {cancelSubMessage && (
+                <div className="p-3 bg-emerald-950/80 border border-emerald-700 text-emerald-300 rounded-xl text-xs flex items-center gap-2">
+                  <CheckCircle2 size={16} className="shrink-0" />
+                  <span>{cancelSubMessage}</span>
+                </div>
+              )}
+
               {/* Profile Card */}
               <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
+                <div className="min-w-0">
                   <div className="text-[11px] text-neutral-500 uppercase tracking-wider mb-1">Signed in as</div>
-                  <div className="text-base font-bold text-white flex items-center gap-2">
+                  <div className="text-base font-bold text-white flex items-center gap-2 flex-wrap">
                     <GoldenName
                       name={currentUser.username}
                       role={currentUser.role}
@@ -378,10 +417,10 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                       isGolden={currentUser.tier === 'legendary'}
                     />
                   </div>
-                  <div className="text-xs text-neutral-400 mt-0.5">{currentUser.email || 'No email attached'}</div>
+                  <div className="text-xs text-neutral-400 mt-0.5 truncate">{currentUser.email || 'No email attached'}</div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <div className={`px-2.5 py-1 rounded text-xs border ${
                     currentUser.tier === 'celestial'
                       ? 'bg-gradient-to-r from-sky-950 to-purple-950 border-cyan-400/60 text-cyan-200 shadow-[0_0_8px_rgba(56,189,248,0.4)]'
@@ -410,14 +449,14 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
               {/* Active Monthly Membership Card if Subscribed */}
               {(currentUser.tier === 'adventurer' || currentUser.tier === 'legendary' || currentUser.tier === 'celestial') && (
-                <div className={`p-4 rounded-xl border space-y-2.5 ${
+                <div className={`p-4 rounded-xl border space-y-3 ${
                   currentUser.tier === 'celestial'
                     ? 'bg-gradient-to-r from-sky-950/60 via-purple-950/50 to-indigo-950/60 border-cyan-400/60 shadow-[0_0_15px_rgba(56,189,248,0.25)]'
                     : currentUser.tier === 'legendary'
                     ? 'bg-gradient-to-r from-amber-950/50 to-yellow-950/40 border-amber-500/60'
                     : 'bg-blue-950/40 border-blue-500/50'
                 }`}>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <Crown size={16} className={
                         currentUser.tier === 'celestial' ? 'text-cyan-300' : currentUser.tier === 'legendary' ? 'text-amber-400' : 'text-blue-400'
@@ -440,9 +479,47 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                   </p>
 
                   {currentUser.subscriptionExpiresAt && (
-                    <div className="text-[10px] text-neutral-400 font-mono pt-1 border-t border-neutral-800/80 flex items-center justify-between">
+                    <div className="text-[10px] text-neutral-400 font-mono pt-1 border-t border-neutral-800/80 flex items-center justify-between flex-wrap gap-1">
                       <span>Next renewal / expiry:</span>
                       <span className="text-neutral-200">{new Date(currentUser.subscriptionExpiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    </div>
+                  )}
+
+                  {/* Cancel Subscription Option */}
+                  {cancelSubConfirm ? (
+                    <div className="p-3 bg-red-950/80 border border-red-800 rounded-lg space-y-2">
+                      <p className="text-xs text-red-200">
+                        Are you sure you want to cancel your <strong>{currentUser.tier.toUpperCase()}</strong> membership? You will return to the Free Tier.
+                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          id="confirm-cancel-sub-btn"
+                          type="button"
+                          disabled={cancelSubLoading}
+                          onClick={handleCancelSubscription}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded text-xs cursor-pointer transition-colors"
+                        >
+                          {cancelSubLoading ? 'Cancelling...' : 'Confirm Cancellation'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCancelSubConfirm(false)}
+                          className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded text-xs cursor-pointer"
+                        >
+                          Keep Membership
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pt-2 border-t border-neutral-800/80 flex justify-end">
+                      <button
+                        id="cancel-subscription-btn"
+                        type="button"
+                        onClick={() => setCancelSubConfirm(true)}
+                        className="text-xs text-red-400 hover:text-red-300 hover:underline cursor-pointer font-semibold py-1"
+                      >
+                        Cancel Subscription
+                      </button>
                     </div>
                   )}
                 </div>
@@ -454,7 +531,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                   ? 'bg-gradient-to-r from-sky-950/40 via-indigo-950/30 to-purple-950/40 border-cyan-500/40 shadow-[0_0_15px_rgba(56,189,248,0.15)]'
                   : 'bg-neutral-950 border-neutral-800'
               }`}>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
                       <Zap size={14} />
@@ -494,7 +571,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs">
                     <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
                       <div className="text-neutral-400 text-[10px]">Daily Free (20/day)</div>
                       <div className="text-sm font-bold text-emerald-400 mt-0.5">
@@ -524,15 +601,15 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                   <span>PERMANENT ADVENTURE PERMISSIONS</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Bookmark size={15} className="text-blue-400" />
-                      <div>
-                        <div className="font-semibold text-neutral-200">Save Multiple Adventures</div>
-                        <div className="text-[10px] text-neutral-500">Store and load multiple story saves</div>
+                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Bookmark size={15} className="text-blue-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-neutral-200 truncate">Save Multiple Adventures</div>
+                        <div className="text-[10px] text-neutral-500 truncate">Store and load multiple story saves</div>
                       </div>
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
                       actionStatus.canSaveMultipleAdventures
                         ? 'bg-emerald-950 border border-emerald-500/50 text-emerald-300'
                         : 'bg-neutral-800 text-neutral-400'
@@ -541,15 +618,15 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </span>
                   </div>
 
-                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Share2 size={15} className="text-purple-400" />
-                      <div>
-                        <div className="font-semibold text-neutral-200">Post Community Adventures</div>
-                        <div className="text-[10px] text-neutral-500">Publish adventures for all players</div>
+                  <div className="p-3 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Share2 size={15} className="text-purple-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-neutral-200 truncate">Post Community Adventures</div>
+                        <div className="text-[10px] text-neutral-500 truncate">Publish adventures for all players</div>
                       </div>
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
                       actionStatus.canPostCommunityAdventures
                         ? 'bg-emerald-950 border border-emerald-500/50 text-emerald-300'
                         : 'bg-neutral-800 text-neutral-400'
@@ -563,13 +640,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               {/* Glowing Name Toggle (Staff Only) */}
               {isStaff && (
                 <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
                       <div className="text-xs font-bold text-white flex items-center gap-2">
                         {isAdmin ? <Sparkles size={14} className="text-cyan-300" /> : <Shield size={14} className="text-amber-300" />}
                         <span>{isAdmin ? 'CELESTIAL GLOWING NAME' : 'GOLDEN GLOWING NAME'}</span>
                       </div>
-                      <p className="text-[11px] text-neutral-400 mt-0.5">
+                      <p className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
                         Highlight your name with an atmospheric glow across multiplayer, lobbies, chat, and game pages. (Your {isAdmin ? 'ADMIN' : 'MOD'} tag remains visible).
                       </p>
                     </div>
@@ -578,7 +655,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                       id="toggle-glowing-name-btn"
                       type="button"
                       onClick={handleToggleGlowing}
-                      className="text-neutral-300 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                      className="text-neutral-300 hover:text-white p-1 rounded transition-colors cursor-pointer shrink-0"
                       title={glowingEnabled ? 'Turn Off Glowing Name' : 'Turn On Glowing Name'}
                     >
                       {glowingEnabled ? (
@@ -627,8 +704,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
                     : 'bg-red-950/80 border-red-700 text-red-300'
                 }`}>
-                  {feedbackMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                  <span>{feedbackMessage.text}</span>
+                  {feedbackMessage.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+                  <span className="min-w-0 break-words">{feedbackMessage.text}</span>
                 </div>
               )}
 
@@ -653,7 +730,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
 
                 {/* User quick list */}
-                <div className="max-h-40 overflow-y-auto border border-neutral-800 rounded-lg divide-y divide-neutral-850 bg-black/50">
+                <div className="max-h-44 overflow-y-auto border border-neutral-800 rounded-lg divide-y divide-neutral-850 bg-black/50">
                   {loadingUsers ? (
                     <div className="p-3 text-center text-xs text-neutral-500">Loading registered players...</div>
                   ) : userList.length === 0 ? (
@@ -667,13 +744,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                           setSelectedUser(u);
                           setFeedbackMessage(null);
                         }}
-                        className={`w-full px-3 py-2 text-left flex items-center justify-between text-xs transition-colors cursor-pointer ${
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between text-xs transition-colors cursor-pointer gap-2 ${
                           selectedUser?.uid === u.uid
                             ? 'bg-blue-950/60 border-l-2 border-blue-500'
                             : 'hover:bg-neutral-800/50'
                         }`}
                       >
-                        <div className="flex items-center gap-2 truncate">
+                        <div className="flex items-center gap-2 min-w-0 truncate">
                           <GoldenName name={u.username} role={u.role} showGlowingName={u.showGlowingName} />
                           <span className="text-[11px] text-neutral-500 truncate">({u.email || 'No email'})</span>
                         </div>
@@ -697,20 +774,20 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               {/* Selected User Management Panel */}
               {selectedUser ? (
                 <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 space-y-4">
-                  <div className="border-b border-neutral-800 pb-3 flex items-center justify-between">
-                    <div>
+                  <div className="border-b border-neutral-800 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0">
                       <div className="text-xs text-neutral-400">Selected Player:</div>
-                      <div className="text-sm font-bold text-white flex items-center gap-2 mt-0.5">
+                      <div className="text-sm font-bold text-white flex items-center gap-2 mt-0.5 flex-wrap">
                         <GoldenName
                           name={selectedUser.username}
                           role={selectedUser.role}
                           showGlowingName={selectedUser.showGlowingName}
                         />
-                        <span className="text-xs text-neutral-500 font-normal">({selectedUser.email || selectedUser.uid})</span>
+                        <span className="text-xs text-neutral-500 font-normal truncate">({selectedUser.email || selectedUser.uid})</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
                       <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-[10px] uppercase font-semibold text-neutral-300">
                         Role: {selectedUser.role || 'user'}
                       </span>
@@ -728,7 +805,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     <label className="block text-xs font-semibold text-neutral-300">
                       Grant Permanent Free Added Actions
                     </label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <input
                         id="actions-to-grant-input"
                         type="number"
@@ -736,9 +813,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                         max={isAdmin ? 100000 : 500}
                         value={actionsToGrant}
                         onChange={(e) => setActionsToGrant(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-28 bg-black border border-neutral-700 px-3 py-1.5 text-xs text-white rounded-lg focus:border-blue-500 focus:outline-none"
+                        className="w-24 sm:w-28 bg-black border border-neutral-700 px-3 py-1.5 text-xs text-white rounded-lg focus:border-blue-500 focus:outline-none shrink-0"
                       />
-                      <div className="flex gap-1.5">
+                      <div className="flex flex-wrap gap-1.5">
                         <button
                           type="button"
                           onClick={() => setActionsToGrant(50)}
@@ -782,7 +859,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                         type="button"
                         disabled={actionLoading}
                         onClick={handleGrantActions}
-                        className="ml-auto px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs tracking-wider transition-colors cursor-pointer shadow"
+                        className="w-full sm:w-auto sm:ml-auto px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs tracking-wider transition-colors cursor-pointer shadow"
                       >
                         {actionLoading ? 'GRANTING...' : 'GRANT ACTIONS'}
                       </button>
@@ -841,7 +918,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                         )
                       )}
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           id="reset-user-actions-btn"
                           type="button"
