@@ -55,7 +55,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'packs' | 'subscriptions' | 'apikey'>(initialTab);
   const [selectedItem, setSelectedItem] = useState<{ type: 'pack' | 'tier'; data: ActionPack | SubscriptionTier } | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'stripe_checkout' | 'google_pay' | 'card'>('stripe_checkout');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe_checkout' | 'card'>('stripe_checkout');
   const [checkoutSessionUrl, setCheckoutSessionUrl] = useState<string | null>(null);
   const [processingMessage, setProcessingMessage] = useState<string | null>(null);
   const [cardNumber, setCardNumber] = useState('');
@@ -324,50 +324,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       } catch (err: any) {
         console.error('Stripe card charge error:', err);
         setPaymentError(err.message || 'Payment processing failed. Please check your card information.');
-        setIsProcessingPayment(false);
-        setProcessingMessage(null);
-        return;
-      }
-    }
-
-    // 3. GOOGLE PAY FLOW (Via official Stripe Checkout supporting Google Pay with zero OR_BIBED_11 errors)
-    if (paymentMethod === 'google_pay') {
-      setIsProcessingPayment(true);
-      setProcessingMessage('Launching Google Pay via Stripe...');
-
-      try {
-        const response = await fetch('/api/stripe/create-checkout-session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: selectedItem.data.price,
-            itemName: selectedItem.data.name,
-            itemType: selectedItem.type,
-            itemId: selectedItem.data.id,
-            actionDelta: selectedItem.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0,
-            userId: currentUser.uid,
-            userEmail: currentUser.email || '',
-            username: currentUser.username || ''
-          })
-        });
-
-        const data = await response.json();
-        if (!response.ok || !data.url) {
-          throw new Error(data.message || 'Failed to initialize Google Pay checkout.');
-        }
-
-        setCheckoutSessionUrl(data.url);
-        setIsProcessingPayment(false);
-        setProcessingMessage(null);
-
-        const checkoutWindow = window.open(data.url, '_blank');
-        if (!checkoutWindow) {
-          window.location.href = data.url;
-        }
-        return;
-      } catch (err: any) {
-        console.error('Google Pay checkout error:', err);
-        setPaymentError(err.message || 'Google Pay checkout could not be opened. Please check Stripe configuration.');
         setIsProcessingPayment(false);
         setProcessingMessage(null);
         return;
@@ -660,12 +616,12 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     )}
                   </div>
 
-                  {/* Payment Method Selector: Stripe 1-Click, Google Pay, Card */}
+                  {/* Payment Method Selector: Stripe 1-Click, Card */}
                   <div>
                     <label className="text-[11px] text-neutral-400 font-mono block mb-1.5">
                       Select Payment Method:
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2.5">
                       {/* Stripe Checkout */}
                       <button
                         type="button"
@@ -679,25 +635,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                             : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
                         }`}
                       >
-                        <span className="font-black text-xs text-emerald-400">Stripe</span>
-                        <span className="text-[9px] text-neutral-300">1-Click Checkout</span>
-                      </button>
-
-                      {/* Google Pay */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPaymentMethod('google_pay');
-                          setCardError(null);
-                        }}
-                        className={`p-2.5 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
-                          paymentMethod === 'google_pay'
-                            ? 'border-blue-400 bg-blue-950/50 text-white shadow-sm ring-1 ring-blue-500/50'
-                            : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'
-                        }`}
-                      >
-                        <span className="font-black text-xs text-white">G Pay</span>
-                        <span className="text-[9px] text-neutral-300">Google Pay</span>
+                        <span className="font-black text-xs text-emerald-400">Stripe Checkout</span>
+                        <span className="text-[9px] text-neutral-300">1-Click (Cards, GPay, Apple Pay)</span>
                       </button>
 
                       {/* Direct Card */}
@@ -714,7 +653,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         }`}
                       >
                         <CreditCard size={15} />
-                        <span className="text-[9px] font-medium text-neutral-300">Credit Card</span>
+                        <span className="text-[9px] font-medium text-neutral-300">Direct Credit Card</span>
                       </button>
                     </div>
                   </div>
@@ -810,8 +749,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       className={`px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all cursor-pointer shadow-lg ${
                         paymentMethod === 'stripe_checkout'
                           ? 'bg-emerald-500 hover:bg-emerald-400 text-neutral-950'
-                          : paymentMethod === 'google_pay'
-                          ? 'bg-white text-black hover:bg-neutral-100'
                           : 'bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950'
                       } ${isProcessingPayment ? 'opacity-70 cursor-wait' : ''}`}
                     >
@@ -819,8 +756,6 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         <span>{processingMessage || 'Processing Order...'}</span>
                       ) : paymentMethod === 'stripe_checkout' ? (
                         <>Checkout with <span className="font-extrabold text-neutral-900">Stripe</span> (${selectedItem.data.price.toFixed(2)})</>
-                      ) : paymentMethod === 'google_pay' ? (
-                        <>Pay with <span className="font-black">G Pay</span> (${selectedItem.data.price.toFixed(2)})</>
                       ) : (
                         <>Pay with Card (${selectedItem.data.price.toFixed(2)})</>
                       )}
