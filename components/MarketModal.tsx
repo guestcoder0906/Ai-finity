@@ -193,18 +193,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         setIsProcessingPayment(false);
         setProcessingMessage(null);
 
-        // Native link click simulation - completely safe across WebKit, Safari, Chrome and mobile
+        // Redirect cleanly to official Stripe checkout
         try {
-          const a = document.createElement('a');
-          a.href = data.url;
-          a.rel = 'noopener noreferrer';
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            if (document.body.contains(a)) {
-              document.body.removeChild(a);
-            }
-          }, 300);
+          window.location.assign(data.url);
         } catch {
           window.location.href = data.url;
         }
@@ -684,9 +675,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                         <input
                           type="text"
                           maxLength={19}
-                          placeholder="•••• •••• •••• ••••"
+                          placeholder="4242 4242 4242 4242"
                           value={cardNumber}
-                          onChange={(e) => setCardNumber(e.target.value)}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '').substring(0, 16);
+                            const formatted = raw.match(/.{1,4}/g)?.join(' ') || raw;
+                            setCardNumber(formatted);
+                          }}
                           className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                         />
                       </div>
@@ -696,9 +691,15 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                           <input
                             type="text"
                             maxLength={5}
-                            placeholder="MM / YY"
+                            placeholder="MM/YY"
                             value={cardExp}
-                            onChange={(e) => setCardExp(e.target.value)}
+                            onChange={(e) => {
+                              let v = e.target.value.replace(/\D/g, '').substring(0, 4);
+                              if (v.length >= 3) {
+                                v = v.substring(0, 2) + '/' + v.substring(2);
+                              }
+                              setCardExp(v);
+                            }}
                             className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                           />
                         </div>
@@ -709,14 +710,14 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                             maxLength={4}
                             placeholder="123"
                             value={cardCvc}
-                            onChange={(e) => setCardCvc(e.target.value)}
+                            onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, '').substring(0, 4))}
                             className="w-full bg-black border border-neutral-700 rounded p-2 text-xs text-white font-mono focus:border-amber-500 focus:outline-none"
                           />
                         </div>
                       </div>
                       <div className="text-[10px] text-neutral-400 flex items-center gap-1 pt-1">
                         <Lock size={11} className="text-emerald-400 shrink-0" />
-                        <span>Tokenized securely with Stripe.js directly to Stripe servers</span>
+                        <span>Encrypted & processed securely with Stripe</span>
                       </div>
                     </div>
                   )}
