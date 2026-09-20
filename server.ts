@@ -136,7 +136,7 @@ async function startServer() {
             userId: String(userId || ''),
             userEmail: String(userEmail || ''),
             username: safeUsername,
-            paid: true,
+            paid: false,
             createdAt: new Date().toISOString(),
             paymentMethod: 'Stripe Checkout'
           });
@@ -340,14 +340,6 @@ async function startServer() {
       const sessions = await stripe.checkout.sessions.list({ limit: 100 });
       const completedPurchases: any[] = [];
       const seenIds = new Set<string>();
-
-      // Admin / creator account detection (Chloe: chloe.a.alba.1@gmail.com, Chloe Alba)
-      const isChloeUser =
-        (email && (email.includes('chloe.a.alba.1') || email.includes('chloe'))) ||
-        (username && username === 'chloe') ||
-        userId === '9QroiW9M4OMEyFwK3W6B0oT1xOu2' ||
-        userId === 'DutjeBlM9cU1kvf2O2LIJKZdQ0K2' ||
-        userId === 'nvrwShet4Tdh3Xp4vwBrTrRsa1J3';
 
       for (const s of sessions.data) {
         const isPaid = s.payment_status === 'paid' || s.status === 'complete';

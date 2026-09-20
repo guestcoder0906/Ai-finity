@@ -22,7 +22,8 @@ import AccountModal from './components/AccountModal';
 import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
-import { auth } from './services/firebase';
+import { auth, db } from './services/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 import {
   UserProfile,
   subscribeToAuth,
@@ -32,7 +33,9 @@ import {
   recordPaymentTransaction,
   PaymentTransactionRecord,
   getLocalTransactions,
-  getUserProfile
+  getUserTransactions,
+  getUserProfile,
+  enrichUserProfileWithDefaults
 } from './services/authService';
 import { syncUserPurchasesFromStripe } from './services/stripeCheckoutService';
 import { ActionLimitService, ActionStatus } from './services/actionLimitService';
@@ -166,6 +169,13 @@ function App() {
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [mobilePanelTab, setMobilePanelTab] = useState<'files' | 'map'>('files');
 
+  const [stripeReturnMessage, setStripeReturnMessage] = useState<{
+    type: 'success' | 'info' | 'error';
+    text: string;
+  } | null>(null);
+  const [verifiedReceiptTransaction, setVerifiedReceiptTransaction] = useState<PaymentTransactionRecord | null>(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+
   // Dynamically keep app height strictly bounded to mobile visual viewport (handles address bar and virtual keyboard)
   useEffect(() => {
     const updateAppHeight = () => {
@@ -193,6 +203,204 @@ function App() {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
   }, [currentUser, guestId]);
 
+  const isSyncingPurchasesRef = useRef(false);
+
+  // Unified automatic purchase sync engine:
+  // Strictly attributes completed purchases ONLY to the exact account that bought them.
+  // Automatically detects completed payments via tab focus, visibilitychange, fast polling,
+  // and Firestore real-time snapshots — completely eliminating the need for website code rebuilds.
+  const syncUserPurchases = useCallback(async (
+    targetUser?: UserProfile | null
+  ) => {
+    const user = targetUser || currentUser;
+    if (!user || !user.uid || isSyncingPurchasesRef.current) return;
+    isSyncingPurchasesRef.current = true;
+
+    try {
+      const syncRes = await syncUserPurchasesFromStripe(
+        user.uid,
+        user.email || undefined,
+        user.username || undefined
+      );
+
+      if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
+        // Collect known transactions from localStorage
+        const localTx = getLocalTransactions(user.uid);
+        const knownIds = new Set(localTx.map((t) => t.id));
+
+        // Also cross-reference Firestore transactions so cross-device sync is completely seamless
+        try {
+          const firestoreTx = await getUserTransactions(user.uid);
+          firestoreTx.forEach((t) => knownIds.add(t.id));
+        } catch (e) {
+          // ignore
+        }
+
+        let totalNewCredits = 0;
+        let highestTier: string | null = null;
+        let newlyFoundPurchases = false;
+        let latestReceipt: PaymentTransactionRecord | null = null;
+
+        for (const p of syncRes.purchases) {
+          if (!knownIds.has(p.id)) {
+            newlyFoundPurchases = true;
+            knownIds.add(p.id);
+
+            if (p.itemType === 'pack' && p.actionDelta > 0) {
+              totalNewCredits += p.actionDelta;
+            } else if (p.itemType === 'tier' && p.itemId) {
+              highestTier = p.itemId;
+            }
+
+            const tx: PaymentTransactionRecord = {
+              id: p.id,
+              amount: p.amount,
+              itemName: p.itemName,
+              itemType: p.itemType,
+              paymentMethod: 'Stripe Checkout',
+              status: 'completed',
+              createdAt: p.createdAt,
+              customerName: p.customerName || p.username || user.username || 'Adventurer',
+              email: p.email || user.email || undefined,
+              attachedUsername: p.username || user.username || 'Adventurer',
+              recipient: p.username || user.username || user.email || 'Adventurer',
+              notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
+              actionDelta: p.actionDelta,
+              newTier: p.itemType === 'tier' ? p.itemId : undefined,
+              userId: p.userId || user.uid
+            };
+
+            await recordPaymentTransaction(user.uid, tx);
+            latestReceipt = tx;
+          }
+        }
+
+        if (newlyFoundPurchases) {
+          const updated = await ActionLimitService.applyRestoredPurchases(
+            user,
+            totalNewCredits,
+            highestTier as any,
+            guestId
+          );
+          setCurrentUser({ ...updated });
+          setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
+
+          if (latestReceipt) {
+            setVerifiedReceiptTransaction(latestReceipt);
+            setIsReceiptModalOpen(true);
+          }
+
+          setStripeReturnMessage({
+            type: 'success',
+            text: `🎉 Purchase Confirmed! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to ${user.username}'s account.`
+          });
+
+          // Cross-tab broadcast
+          try {
+            localStorage.setItem(
+              'aifinity_payment_sync_event',
+              JSON.stringify({ uid: user.uid, time: Date.now() })
+            );
+          } catch (e) {}
+
+          // Clear active checkout markers
+          try {
+            sessionStorage.removeItem('aifinity_active_stripe_checkout');
+            localStorage.removeItem('aifinity_active_stripe_checkout');
+            sessionStorage.removeItem('aifinity_pending_checkout');
+            localStorage.removeItem('aifinity_pending_checkout');
+          } catch (e) {}
+        }
+      }
+    } catch (syncErr) {
+      console.warn('Auto sync purchases failed:', syncErr);
+    } finally {
+      isSyncingPurchasesRef.current = false;
+    }
+  }, [currentUser, guestId]);
+
+  // Real-time Firestore user profile listener
+  // Automatically syncs whenever actions, credits, or tier change in the database
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    const uid = currentUser.uid;
+    const userDocRef = doc(db, 'users', uid);
+
+    const unsub = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as UserProfile;
+          const enriched = enrichUserProfileWithDefaults(data);
+          setCurrentUser((prev) => {
+            if (!prev || prev.uid !== uid) return prev;
+            if (
+              prev.actionCredits !== enriched.actionCredits ||
+              prev.tier !== enriched.tier ||
+              prev.dailyActionsUsed !== enriched.dailyActionsUsed ||
+              prev.role !== enriched.role ||
+              prev.hasInfiniteActions !== enriched.hasInfiniteActions
+            ) {
+              setActionStatus(ActionLimitService.getActionStatus(enriched, guestId));
+              return { ...prev, ...enriched };
+            }
+            return prev;
+          });
+        }
+      },
+      (error) => {
+        console.warn('Firestore user profile onSnapshot error:', error);
+      }
+    );
+
+    return () => unsub();
+  }, [currentUser?.uid, guestId]);
+
+  // Immediate sync on tab return or window focus (e.g. after customer pays in Stripe tab)
+  useEffect(() => {
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible' && currentUser?.uid) {
+        syncUserPurchases(currentUser);
+      }
+    };
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+    return () => {
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+    };
+  }, [currentUser, syncUserPurchases]);
+
+  // Automatic high-frequency poller for active checkout + regular background heartbeat
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+
+    // Fast polling (every 2s) when a Stripe checkout was initiated recently
+    const fastInterval = setInterval(() => {
+      try {
+        const raw =
+          sessionStorage.getItem('aifinity_active_stripe_checkout') ||
+          localStorage.getItem('aifinity_active_stripe_checkout');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Date.now() - (parsed.startedAt || 0) < 15 * 60 * 1000) {
+            syncUserPurchases(currentUser);
+          }
+        }
+      } catch (e) {}
+    }, 2000);
+
+    // Regular background heartbeat every 8s while logged in
+    const heartbeatInterval = setInterval(() => {
+      syncUserPurchases(currentUser);
+    }, 8000);
+
+    return () => {
+      clearInterval(fastInterval);
+      clearInterval(heartbeatInterval);
+    };
+  }, [currentUser, syncUserPurchases]);
+
   // Listen to Firebase Auth state for automatic persistent login and purchase fulfillment
   useEffect(() => {
     const handleStorageEvent = (e: StorageEvent) => {
@@ -217,70 +425,8 @@ function App() {
         setIsGuestWelcomeOpen(false);
         setIsActionLimitModalOpen(false);
 
-        // Auto-sync completed Stripe purchases for logged-in user
-        try {
-          const syncRes = await syncUserPurchasesFromStripe(
-            user.uid,
-            user.email || undefined,
-            user.username || undefined
-          );
-          if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
-            const existingTx = getLocalTransactions(user.uid);
-            const existingIds = new Set(existingTx.map((t) => t.id));
-
-            let totalNewCredits = 0;
-            let highestTier: string | null = null;
-            let hasNewPurchases = false;
-
-            for (const p of syncRes.purchases) {
-              if (!existingIds.has(p.id)) {
-                hasNewPurchases = true;
-                if (p.itemType === 'pack' && p.actionDelta > 0) {
-                  totalNewCredits += p.actionDelta;
-                } else if (p.itemType === 'tier' && p.itemId) {
-                  highestTier = p.itemId;
-                }
-
-                const tx: PaymentTransactionRecord = {
-                  id: p.id,
-                  amount: p.amount,
-                  itemName: p.itemName,
-                  itemType: p.itemType,
-                  paymentMethod: 'Stripe Checkout',
-                  status: 'completed',
-                  createdAt: p.createdAt,
-                  customerName: p.customerName || p.username || user.username || 'Adventurer',
-                  email: p.email || user.email || undefined,
-                  attachedUsername: p.username || user.username || 'Adventurer',
-                  recipient: p.username || user.username || user.email || 'Adventurer',
-                  notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
-                  actionDelta: p.actionDelta,
-                  newTier: p.itemType === 'tier' ? p.itemId : undefined,
-                  userId: p.userId || user.uid
-                };
-                await recordPaymentTransaction(user.uid, tx);
-                existingIds.add(p.id);
-              }
-            }
-
-            if (hasNewPurchases) {
-              const updated = await ActionLimitService.applyRestoredPurchases(
-                user,
-                totalNewCredits,
-                highestTier as any,
-                guestId
-              );
-              setCurrentUser({ ...updated });
-              setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
-              setStripeReturnMessage({
-                type: 'success',
-                text: `🎉 Stripe Purchases Restored! Added +${totalNewCredits} actions${highestTier ? ` & activated ${highestTier} tier` : ''} to your account.`
-              });
-            }
-          }
-        } catch (syncErr) {
-          console.warn('Auto sync purchases on login failed:', syncErr);
-        }
+        // Immediately auto-sync Stripe purchases for this specific logged-in user
+        await syncUserPurchases(user);
       }
       setAuthInitialized(true);
     });
@@ -288,7 +434,7 @@ function App() {
       window.removeEventListener('storage', handleStorageEvent);
       unsubscribe();
     };
-  }, [guestId]);
+  }, [guestId, syncUserPurchases]);
 
   // Mark full load completion once initial session and auth have settled
   useEffect(() => {
@@ -374,13 +520,6 @@ function App() {
     }
     return '/';
   });
-
-  const [stripeReturnMessage, setStripeReturnMessage] = useState<{
-    type: 'success' | 'info' | 'error';
-    text: string;
-  } | null>(null);
-  const [verifiedReceiptTransaction, setVerifiedReceiptTransaction] = useState<PaymentTransactionRecord | null>(null);
-  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
 
   // Catch returns from Stripe Checkout sessions
   useEffect(() => {

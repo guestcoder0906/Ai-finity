@@ -164,7 +164,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               paymentMethod: 'Stripe Checkout',
               status: 'completed',
               createdAt: p.createdAt,
-              customerName: p.customerName || 'Chloe Alba',
+              customerName: p.customerName || p.username || currentUser.username || 'Adventurer',
               email: p.email || currentUser.email || undefined,
               attachedUsername: p.username || currentUser.username || 'Adventurer',
               recipient: p.username || currentUser.username || currentUser.email || 'Adventurer',
@@ -397,6 +397,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           setWaitingSessionId(result.sessionId);
           setIsProcessingPayment(true);
           setProcessingMessage('Stripe Checkout window opened. Complete payment to receive your items automatically...');
+
+          try {
+            const checkoutMeta = {
+              sessionId: result.sessionId,
+              userId: currentUser?.uid,
+              username: currentUser?.username,
+              startedAt: Date.now()
+            };
+            sessionStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
+            localStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
+          } catch (e) {}
 
           // Open Stripe checkout in window / new tab
           const isIframe = typeof window !== 'undefined' && window.self !== window.top;
