@@ -15,7 +15,10 @@ import {
   UserPlus,
   AlertCircle,
   Copy,
-  Check
+  Check,
+  Receipt as ReceiptIcon,
+  FileText,
+  Printer
 } from 'lucide-react';
 import {
   ACTION_PACKS,
@@ -25,8 +28,10 @@ import {
   ActionLimitService,
   ActionStatus
 } from '../services/actionLimitService';
-import { UserProfile, recordPaymentTransaction, isDefaultAdmin } from '../services/authService';
+import { UserProfile, recordPaymentTransaction, isDefaultAdmin, PaymentTransactionRecord } from '../services/authService';
 import { createRealStripeCheckoutSession } from '../services/stripeCheckoutService';
+import { ReceiptModal } from './ReceiptModal';
+import { ReceiptsList } from './ReceiptsList';
 
 interface MarketModalProps {
   isOpen: boolean;
@@ -35,7 +40,7 @@ interface MarketModalProps {
   actionStatus?: ActionStatus;
   onStatusUpdated: () => void;
   onProfileUpdated?: (updatedUser: UserProfile) => void;
-  initialTab?: 'packs' | 'subscriptions' | 'apikey';
+  initialTab?: 'packs' | 'subscriptions' | 'apikey' | 'receipts';
   onOpenAuth?: () => void;
   guestId?: string;
 }
@@ -55,7 +60,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   const isGuest = !currentUser;
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
 
-  const [activeTab, setActiveTab] = useState<'packs' | 'subscriptions' | 'apikey'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'packs' | 'subscriptions' | 'apikey' | 'receipts'>(initialTab);
+  const [selectedReceiptForInvoice, setSelectedReceiptForInvoice] = useState<PaymentTransactionRecord | null>(null);
   const [selectedItem, setSelectedItem] = useState<{ type: 'pack' | 'tier'; data: ActionPack | SubscriptionTier } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'stripe_checkout' | 'card'>('stripe_checkout');
   const [checkoutSessionUrl, setCheckoutSessionUrl] = useState<string | null>(null);
@@ -501,6 +507,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             <Key size={15} />
             Free Gemini API Key
           </button>
+          <button
+            onClick={() => { setActiveTab('receipts'); setSelectedItem(null); setTransactionReceipt(null); }}
+            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'receipts'
+                ? 'border-amber-400 text-amber-300 font-semibold'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <ReceiptIcon size={15} />
+            Receipts & Orders
+          </button>
         </div>
 
         {/* Content Area - Scrollable */}
@@ -588,7 +605,27 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-1">
+                  <div className="flex flex-wrap justify-between items-center gap-2 pt-2 border-t border-emerald-800/40">
+                    <button
+                      onClick={() => {
+                        setSelectedReceiptForInvoice({
+                          id: transactionReceipt.id,
+                          itemName: transactionReceipt.itemName,
+                          amount: transactionReceipt.amount,
+                          paymentMethod: transactionReceipt.paymentMethod,
+                          status: 'completed',
+                          createdAt: new Date().toISOString(),
+                          actionDelta: transactionReceipt.actionDelta,
+                          newTier: transactionReceipt.newTier,
+                          userId: currentUser?.uid
+                        });
+                      }}
+                      className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 border border-emerald-500/40 text-emerald-300 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <FileText size={13} />
+                      <span>View Official Printable Receipt</span>
+                    </button>
+
                     <button
                       onClick={() => {
                         setSelectedItem(null);
@@ -1091,6 +1128,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             </div>
           )}
 
+          {/* TAB 4: Receipts & Orders */}
+          {activeTab === 'receipts' && (
+            <div className="max-w-3xl mx-auto">
+              <ReceiptsList
+                currentUser={currentUser}
+                onViewReceipt={(tx) => setSelectedReceiptForInvoice(tx)}
+                onOpenMarket={() => setActiveTab('packs')}
+              />
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -1137,6 +1185,13 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         </div>
       )}
 
+      {/* Printable / Viewable Official Receipt Modal */}
+      <ReceiptModal
+        isOpen={!!selectedReceiptForInvoice}
+        onClose={() => setSelectedReceiptForInvoice(null)}
+        transaction={selectedReceiptForInvoice}
+        currentUser={currentUser}
+      />
     </div>
   );
 };

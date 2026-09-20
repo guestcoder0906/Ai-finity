@@ -80,6 +80,25 @@ export async function createRealStripeCheckoutSession(params: {
     throw errorObj;
   }
 
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem('aifinity_pending_checkout', JSON.stringify({
+        sessionId: data.sessionId,
+        amount,
+        itemName,
+        itemType,
+        itemId,
+        actionDelta,
+        userId: user.uid,
+        userEmail: user.email || '',
+        username: user.username || '',
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not save pending checkout to sessionStorage:', e);
+    }
+  }
+
   return {
     url: data.url,
     sessionId: data.sessionId

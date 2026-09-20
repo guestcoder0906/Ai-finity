@@ -21,16 +21,37 @@ import CommunityAdventuresModal from './components/CommunityAdventuresModal';
 import AccountModal from './components/AccountModal';
 import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
+import { ReceiptModal } from './components/ReceiptModal';
+import { auth } from './services/firebase';
 import {
   UserProfile,
   subscribeToAuth,
   logOut,
   getOrCreateGuestId,
-  generateUniqueGuestMultiplayerName
+  generateUniqueGuestMultiplayerName,
+  recordPaymentTransaction,
+  PaymentTransactionRecord
 } from './services/authService';
 import { ActionLimitService, ActionStatus } from './services/actionLimitService';
 import { SavedAdventure, CommunityAdventure } from './services/adventuresService';
-import { Compass, User, LogIn, LogOut as LogOutIcon, ShoppingCart, Bookmark, Globe, Zap, Crown, Menu, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, FileText, Map as MapIcon } from 'lucide-react';
+import {
+  Compass,
+  User,
+  LogIn,
+  LogOut as LogOutIcon,
+  ShoppingCart,
+  Bookmark,
+  Globe,
+  Zap,
+  Crown,
+  Menu,
+  ChevronDown as ChevronDownIcon,
+  ChevronUp as ChevronUpIcon,
+  FileText,
+  Map as MapIcon,
+  Receipt as ReceiptIcon,
+  CheckCircle2
+} from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
 const fileSystem = new FileSystem();
@@ -272,6 +293,8 @@ function App() {
     type: 'success' | 'info' | 'error';
     text: string;
   } | null>(null);
+  const [verifiedReceiptTransaction, setVerifiedReceiptTransaction] = useState<PaymentTransactionRecord | null>(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
 
   // Catch returns from Stripe Checkout sessions
   useEffect(() => {
@@ -287,19 +310,55 @@ function App() {
       } catch (e) {
         console.warn('History replaceState skipped:', e);
       }
+
       fetch(`/api/stripe/verify-checkout-session?sessionId=${encodeURIComponent(sessionId)}`)
         .then(res => res.json())
         .then(async (data) => {
           if (data.paid) {
+            // Retrieve pending checkout details saved in sessionStorage
+            let pending: any = null;
+            try {
+              const rawPending = sessionStorage.getItem('aifinity_pending_checkout');
+              if (rawPending) pending = JSON.parse(rawPending);
+            } catch (e) {
+              console.warn('Could not parse pending checkout:', e);
+            }
+
             const meta = data.metadata || {};
-            const targetUid = meta.userId || auth.currentUser?.uid || currentUser?.uid;
+            const itemName = meta.itemName || pending?.itemName || 'Action Pack Purchase';
+            const itemType = (meta.itemType || pending?.itemType || 'pack') as 'pack' | 'tier';
+            const actionDelta = parseInt(meta.actionDelta, 10) || parseInt(pending?.actionDelta, 10) || 0;
+            const itemId = meta.itemId || pending?.itemId || '';
+            const amount = typeof data.amount === 'number' && data.amount > 0 ? data.amount : (pending?.amount || 0);
+
+            // Resolve target user ID
+            const targetUid =
+              meta.userId ||
+              pending?.userId ||
+              auth.currentUser?.uid ||
+              currentUser?.uid ||
+              localStorage.getItem('aifinity_last_checkout_user') ||
+              '';
+
+            const txRecord: PaymentTransactionRecord = {
+              id: sessionId,
+              amount,
+              itemName,
+              itemType,
+              paymentMethod: 'Stripe Checkout',
+              status: 'completed',
+              createdAt: new Date().toISOString(),
+              actionDelta: actionDelta > 0 ? actionDelta : undefined,
+              newTier: itemType === 'tier' ? (itemId || itemName) : undefined,
+              userId: targetUid || undefined
+            };
+
             if (targetUid) {
               let updatedUser: UserProfile | null = null;
-              if (meta.itemType === 'pack') {
-                const delta = parseInt(meta.actionDelta, 10) || 0;
-                updatedUser = await ActionLimitService.addPurchasedCreditsByUid(targetUid, delta);
-              } else if (meta.itemType === 'tier') {
-                const targetTier = (meta.itemId || 'adventurer') as any;
+              if (itemType === 'pack' && actionDelta > 0) {
+                updatedUser = await ActionLimitService.addPurchasedCreditsByUid(targetUid, actionDelta);
+              } else if (itemType === 'tier') {
+                const targetTier = (itemId || 'adventurer') as any;
                 updatedUser = await ActionLimitService.activateSubscriptionByUid(targetUid, targetTier);
               }
 
@@ -310,23 +369,22 @@ function App() {
                 refreshActionStatus();
               }
 
-              await recordPaymentTransaction(targetUid, {
-                id: sessionId,
-                amount: data.amount,
-                itemName: meta.itemName || 'Market Purchase',
-                itemType: meta.itemType || 'pack',
-                paymentMethod: 'Stripe Checkout',
-                status: 'completed',
-                createdAt: new Date().toISOString()
-              });
+              await recordPaymentTransaction(targetUid, txRecord);
             } else {
               refreshActionStatus();
             }
 
+            // Immediately display verified receipt
+            setVerifiedReceiptTransaction(txRecord);
+            setIsReceiptModalOpen(true);
             setStripeReturnMessage({
               type: 'success',
-              text: `🎉 Stripe Payment Verified! Purchase of ${meta.itemName || 'Item'} ($${data.amount.toFixed(2)}) has been credited to your account.`
+              text: `🎉 Stripe Payment Verified! Purchase of ${itemName} ($${amount.toFixed(2)}) has been credited to your account.`
             });
+
+            try {
+              sessionStorage.removeItem('aifinity_pending_checkout');
+            } catch (e) {}
           }
         })
         .catch(err => {
@@ -344,7 +402,7 @@ function App() {
         text: 'Stripe Checkout was cancelled.'
       });
     }
-  }, [guestId, refreshActionStatus]);
+  }, [guestId, refreshActionStatus, currentUser?.uid]);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -818,7 +876,43 @@ function App() {
   }
 
   if (currentPath === '/welcome') {
-    return <WelcomePage onEnterGame={handleEnterGame} />;
+    return (
+      <>
+        <WelcomePage onEnterGame={handleEnterGame} />
+        {/* Floating Verified Receipt Banner on Welcome Page */}
+        {stripeReturnMessage && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[110] max-w-xl w-[92%] p-3.5 rounded-xl border shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
+            <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
+              <span className="text-base">💎</span>
+              <span>{stripeReturnMessage.text}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {verifiedReceiptTransaction && (
+                <button
+                  onClick={() => setIsReceiptModalOpen(true)}
+                  className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1 transition-all shadow"
+                >
+                  <ReceiptIcon size={12} />
+                  <span>View Official Receipt</span>
+                </button>
+              )}
+              <button
+                onClick={() => setStripeReturnMessage(null)}
+                className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+        <ReceiptModal
+          isOpen={isReceiptModalOpen}
+          onClose={() => setIsReceiptModalOpen(false)}
+          transaction={verifiedReceiptTransaction}
+          currentUser={currentUser}
+        />
+      </>
+    );
   }
 
   return (
@@ -828,17 +922,37 @@ function App() {
     >
       {/* Stripe Return Notification Banner */}
       {stripeReturnMessage && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-[92%] p-3.5 rounded-xl border shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] max-w-xl w-[92%] p-3.5 rounded-xl border shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
           <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
             <span className="text-base">💎</span>
             <span>{stripeReturnMessage.text}</span>
           </div>
-          <button
-            onClick={() => setStripeReturnMessage(null)}
-            className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
-          >
-            Dismiss
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {verifiedReceiptTransaction && (
+              <button
+                onClick={() => setIsReceiptModalOpen(true)}
+                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1 transition-all shadow"
+              >
+                <ReceiptIcon size={12} />
+                <span>View Official Receipt</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setMarketInitialTab('receipts');
+                setIsMarketOpen(true);
+              }}
+              className="text-xs text-neutral-300 hover:text-white px-2 py-1 bg-neutral-800 rounded transition-colors"
+            >
+              Order History
+            </button>
+            <button
+              onClick={() => setStripeReturnMessage(null)}
+              className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
       {showMultiplayerModal && (
@@ -1510,6 +1624,14 @@ function App() {
           setCurrentUser(updatedUser);
           setActionStatus(ActionLimitService.getActionStatus(updatedUser, guestId));
         }}
+      />
+
+      {/* Official Digital Tax Invoice & Receipt Modal */}
+      <ReceiptModal
+        isOpen={isReceiptModalOpen}
+        onClose={() => setIsReceiptModalOpen(false)}
+        transaction={verifiedReceiptTransaction}
+        currentUser={currentUser}
       />
     </div>
   );

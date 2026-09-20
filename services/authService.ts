@@ -412,32 +412,97 @@ export async function loginWithEmail(
 }
 
 // Record payment transaction in Firestore under user document
+export interface PaymentTransactionRecord {
+  id: string;
+  amount: number;
+  itemName: string;
+  itemType: 'pack' | 'tier';
+  paymentMethod: string;
+  status: 'completed' | 'failed' | 'pending';
+  createdAt: string;
+  recipient?: string;
+  notes?: string;
+  userId?: string;
+  actionDelta?: number;
+  newTier?: string;
+  receiptUrl?: string;
+}
+
+export function getLocalTransactions(uid: string): PaymentTransactionRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`aifinity_user_transactions_${uid}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('Could not parse local transactions:', e);
+  }
+  return [];
+}
+
+export function saveLocalTransaction(uid: string, tx: PaymentTransactionRecord) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getLocalTransactions(uid);
+    const filtered = existing.filter(item => item.id !== tx.id);
+    const updated = [tx, ...filtered];
+    localStorage.setItem(`aifinity_user_transactions_${uid}`, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('Could not save transaction to localStorage:', e);
+  }
+}
+
 export async function recordPaymentTransaction(
   uid: string,
-  transaction: {
-    id: string;
-    amount: number;
-    itemName: string;
-    itemType: 'pack' | 'tier';
-    paymentMethod: string;
-    status: 'completed' | 'failed';
-    createdAt: string;
-    recipient?: string;
-    notes?: string;
-  }
+  transaction: PaymentTransactionRecord
 ): Promise<void> {
+  const rawId = String(transaction.id || '').trim();
+  const safeTxId = (rawId || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
+    .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  const fullTx: PaymentTransactionRecord = {
+    ...transaction,
+    id: safeTxId,
+    userId: uid
+  };
+
+  // 1. Instantly persist to localStorage so receipt is immediately accessible
+  saveLocalTransaction(uid, fullTx);
+
+  // 2. Persist to Firestore
   try {
-    const rawId = String(transaction.id || '').trim();
-    const safeTxId = (rawId || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
-      .replace(/[^a-zA-Z0-9_-]/g, '_');
-    await setDoc(doc(db, 'users', uid, 'transactions', safeTxId), {
-      ...transaction,
-      id: safeTxId,
-      userId: uid
+    await setDoc(doc(db, 'users', uid, 'transactions', safeTxId), fullTx);
+  } catch (err) {
+    console.warn('Failed to log payment transaction in Firestore (saved locally):', err);
+  }
+}
+
+export async function getUserTransactions(uid: string): Promise<PaymentTransactionRecord[]> {
+  const localList = getLocalTransactions(uid);
+  const txMap = new Map<string, PaymentTransactionRecord>();
+  for (const item of localList) {
+    if (item && item.id) {
+      txMap.set(item.id, item);
+    }
+  }
+
+  try {
+    const snap = await getDocs(collection(db, 'users', uid, 'transactions'));
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as PaymentTransactionRecord;
+      if (data && data.id) {
+        txMap.set(data.id, data);
+      }
     });
   } catch (err) {
-    console.error('Failed to log payment transaction in Firestore:', err);
+    console.warn('Could not query Firestore transactions, using local store:', err);
   }
+
+  const all = Array.from(txMap.values());
+  all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return all;
 }
 
 // Google Sign-in with Firebase

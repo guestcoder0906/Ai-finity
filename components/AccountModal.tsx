@@ -3,7 +3,8 @@ import {
   UserProfile,
   UserRole,
   isDefaultAdmin,
-  updateCachedProfile
+  updateCachedProfile,
+  PaymentTransactionRecord
 } from '../services/authService';
 import {
   searchUsers,
@@ -16,6 +17,8 @@ import {
 } from '../services/adminService';
 import ActionLimitService, { ActionStatus } from '../services/actionLimitService';
 import GoldenName from './GoldenName';
+import { ReceiptModal } from './ReceiptModal';
+import { ReceiptsList } from './ReceiptsList';
 import {
   X,
   User,
@@ -34,7 +37,9 @@ import {
   Award,
   Crown,
   Share2,
-  Bookmark
+  Bookmark,
+  Receipt,
+  FileText
 } from 'lucide-react';
 
 interface AccountModalProps {
@@ -52,7 +57,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   actionStatus,
   onProfileUpdated
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'staff'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'billing' | 'staff'>('profile');
+  const [selectedReceiptForInvoice, setSelectedReceiptForInvoice] = useState<PaymentTransactionRecord | null>(null);
 
   // Glowing name state
   const [glowingEnabled, setGlowingEnabled] = useState<boolean>(
@@ -358,27 +364,40 @@ export const AccountModal: React.FC<AccountModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Navigation if staff */}
-        {isStaff && (
-          <div className="flex border-b border-neutral-800 bg-neutral-950 px-4 sm:px-6 shrink-0">
-            <button
-              id="account-tab-profile"
-              type="button"
-              onClick={() => setActiveTab('profile')}
-              className={`py-3 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'profile'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
-              }`}
-            >
-              <User size={14} />
-              <span>MY ACCOUNT</span>
-            </button>
+        {/* Tab Navigation */}
+        <div className="flex border-b border-neutral-800 bg-neutral-950 px-4 sm:px-6 shrink-0 gap-1 overflow-x-auto">
+          <button
+            id="account-tab-profile"
+            type="button"
+            onClick={() => setActiveTab('profile')}
+            className={`py-3 px-3 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'profile'
+                ? 'border-blue-500 text-blue-400'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <User size={14} />
+            <span>MY PROFILE</span>
+          </button>
+          <button
+            id="account-tab-billing"
+            type="button"
+            onClick={() => setActiveTab('billing')}
+            className={`py-3 px-3 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'billing'
+                ? 'border-amber-400 text-amber-300'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Receipt size={14} />
+            <span>BILLING & RECEIPTS</span>
+          </button>
+          {isStaff && (
             <button
               id="account-tab-staff"
               type="button"
               onClick={() => setActiveTab('staff')}
-              className={`py-3 px-4 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+              className={`py-3 px-3 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition-colors cursor-pointer shrink-0 ${
                 activeTab === 'staff'
                   ? isAdmin
                     ? 'border-cyan-400 text-cyan-300 shadow-cyan-400/20'
@@ -389,8 +408,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               {isAdmin ? <Sparkles size={14} /> : <Shield size={14} />}
               <span>{isAdmin ? 'ADMIN CONSOLE' : 'MODERATOR TOOLS'}</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Modal Body */}
         <div className="p-4 sm:p-6 overflow-y-auto overflow-x-hidden space-y-5 flex-1">
@@ -677,7 +696,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
               )}
             </>
-          ) : (
+          ) : activeTab === 'staff' ? (
             /* STAFF / ADMIN CONSOLE TAB */
             <div className="space-y-5">
               {/* Staff Overview Banner */}
@@ -1059,9 +1078,24 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
               )}
             </div>
-          )}
+          ) : activeTab === 'billing' ? (
+            <div className="space-y-4">
+              <ReceiptsList
+                currentUser={currentUser}
+                onViewReceipt={(tx) => setSelectedReceiptForInvoice(tx)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
+
+      {/* Invoice / Receipt Modal */}
+      <ReceiptModal
+        isOpen={!!selectedReceiptForInvoice}
+        onClose={() => setSelectedReceiptForInvoice(null)}
+        transaction={selectedReceiptForInvoice}
+        currentUser={currentUser}
+      />
     </div>
   );
 };
