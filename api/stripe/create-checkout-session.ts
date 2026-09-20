@@ -55,22 +55,24 @@ export default async function handler(req: any, res: any) {
     const amountInCents = Math.round(amount * 100);
     const safeItemName = String(itemName || 'Market Purchase').replace(/[^\w\s\-\.\,\(\)]/gi, '').trim() || 'Market Purchase';
     const safeUsername = String(username || 'Player').replace(/[^\w\s\-\.]/gi, '').trim() || 'Player';
+    const isSubscription = itemType === 'tier' || itemId === 'adventurer' || itemId === 'legendary' || itemId === 'celestial';
 
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams: any = {
       line_items: [{
         price_data: {
           currency: 'usd',
           product_data: {
             name: `Aifinity: ${safeItemName}`,
             description: itemType === 'pack'
-              ? `Action Pack (${actionDelta || 0} Actions) for ${safeUsername}`
-              : `${safeItemName} Subscription for ${safeUsername}`
+              ? `Action Pack (+${actionDelta || 0} Actions) for ${safeUsername}`
+              : `${safeItemName} Monthly Membership for ${safeUsername}`
           },
-          unit_amount: amountInCents
+          unit_amount: amountInCents,
+          ...(isSubscription ? { recurring: { interval: 'month' } } : {})
         },
         quantity: 1
       }],
-      mode: 'payment',
+      mode: isSubscription ? 'subscription' : 'payment',
       customer_email: userEmail && userEmail.includes('@') ? userEmail : undefined,
       metadata: {
         userId: String(userId || ''),
@@ -79,11 +81,26 @@ export default async function handler(req: any, res: any) {
         itemType: String(itemType || ''),
         itemId: String(itemId || ''),
         actionDelta: String(actionDelta || 0),
-        amount: String(amount)
+        amount: String(amount),
+        userEmail: String(userEmail || '')
       },
       success_url: `${origin}/?stripe_session_id={CHECKOUT_SESSION_ID}&stripe_status=success`,
       cancel_url: `${origin}/?stripe_status=cancelled`
-    });
+    };
+
+    if (isSubscription) {
+      sessionParams.subscription_data = {
+        metadata: {
+          userId: String(userId || ''),
+          username: safeUsername,
+          itemName: safeItemName,
+          itemId: String(itemId || ''),
+          userEmail: String(userEmail || '')
+        }
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return res.status(200).json({
       url: session.url,

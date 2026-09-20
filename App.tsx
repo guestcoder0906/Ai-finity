@@ -22,6 +22,7 @@ import AccountModal from './components/AccountModal';
 import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
+import { PurchaseNotificationBanner } from './components/PurchaseNotificationBanner';
 import { auth, db } from './services/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
@@ -1178,31 +1179,16 @@ function App() {
       <>
         <WelcomePage onEnterGame={handleEnterGame} />
         {/* Floating Verified Receipt Banner on Welcome Page */}
-        {stripeReturnMessage && (
-          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[110] max-w-xl w-[92%] p-3.5 rounded-xl border shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
-            <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
-              <span className="text-base">💎</span>
-              <span>{stripeReturnMessage.text}</span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {verifiedReceiptTransaction && (
-                <button
-                  onClick={() => setIsReceiptModalOpen(true)}
-                  className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1 transition-all shadow"
-                >
-                  <ReceiptIcon size={12} />
-                  <span>View Official Receipt</span>
-                </button>
-              )}
-              <button
-                onClick={() => setStripeReturnMessage(null)}
-                className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
+        <PurchaseNotificationBanner
+          message={stripeReturnMessage}
+          onDismiss={() => setStripeReturnMessage(null)}
+          verifiedReceipt={verifiedReceiptTransaction}
+          onOpenReceipt={() => setIsReceiptModalOpen(true)}
+          onOpenOrderHistory={() => {
+            setMarketInitialTab('receipts');
+            setIsMarketOpen(true);
+          }}
+        />
         <ReceiptModal
           isOpen={isReceiptModalOpen}
           onClose={() => setIsReceiptModalOpen(false)}
@@ -1215,44 +1201,20 @@ function App() {
 
   return (
     <div
-      className="flex flex-col md:flex-row w-full bg-black text-gray-200 overflow-hidden"
+      className="flex flex-col md:flex-row w-full bg-black text-gray-200 overflow-hidden relative"
       style={{ height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }}
     >
       {/* Stripe Return Notification Banner */}
-      {stripeReturnMessage && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] max-w-xl w-[92%] p-3.5 rounded-xl border shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 backdrop-blur-md bg-neutral-950/95 border-emerald-500/60 text-emerald-200">
-          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
-            <span className="text-base">💎</span>
-            <span>{stripeReturnMessage.text}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {verifiedReceiptTransaction && (
-              <button
-                onClick={() => setIsReceiptModalOpen(true)}
-                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1 transition-all shadow"
-              >
-                <ReceiptIcon size={12} />
-                <span>View Official Receipt</span>
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setMarketInitialTab('receipts');
-                setIsMarketOpen(true);
-              }}
-              className="text-xs text-neutral-300 hover:text-white px-2 py-1 bg-neutral-800 rounded transition-colors"
-            >
-              Order History
-            </button>
-            <button
-              onClick={() => setStripeReturnMessage(null)}
-              className="text-neutral-400 hover:text-white text-xs px-2 py-1 bg-neutral-800 rounded transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      <PurchaseNotificationBanner
+        message={stripeReturnMessage}
+        onDismiss={() => setStripeReturnMessage(null)}
+        verifiedReceipt={verifiedReceiptTransaction}
+        onOpenReceipt={() => setIsReceiptModalOpen(true)}
+        onOpenOrderHistory={() => {
+          setMarketInitialTab('receipts');
+          setIsMarketOpen(true);
+        }}
+      />
       {showMultiplayerModal && (
         <MainMenu
           onHostGame={handleHostGame}

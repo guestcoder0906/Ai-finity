@@ -37,14 +37,17 @@ export default async function handler(req: any, res: any) {
     }
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const isPaid = session.payment_status === 'paid';
+    const isPaid = session.payment_status === 'paid' || session.status === 'complete';
 
     return res.status(200).json({
       paid: isPaid,
+      status: session.status,
+      payment_status: session.payment_status,
       sessionId: session.id,
       paymentIntentId: session.payment_intent,
       amount: (session.amount_total || 0) / 100,
-      customerEmail: session.customer_details?.email || session.customer_email,
+      customerEmail: session.customer_details?.email || session.customer_email || null,
+      customerName: session.customer_details?.name || null,
       metadata: session.metadata || {}
     });
   } catch (err: any) {
