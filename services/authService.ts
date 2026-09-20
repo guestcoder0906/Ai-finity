@@ -559,8 +559,8 @@ export async function logOut(): Promise<void> {
 }
 
 // Fetch user profile from Firestore by UID
-export async function getUserProfile(uid: string): Promise<UserProfile | null> {
-  if (activeProfileCache[uid]) {
+export async function getUserProfile(uid: string, forceFresh: boolean = false): Promise<UserProfile | null> {
+  if (!forceFresh && activeProfileCache[uid]) {
     const cached = enrichUserProfileWithDefaults(activeProfileCache[uid]);
     if (isDefaultAdmin(cached.email, cached.username) && (cached.role !== 'admin' || !cached.hasInfiniteActions)) {
       cached.role = 'admin';
@@ -588,7 +588,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     }
     return null;
   } catch (e) {
-    return null;
+    return activeProfileCache[uid] || null;
   }
 }
 
@@ -598,6 +598,15 @@ export function updateCachedProfile(uid: string, updates: Partial<UserProfile>):
       ...activeProfileCache[uid],
       ...updates
     };
+  } else {
+    activeProfileCache[uid] = {
+      uid,
+      email: null,
+      username: 'Player',
+      authProvider: 'password',
+      createdAt: new Date().toISOString(),
+      ...updates
+    } as UserProfile;
   }
 }
 

@@ -96,16 +96,16 @@ export class AdventuresService {
       files: Record<string, string>;
     }
   ): Promise<{ success: boolean; adventure?: SavedAdventure; reason?: 'tier_limit' | 'error'; message?: string }> {
-    const isSubscriber = user?.tier === 'adventurer' || user?.tier === 'legendary';
+    const isSubscriber = user?.tier === 'adventurer' || user?.tier === 'legendary' || user?.tier === 'celestial' || Boolean(user?.canSaveMultipleAdventures) || user?.role === 'admin' || user?.role === 'mod';
     const existingAdventures = await this.getSavedAdventures(user, guestId);
 
-    // Free users can only have 1 saved adventure!
+    // Free users can only have 1 saved adventure unless upgraded or granted permission
     const isUpdate = adventure.id && existingAdventures.some(a => a.id === adventure.id);
     if (!isSubscriber && existingAdventures.length >= 1 && !isUpdate) {
       return {
         success: false,
         reason: 'tier_limit',
-        message: 'Saving multiple adventures is locked for Free users. Upgrade to Adventurer tier ($9.99/mo) in the Market to save unlimited adventures!'
+        message: 'Saving multiple adventures is locked for Free users. Upgrade to Adventurer tier ($4.99/mo) in the Market to save unlimited adventures!'
       };
     }
 
@@ -205,11 +205,12 @@ export class AdventuresService {
     }
 
     const tier = user.tier || 'free';
-    if (tier !== 'adventurer' && tier !== 'legendary') {
+    const canPost = tier === 'adventurer' || tier === 'legendary' || tier === 'celestial' || Boolean(user.canPostCommunityAdventures) || user.role === 'admin' || user.role === 'mod';
+    if (!canPost) {
       return {
         success: false,
         reason: 'subscription_required',
-        message: 'Posting to Community Adventures is an exclusive perk for Adventurer and Legendary monthly members ($9.99/mo). Upgrade in the Market to share your adventures with the world!'
+        message: 'Posting to Community Adventures is an exclusive perk for Adventurer, Legendary, and Celestial monthly members ($4.99/mo+). Upgrade in the Market to share your adventures with the world!'
       };
     }
 

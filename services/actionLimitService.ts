@@ -286,7 +286,7 @@ export class ActionLimitService {
       };
     }
 
-    // Authenticated user: profile in Firestore is authoritative
+    // Authenticated user: profile in Firestore and local state are unified
     let tier: UserTier = 'free';
     if (user.tier === 'adventurer' || user.tier === 'legendary' || user.tier === 'celestial') {
       // Check subscription expiry if present
@@ -302,9 +302,10 @@ export class ActionLimitService {
       tier = local.tier;
     }
 
-    const purchasedCredits = (user.actionCredits !== undefined && typeof user.actionCredits === 'number')
-      ? user.actionCredits
-      : (typeof local.actionCredits === 'number' ? local.actionCredits : 0);
+    const purchasedCredits = Math.max(
+      typeof user.actionCredits === 'number' ? user.actionCredits : 0,
+      typeof local.actionCredits === 'number' ? local.actionCredits : 0
+    );
 
     // Reset daily if date changed
     let dailyUsed = 0;
@@ -443,7 +444,7 @@ export class ActionLimitService {
     user: UserProfile | null,
     amount: number,
     guestId?: string
-  ): Promise<number> {
+  ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('Guests cannot buy action packs. Please log in or sign up first.');
     }
@@ -465,7 +466,7 @@ export class ActionLimitService {
       actionCredits: newCredits
     });
 
-    return newCredits;
+    return user;
   }
 
   /**
@@ -475,10 +476,21 @@ export class ActionLimitService {
     uid: string,
     amount: number
   ): Promise<UserProfile | null> {
-    const profile = await getUserProfile(uid);
-    if (!profile) return null;
-    await this.addPurchasedCredits(profile, amount);
-    return profile;
+    let profile = await getUserProfile(uid, true);
+    if (!profile) {
+      profile = {
+        uid,
+        email: null,
+        username: 'Player',
+        role: 'user',
+        tier: 'free',
+        actionCredits: 0,
+        authProvider: 'password',
+        createdAt: new Date().toISOString()
+      } as UserProfile;
+    }
+    const updated = await this.addPurchasedCredits(profile, amount);
+    return updated;
   }
 
   /**
@@ -489,7 +501,7 @@ export class ActionLimitService {
     user: UserProfile | null,
     tier: UserTier,
     guestId?: string
-  ): Promise<void> {
+  ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('Guests cannot buy subscriptions. Please log in or sign up first.');
     }
@@ -497,12 +509,14 @@ export class ActionLimitService {
     const status = this.getActionStatus(user, guestId);
     const today = this.getTodayDateString();
 
-    // Bonus actions per tier: Adventurer = 300, Legendary = 600, Celestial = unlimited actions
+    // Bonus actions per tier: Adventurer = 300, Legendary = 600, Celestial = unlimited actions (+1000 buffer)
     let bonusActions = 0;
     if (tier === 'adventurer') {
       bonusActions = 300;
     } else if (tier === 'legendary') {
       bonusActions = 600;
+    } else if (tier === 'celestial') {
+      bonusActions = 1000;
     }
     const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
     const newCredits = currentCredits + bonusActions;
@@ -537,6 +551,8 @@ export class ActionLimitService {
       canPostCommunityAdventures: true,
       ...(tier === 'legendary' || tier === 'celestial' ? { showGlowingName: true } : {})
     });
+
+    return user;
   }
 
   /**
@@ -546,10 +562,21 @@ export class ActionLimitService {
     uid: string,
     tier: UserTier
   ): Promise<UserProfile | null> {
-    const profile = await getUserProfile(uid);
-    if (!profile) return null;
-    await this.activateSubscription(profile, tier);
-    return profile;
+    let profile = await getUserProfile(uid, true);
+    if (!profile) {
+      profile = {
+        uid,
+        email: null,
+        username: 'Player',
+        role: 'user',
+        tier: 'free',
+        actionCredits: 0,
+        authProvider: 'password',
+        createdAt: new Date().toISOString()
+      } as UserProfile;
+    }
+    const updated = await this.activateSubscription(profile, tier);
+    return updated;
   }
 
   /**
@@ -558,7 +585,7 @@ export class ActionLimitService {
   public static async cancelSubscription(
     user: UserProfile | null,
     guestId?: string
-  ): Promise<void> {
+  ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('Must be logged in to cancel subscription.');
     }
@@ -591,6 +618,8 @@ export class ActionLimitService {
         showGlowingName: false
       } : {})
     });
+
+    return user;
   }
 }
 

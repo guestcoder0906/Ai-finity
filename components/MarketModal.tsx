@@ -34,6 +34,7 @@ interface MarketModalProps {
   currentUser: UserProfile | null;
   actionStatus?: ActionStatus;
   onStatusUpdated: () => void;
+  onProfileUpdated?: (updatedUser: UserProfile) => void;
   initialTab?: 'packs' | 'subscriptions' | 'apikey';
   onOpenAuth?: () => void;
   guestId?: string;
@@ -45,6 +46,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   currentUser,
   actionStatus,
   onStatusUpdated,
+  onProfileUpdated,
   initialTab = 'packs',
   onOpenAuth,
   guestId
@@ -283,14 +285,15 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         // Apply purchased credits or subscription only upon verified charge
         let actionDelta: number | undefined;
         let newTier: string | undefined;
+        let updatedProfile: UserProfile = currentUser;
 
         if (selectedItem.type === 'pack') {
           const pack = selectedItem.data as ActionPack;
-          await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
+          updatedProfile = await ActionLimitService.addPurchasedCredits(currentUser, pack.actions);
           actionDelta = pack.actions;
         } else {
           const tier = selectedItem.data as SubscriptionTier;
-          await ActionLimitService.activateSubscription(currentUser, tier.id);
+          updatedProfile = await ActionLimitService.activateSubscription(currentUser, tier.id);
           newTier = tier.name;
         }
 
@@ -307,6 +310,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           createdAt: nowIso
         });
 
+        if (onProfileUpdated && updatedProfile) {
+          onProfileUpdated({ ...updatedProfile });
+        }
         onStatusUpdated();
         setTransactionReceipt({
           id: txId,

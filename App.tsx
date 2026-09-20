@@ -292,28 +292,25 @@ function App() {
         .then(async (data) => {
           if (data.paid) {
             const meta = data.metadata || {};
-            const uid = meta.userId || currentUser?.uid;
-            if (uid) {
+            const targetUid = meta.userId || auth.currentUser?.uid || currentUser?.uid;
+            if (targetUid) {
+              let updatedUser: UserProfile | null = null;
               if (meta.itemType === 'pack') {
                 const delta = parseInt(meta.actionDelta, 10) || 0;
-                const updated = await ActionLimitService.addPurchasedCreditsByUid(uid, delta);
-                if (updated) {
-                  setCurrentUser({ ...updated });
-                } else if (currentUser) {
-                  await ActionLimitService.addPurchasedCredits(currentUser, delta);
-                  setCurrentUser({ ...currentUser });
-                }
+                updatedUser = await ActionLimitService.addPurchasedCreditsByUid(targetUid, delta);
               } else if (meta.itemType === 'tier') {
                 const targetTier = (meta.itemId || 'adventurer') as any;
-                const updated = await ActionLimitService.activateSubscriptionByUid(uid, targetTier);
-                if (updated) {
-                  setCurrentUser({ ...updated });
-                } else if (currentUser) {
-                  await ActionLimitService.activateSubscription(currentUser, targetTier);
-                  setCurrentUser({ ...currentUser });
-                }
+                updatedUser = await ActionLimitService.activateSubscriptionByUid(targetUid, targetTier);
               }
-              await recordPaymentTransaction(uid, {
+
+              if (updatedUser) {
+                setCurrentUser({ ...updatedUser });
+                setActionStatus(ActionLimitService.getActionStatus(updatedUser, guestId));
+              } else {
+                refreshActionStatus();
+              }
+
+              await recordPaymentTransaction(targetUid, {
                 id: sessionId,
                 amount: data.amount,
                 itemName: meta.itemName || 'Market Purchase',
@@ -322,8 +319,10 @@ function App() {
                 status: 'completed',
                 createdAt: new Date().toISOString()
               });
+            } else {
+              refreshActionStatus();
             }
-            refreshActionStatus();
+
             setStripeReturnMessage({
               type: 'success',
               text: `🎉 Stripe Payment Verified! Purchase of ${meta.itemName || 'Item'} ($${data.amount.toFixed(2)}) has been credited to your account.`
@@ -345,7 +344,7 @@ function App() {
         text: 'Stripe Checkout was cancelled.'
       });
     }
-  }, [refreshActionStatus]);
+  }, [guestId, refreshActionStatus]);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -1431,6 +1430,10 @@ function App() {
         actionStatus={actionStatus}
         initialTab={marketInitialTab}
         onStatusUpdated={refreshActionStatus}
+        onProfileUpdated={(updated) => {
+          setCurrentUser({ ...updated });
+          setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
+        }}
         onOpenAuth={() => {
           setIsMarketOpen(false);
           setAuthModalInitialTab('signup');
