@@ -215,9 +215,11 @@ async function startServer() {
       if (stripe) {
         try {
           const session = await stripe.checkout.sessions.retrieve(sessionId);
-          const isPaid = session.payment_status === 'paid';
+          const isPaid = session.payment_status === 'paid' || session.status === 'complete';
           return res.json({
             paid: isPaid,
+            status: session.status,
+            payment_status: session.payment_status,
             sessionId: session.id,
             paymentIntentId: session.payment_intent,
             amount: (session.amount_total || 0) / 100,
@@ -249,6 +251,129 @@ async function startServer() {
         error: 'STRIPE_VERIFY_FAILED',
         message: err.message || 'Failed to verify session.'
       });
+    }
+  });
+
+  // Check live status of an active checkout session (used for polling during checkout)
+  app.get('/api/stripe/check-session-status', async (req, res) => {
+    try {
+      const sessionId = (req.query.sessionId as string || '').trim();
+      if (!sessionId) {
+        return res.status(400).json({ error: 'MISSING_SESSION_ID', message: 'Session ID is required.' });
+      }
+
+      const stripe = getStripe();
+      if (stripe) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(sessionId);
+          const isPaid = session.payment_status === 'paid' || session.status === 'complete';
+          return res.json({
+            paid: isPaid,
+            status: session.status,
+            payment_status: session.payment_status,
+            sessionId: session.id,
+            amount: (session.amount_total || 0) / 100,
+            customerEmail: session.customer_details?.email || session.customer_email,
+            metadata: session.metadata || {}
+          });
+        } catch (err: any) {
+          // Check cached store
+          const cached = checkoutSessionStore.get(sessionId);
+          if (cached) {
+            return res.json({
+              paid: cached.paid,
+              status: 'complete',
+              sessionId: cached.id,
+              amount: cached.amount,
+              metadata: {
+                itemType: cached.itemType,
+                itemId: cached.itemId,
+                itemName: cached.itemName,
+                actionDelta: String(cached.actionDelta),
+                userId: cached.userId
+              }
+            });
+          }
+          return res.status(404).json({ error: 'SESSION_NOT_FOUND', message: err.message });
+        }
+      }
+
+      const cached = checkoutSessionStore.get(sessionId);
+      if (cached) {
+        return res.json({
+          paid: cached.paid,
+          status: 'complete',
+          sessionId: cached.id,
+          amount: cached.amount,
+          metadata: {
+            itemType: cached.itemType,
+            itemId: cached.itemId,
+            itemName: cached.itemName,
+            actionDelta: String(cached.actionDelta),
+            userId: cached.userId
+          }
+        });
+      }
+
+      return res.status(400).json({ error: 'STRIPE_NOT_CONFIGURED' });
+    } catch (e: any) {
+      res.status(500).json({ error: 'ERROR', message: e.message });
+    }
+  });
+
+  // Sync and restore all completed Stripe purchases for a user (by UID and/or email)
+  app.get('/api/stripe/sync-user-purchases', async (req, res) => {
+    try {
+      const userId = (req.query.userId as string || '').trim();
+      const email = (req.query.email as string || '').trim().toLowerCase();
+
+      if (!userId && !email) {
+        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'userId or email is required to sync purchases.' });
+      }
+
+      const stripe = getStripe();
+      if (!stripe) {
+        return res.json({ success: true, purchases: [] });
+      }
+
+      const sessions = await stripe.checkout.sessions.list({ limit: 100 });
+      const completedPurchases: any[] = [];
+
+      for (const s of sessions.data) {
+        const isPaid = s.payment_status === 'paid' || s.status === 'complete';
+        if (!isPaid) continue;
+
+        const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
+        const sUid = (s.metadata?.userId || '').trim();
+
+        const matchesUid = userId && sUid === userId;
+        const matchesEmail = email && sEmail === email;
+
+        if (matchesUid || matchesEmail) {
+          completedPurchases.push({
+            id: s.id,
+            amount: (s.amount_total || 0) / 100,
+            itemType: (s.metadata?.itemType || 'pack') as 'pack' | 'tier',
+            itemId: s.metadata?.itemId || '',
+            itemName: s.metadata?.itemName || 'Action Pack Purchase',
+            actionDelta: parseInt(s.metadata?.actionDelta, 10) || 0,
+            email: sEmail,
+            userId: sUid || userId,
+            paymentMethod: 'Stripe Checkout',
+            status: 'completed',
+            createdAt: new Date(s.created * 1000).toISOString()
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        count: completedPurchases.length,
+        purchases: completedPurchases
+      });
+    } catch (err: any) {
+      console.error('Failed to sync user Stripe purchases:', err);
+      res.status(500).json({ error: 'SYNC_FAILED', message: err.message });
     }
   });
 

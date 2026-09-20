@@ -30,8 +30,11 @@ import {
   getOrCreateGuestId,
   generateUniqueGuestMultiplayerName,
   recordPaymentTransaction,
-  PaymentTransactionRecord
+  PaymentTransactionRecord,
+  getLocalTransactions,
+  getUserProfile
 } from './services/authService';
+import { syncUserPurchasesFromStripe } from './services/stripeCheckoutService';
 import { ActionLimitService, ActionStatus } from './services/actionLimitService';
 import { SavedAdventure, CommunityAdventure } from './services/adventuresService';
 import {
@@ -190,18 +193,93 @@ function App() {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
   }, [currentUser, guestId]);
 
-  // Listen to Firebase Auth state for automatic persistent login
+  // Listen to Firebase Auth state for automatic persistent login and purchase fulfillment
   useEffect(() => {
-    const unsubscribe = subscribeToAuth((user) => {
+    const handleStorageEvent = (e: StorageEvent) => {
+      if (e.key === 'aifinity_payment_sync_event' || e.key === 'aifinity_user_actions') {
+        refreshActionStatus();
+        if (currentUser?.uid) {
+          getUserProfile(currentUser.uid, true).then((freshProfile) => {
+            if (freshProfile) {
+              setCurrentUser({ ...freshProfile });
+              setActionStatus(ActionLimitService.getActionStatus(freshProfile, guestId));
+            }
+          });
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    const unsubscribe = subscribeToAuth(async (user) => {
       setCurrentUser(user);
       setActionStatus(ActionLimitService.getActionStatus(user, guestId));
       if (user) {
         setIsGuestWelcomeOpen(false);
         setIsActionLimitModalOpen(false);
+
+        // Auto-sync completed Stripe purchases for logged-in user
+        try {
+          const syncRes = await syncUserPurchasesFromStripe(user.uid, user.email || undefined);
+          if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
+            const existingTx = getLocalTransactions(user.uid);
+            const existingIds = new Set(existingTx.map((t) => t.id));
+
+            let totalNewCredits = 0;
+            let highestTier: string | null = null;
+            let hasNewPurchases = false;
+
+            for (const p of syncRes.purchases) {
+              if (!existingIds.has(p.id)) {
+                hasNewPurchases = true;
+                if (p.itemType === 'pack' && p.actionDelta > 0) {
+                  totalNewCredits += p.actionDelta;
+                } else if (p.itemType === 'tier' && p.itemId) {
+                  highestTier = p.itemId;
+                }
+
+                const tx: PaymentTransactionRecord = {
+                  id: p.id,
+                  amount: p.amount,
+                  itemName: p.itemName,
+                  itemType: p.itemType,
+                  paymentMethod: 'Stripe Checkout',
+                  status: 'completed',
+                  createdAt: p.createdAt,
+                  actionDelta: p.actionDelta,
+                  newTier: p.itemType === 'tier' ? p.itemId : undefined,
+                  userId: user.uid
+                };
+                await recordPaymentTransaction(user.uid, tx);
+                existingIds.add(p.id);
+              }
+            }
+
+            if (hasNewPurchases) {
+              let updated = user;
+              if (totalNewCredits > 0) {
+                updated = await ActionLimitService.addPurchasedCredits(updated, totalNewCredits, guestId);
+              }
+              if (highestTier) {
+                updated = await ActionLimitService.activateSubscription(updated, highestTier as any, guestId);
+              }
+              setCurrentUser({ ...updated });
+              setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
+              setStripeReturnMessage({
+                type: 'success',
+                text: `🎉 Stripe Purchases Restored! Added ${totalNewCredits} actions to your account.`
+              });
+            }
+          }
+        } catch (syncErr) {
+          console.warn('Auto sync purchases on login failed:', syncErr);
+        }
       }
       setAuthInitialized(true);
     });
-    return () => unsubscribe();
+    return () => {
+      window.removeEventListener('storage', handleStorageEvent);
+      unsubscribe();
+    };
   }, [guestId]);
 
   // Mark full load completion once initial session and auth have settled
@@ -314,11 +392,13 @@ function App() {
       fetch(`/api/stripe/verify-checkout-session?sessionId=${encodeURIComponent(sessionId)}`)
         .then(res => res.json())
         .then(async (data) => {
-          if (data.paid) {
-            // Retrieve pending checkout details saved in sessionStorage
+          if (data.paid || data.status === 'complete' || data.payment_status === 'paid') {
+            // Retrieve pending checkout details saved in sessionStorage or localStorage
             let pending: any = null;
             try {
-              const rawPending = sessionStorage.getItem('aifinity_pending_checkout');
+              const rawPending =
+                sessionStorage.getItem('aifinity_pending_checkout') ||
+                localStorage.getItem('aifinity_pending_checkout');
               if (rawPending) pending = JSON.parse(rawPending);
             } catch (e) {
               console.warn('Could not parse pending checkout:', e);
@@ -339,6 +419,14 @@ function App() {
               currentUser?.uid ||
               localStorage.getItem('aifinity_last_checkout_user') ||
               '';
+
+            // Allow brief delay if auth is settling on fresh page redirect
+            if (targetUid && !auth.currentUser) {
+              for (let i = 0; i < 6; i++) {
+                if (auth.currentUser) break;
+                await new Promise((r) => setTimeout(r, 300));
+              }
+            }
 
             const txRecord: PaymentTransactionRecord = {
               id: sessionId,
@@ -370,6 +458,14 @@ function App() {
               }
 
               await recordPaymentTransaction(targetUid, txRecord);
+
+              // Broadcast update event to all other open tabs
+              try {
+                localStorage.setItem(
+                  'aifinity_payment_sync_event',
+                  JSON.stringify({ uid: targetUid, time: Date.now() })
+                );
+              } catch (e) {}
             } else {
               refreshActionStatus();
             }
@@ -384,6 +480,7 @@ function App() {
 
             try {
               sessionStorage.removeItem('aifinity_pending_checkout');
+              localStorage.removeItem('aifinity_pending_checkout');
             } catch (e) {}
           }
         })

@@ -18,7 +18,8 @@ import {
   Check,
   Receipt as ReceiptIcon,
   FileText,
-  Printer
+  Printer,
+  RefreshCw
 } from 'lucide-react';
 import {
   ACTION_PACKS,
@@ -28,8 +29,18 @@ import {
   ActionLimitService,
   ActionStatus
 } from '../services/actionLimitService';
-import { UserProfile, recordPaymentTransaction, isDefaultAdmin, PaymentTransactionRecord } from '../services/authService';
-import { createRealStripeCheckoutSession } from '../services/stripeCheckoutService';
+import {
+  UserProfile,
+  recordPaymentTransaction,
+  isDefaultAdmin,
+  PaymentTransactionRecord,
+  getLocalTransactions
+} from '../services/authService';
+import {
+  createRealStripeCheckoutSession,
+  checkStripeSessionStatus,
+  syncUserPurchasesFromStripe
+} from '../services/stripeCheckoutService';
 import { ReceiptModal } from './ReceiptModal';
 import { ReceiptsList } from './ReceiptsList';
 
@@ -93,6 +104,191 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   } | null>(null);
 
   const [copiedTxId, setCopiedTxId] = useState(false);
+  const [waitingSessionId, setWaitingSessionId] = useState<string | null>(null);
+  const [isSyncingPurchases, setIsSyncingPurchases] = useState(false);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+  const pollingIntervalRef = React.useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  // Check and restore all completed Stripe purchases for current account
+  const handleSyncStripePurchases = async () => {
+    if (!currentUser || !currentUser.uid) {
+      setSyncStatusMessage({
+        type: 'info',
+        text: 'Please log in to your account first so we can match your Stripe purchases.'
+      });
+      return;
+    }
+    setIsSyncingPurchases(true);
+    setSyncStatusMessage({
+      type: 'info',
+      text: 'Connecting to Stripe to scan for completed transactions...'
+    });
+
+    try {
+      const syncRes = await syncUserPurchasesFromStripe(currentUser.uid, currentUser.email || undefined);
+      if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
+        const existingTx = getLocalTransactions(currentUser.uid);
+        const existingIds = new Set(existingTx.map((t) => t.id));
+
+        let totalNewCredits = 0;
+        let highestTier: string | null = null;
+        let newlyRestoredCount = 0;
+
+        for (const p of syncRes.purchases) {
+          if (!existingIds.has(p.id)) {
+            newlyRestoredCount++;
+            if (p.itemType === 'pack' && p.actionDelta > 0) {
+              totalNewCredits += p.actionDelta;
+            } else if (p.itemType === 'tier' && p.itemId) {
+              highestTier = p.itemId;
+            }
+
+            const tx: PaymentTransactionRecord = {
+              id: p.id,
+              amount: p.amount,
+              itemName: p.itemName,
+              itemType: p.itemType,
+              paymentMethod: 'Stripe Checkout',
+              status: 'completed',
+              createdAt: p.createdAt,
+              recipient: currentUser.username || currentUser.email || 'Adventurer',
+              notes: p.itemType === 'pack' ? `Restored ${p.actionDelta} actions` : `Restored ${p.itemName}`,
+              userId: currentUser.uid,
+              actionDelta: p.actionDelta,
+              newTier: p.itemType === 'tier' ? p.itemId : undefined
+            };
+            await recordPaymentTransaction(currentUser.uid, tx);
+            existingIds.add(p.id);
+          }
+        }
+
+        let updated = currentUser;
+        if (totalNewCredits > 0) {
+          updated = await ActionLimitService.addPurchasedCredits(updated, totalNewCredits, guestId);
+        }
+        if (highestTier) {
+          updated = await ActionLimitService.activateSubscription(updated, highestTier as any, guestId);
+        }
+
+        if (updated) {
+          if (onProfileUpdated) onProfileUpdated({ ...updated });
+          onStatusUpdated();
+        }
+
+        if (newlyRestoredCount > 0) {
+          setSyncStatusMessage({
+            type: 'success',
+            text: `🎉 Restored ${newlyRestoredCount} Stripe purchase(s)! Added +${totalNewCredits} actions to your account.`
+          });
+        } else {
+          setSyncStatusMessage({
+            type: 'info',
+            text: `Verified ${syncRes.count} Stripe transaction(s). All purchases are already active on your account!`
+          });
+        }
+      } else {
+        setSyncStatusMessage({
+          type: 'info',
+          text: 'No pending or uncredited Stripe purchases were found for your email / account.'
+        });
+      }
+    } catch (err: any) {
+      setSyncStatusMessage({
+        type: 'error',
+        text: `Sync failed: ${err.message || 'Could not verify Stripe purchases'}`
+      });
+    } finally {
+      setIsSyncingPurchases(false);
+      setTimeout(() => setSyncStatusMessage(null), 8000);
+    }
+  };
+
+  // Immediate manual verification of waiting Stripe session
+  const handleManualCheckSession = async () => {
+    if (!waitingSessionId) return;
+    setProcessingMessage('Checking Stripe session payment status...');
+    try {
+      const statusData = await checkStripeSessionStatus(waitingSessionId);
+      if (statusData.paid || statusData.status === 'complete') {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+
+        const delta = selectedItem?.type === 'pack' ? (selectedItem.data as ActionPack).actions : 0;
+        let updatedUser = currentUser;
+        if (selectedItem?.type === 'pack' && delta > 0) {
+          updatedUser = await ActionLimitService.addPurchasedCredits(currentUser, delta, guestId);
+        } else if (selectedItem?.type === 'tier') {
+          const targetTier = (selectedItem.data.id || 'adventurer') as any;
+          updatedUser = await ActionLimitService.activateSubscription(currentUser, targetTier, guestId);
+        }
+
+        if (updatedUser) {
+          if (onProfileUpdated) onProfileUpdated({ ...updatedUser });
+          onStatusUpdated();
+        }
+
+        if (currentUser?.uid && selectedItem) {
+          const txRecord: PaymentTransactionRecord = {
+            id: waitingSessionId,
+            amount: selectedItem.data.price,
+            itemName: selectedItem.data.name,
+            itemType: selectedItem.type,
+            paymentMethod: 'Stripe Checkout',
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+            recipient: currentUser.username || currentUser.email || 'Adventurer',
+            notes: selectedItem.type === 'pack' ? `Added ${delta} actions` : `Activated ${selectedItem.data.name}`,
+            userId: currentUser.uid,
+            actionDelta: delta,
+            newTier: selectedItem.type === 'tier' ? selectedItem.data.id : undefined
+          };
+          await recordPaymentTransaction(currentUser.uid, txRecord);
+        }
+
+        // Broadcast across tabs
+        try {
+          localStorage.setItem(
+            'aifinity_payment_sync_event',
+            JSON.stringify({ uid: currentUser?.uid, time: Date.now() })
+          );
+        } catch (e) {}
+
+        setIsProcessingPayment(false);
+        setProcessingMessage(null);
+        const savedWaitingId = waitingSessionId;
+        setWaitingSessionId(null);
+
+        if (selectedItem) {
+          setTransactionReceipt({
+            id: savedWaitingId,
+            itemName: selectedItem.data.name,
+            amount: selectedItem.data.price,
+            paymentMethod: 'Stripe Checkout',
+            timestamp: new Date().toISOString(),
+            actionDelta: delta,
+            newTier: selectedItem.type === 'tier' ? selectedItem.data.id : undefined,
+            stripePaymentIntentId: statusData.paymentIntentId || savedWaitingId,
+            mode: stripeStatus?.mode || 'live'
+          });
+        }
+      } else {
+        setProcessingMessage('Stripe session is not marked as paid yet. Please finish paying in the Stripe window, then click verify again.');
+      }
+    } catch (e: any) {
+      setProcessingMessage(`Verification error: ${e.message || 'Try again in a moment'}`);
+    }
+  };
 
   // Stripe status from server / environment
   const [stripeStatus, setStripeStatus] = useState<{
@@ -189,18 +385,99 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
         if (result.url) {
           setCheckoutSessionUrl(result.url);
-          setIsProcessingPayment(false);
-          setProcessingMessage(null);
+          setWaitingSessionId(result.sessionId);
+          setIsProcessingPayment(true);
+          setProcessingMessage('Stripe Checkout window opened. Complete payment to receive your items automatically...');
 
-          // Redirect user to official Stripe hosted checkout page
+          // Open Stripe checkout in window / new tab
+          const isIframe = typeof window !== 'undefined' && window.self !== window.top;
           if (typeof window !== 'undefined') {
-            try {
-              window.location.href = result.url;
-            } catch (navErr: any) {
-              console.error('Direct window.location.href redirect error:', navErr);
+            if (isIframe) {
               window.open(result.url, '_blank');
+            } else {
+              try {
+                window.location.href = result.url;
+              } catch (navErr: any) {
+                console.error('Direct window.location.href redirect error:', navErr);
+                window.open(result.url, '_blank');
+              }
             }
           }
+
+          // Start active background polling to detect completed payment in real time
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+          }
+          pollingIntervalRef.current = window.setInterval(async () => {
+            try {
+              const statusData = await checkStripeSessionStatus(result.sessionId);
+              if (statusData.paid || statusData.status === 'complete') {
+                if (pollingIntervalRef.current) {
+                  clearInterval(pollingIntervalRef.current);
+                  pollingIntervalRef.current = null;
+                }
+
+                // Immediately credit user
+                let updatedUser = currentUser;
+                if (selectedItem.type === 'pack' && delta > 0) {
+                  updatedUser = await ActionLimitService.addPurchasedCredits(currentUser, delta, guestId);
+                } else if (selectedItem.type === 'tier') {
+                  const targetTier = (selectedItem.data.id || 'adventurer') as any;
+                  updatedUser = await ActionLimitService.activateSubscription(currentUser, targetTier, guestId);
+                }
+
+                if (updatedUser) {
+                  if (onProfileUpdated) onProfileUpdated({ ...updatedUser });
+                  onStatusUpdated();
+                }
+
+                if (currentUser?.uid) {
+                  const txRecord: PaymentTransactionRecord = {
+                    id: result.sessionId,
+                    amount: selectedItem.data.price,
+                    itemName: selectedItem.data.name,
+                    itemType: selectedItem.type,
+                    paymentMethod: 'Stripe Checkout',
+                    status: 'completed',
+                    createdAt: new Date().toISOString(),
+                    recipient: currentUser.username || currentUser.email || 'Adventurer',
+                    notes: selectedItem.type === 'pack' ? `Added ${delta} actions` : `Activated ${selectedItem.data.name}`,
+                    userId: currentUser.uid,
+                    actionDelta: delta,
+                    newTier: selectedItem.type === 'tier' ? selectedItem.data.id : undefined
+                  };
+                  await recordPaymentTransaction(currentUser.uid, txRecord);
+                }
+
+                // Cross-tab broadcast
+                try {
+                  localStorage.setItem(
+                    'aifinity_payment_sync_event',
+                    JSON.stringify({ uid: currentUser?.uid, time: Date.now() })
+                  );
+                } catch (e) {}
+
+                setIsProcessingPayment(false);
+                setProcessingMessage(null);
+                setWaitingSessionId(null);
+
+                setTransactionReceipt({
+                  id: result.sessionId,
+                  itemName: selectedItem.data.name,
+                  amount: selectedItem.data.price,
+                  paymentMethod: 'Stripe Checkout',
+                  timestamp: new Date().toISOString(),
+                  actionDelta: delta,
+                  newTier: selectedItem.type === 'tier' ? selectedItem.data.id : undefined,
+                  stripePaymentIntentId: statusData.paymentIntentId || result.sessionId,
+                  mode: stripeStatus?.mode || 'live'
+                });
+              }
+            } catch (pollErr) {
+              console.warn('Polling checkStripeSessionStatus error:', pollErr);
+            }
+          }, 2500);
+
           return;
         }
 
@@ -473,55 +750,92 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-neutral-800 bg-neutral-900/60 px-4 pt-1.5 gap-2 text-xs md:text-sm font-medium shrink-0">
+        <div className="flex flex-wrap items-center justify-between border-b border-neutral-800 bg-neutral-900/60 px-4 pt-1.5 gap-2 text-xs md:text-sm font-medium shrink-0">
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setActiveTab('packs'); setSelectedItem(null); setTransactionReceipt(null); }}
+              className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+                activeTab === 'packs'
+                  ? 'border-amber-400 text-amber-300 font-semibold'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Zap size={15} />
+              Action Packs
+            </button>
+            <button
+              onClick={() => { setActiveTab('subscriptions'); setSelectedItem(null); setTransactionReceipt(null); }}
+              className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+                activeTab === 'subscriptions'
+                  ? 'border-amber-400 text-amber-300 font-semibold'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Crown size={15} />
+              Monthly Memberships
+            </button>
+            <button
+              onClick={() => { setActiveTab('apikey'); setSelectedItem(null); setTransactionReceipt(null); }}
+              className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+                activeTab === 'apikey'
+                  ? 'border-amber-400 text-amber-300 font-semibold'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Key size={15} />
+              Free Gemini API Key
+            </button>
+            <button
+              onClick={() => { setActiveTab('receipts'); setSelectedItem(null); setTransactionReceipt(null); }}
+              className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
+                activeTab === 'receipts'
+                  ? 'border-amber-400 text-amber-300 font-semibold'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <ReceiptIcon size={15} />
+              Receipts & Orders
+            </button>
+          </div>
+
           <button
-            onClick={() => { setActiveTab('packs'); setSelectedItem(null); setTransactionReceipt(null); }}
-            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
-              activeTab === 'packs'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
+            onClick={handleSyncStripePurchases}
+            disabled={isSyncingPurchases}
+            className="mb-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Scan Stripe for completed purchases and credit any missing actions to your account"
           >
-            <Zap size={15} />
-            Action Packs
-          </button>
-          <button
-            onClick={() => { setActiveTab('subscriptions'); setSelectedItem(null); setTransactionReceipt(null); }}
-            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
-              activeTab === 'subscriptions'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Crown size={15} />
-            Monthly Memberships
-          </button>
-          <button
-            onClick={() => { setActiveTab('apikey'); setSelectedItem(null); setTransactionReceipt(null); }}
-            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
-              activeTab === 'apikey'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Key size={15} />
-            Free Gemini API Key
-          </button>
-          <button
-            onClick={() => { setActiveTab('receipts'); setSelectedItem(null); setTransactionReceipt(null); }}
-            className={`pb-2.5 px-3 flex items-center gap-1.5 border-b-2 transition-colors ${
-              activeTab === 'receipts'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <ReceiptIcon size={15} />
-            Receipts & Orders
+            <RefreshCw size={13} className={isSyncingPurchases ? 'animate-spin text-amber-400' : 'text-amber-400'} />
+            <span>{isSyncingPurchases ? 'Checking Stripe...' : 'Restore Stripe Purchases'}</span>
           </button>
         </div>
 
         {/* Content Area - Scrollable */}
         <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-4">
+
+          {/* Sync Status Banner */}
+          {syncStatusMessage && (
+            <div
+              className={`p-3 rounded-lg border text-xs flex items-center justify-between gap-2 animate-in fade-in duration-150 ${
+                syncStatusMessage.type === 'success'
+                  ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                  : syncStatusMessage.type === 'error'
+                  ? 'bg-rose-950/60 border-rose-500/60 text-rose-200'
+                  : 'bg-blue-950/60 border-blue-500/60 text-blue-200'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className="shrink-0 text-amber-400" />
+                <span>{syncStatusMessage.text}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSyncStatusMessage(null)}
+                className="text-neutral-400 hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
           {/* Checkout Sheet if item is selected */}
           {selectedItem && (
@@ -732,19 +1046,37 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
                   {/* ACTIVE CHECKOUT SESSION NOTICE */}
                   {checkoutSessionUrl && (
-                    <div className="p-3 bg-blue-950/50 border border-blue-800 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                      <div className="text-xs text-blue-200">
-                        <span className="font-semibold block text-white">Stripe Checkout Session Active</span>
-                        A secure Stripe checkout tab has been created.
+                    <div className="p-3.5 bg-amber-950/40 border border-amber-500/50 rounded-lg space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs text-amber-300 font-bold">
+                          <RefreshCw size={13} className="animate-spin text-amber-400 shrink-0" />
+                          <span>Waiting for Stripe Payment...</span>
+                        </div>
+                        <span className="text-[10px] text-amber-400 font-mono">Auto-detect active</span>
                       </div>
-                      <a
-                        href={checkoutSessionUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0"
-                      >
-                        Open Stripe Checkout <ExternalLink size={12} />
-                      </a>
+                      <p className="text-[11px] text-neutral-300">
+                        Please finish paying in the Stripe checkout tab. As soon as you complete the payment, this window will automatically detect it and grant your items.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <a
+                          href={checkoutSessionUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                        >
+                          Re-open Stripe Window <ExternalLink size={12} />
+                        </a>
+                        {waitingSessionId && (
+                          <button
+                            type="button"
+                            onClick={handleManualCheckSession}
+                            className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow"
+                          >
+                            <CheckCircle2 size={13} />
+                            I Have Paid (Verify Now)
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 

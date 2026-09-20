@@ -82,7 +82,7 @@ export async function createRealStripeCheckoutSession(params: {
 
   if (typeof window !== 'undefined') {
     try {
-      sessionStorage.setItem('aifinity_pending_checkout', JSON.stringify({
+      const pendingData = {
         sessionId: data.sessionId,
         amount,
         itemName,
@@ -93,9 +93,15 @@ export async function createRealStripeCheckoutSession(params: {
         userEmail: user.email || '',
         username: user.username || '',
         timestamp: new Date().toISOString()
-      }));
+      };
+      sessionStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
+      localStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
+      localStorage.setItem('aifinity_last_checkout_user', user.uid);
+      if (user.email) {
+        localStorage.setItem('aifinity_last_checkout_email', user.email);
+      }
     } catch (e) {
-      console.warn('Could not save pending checkout to sessionStorage:', e);
+      console.warn('Could not save pending checkout:', e);
     }
   }
 
@@ -103,4 +109,62 @@ export async function createRealStripeCheckoutSession(params: {
     url: data.url,
     sessionId: data.sessionId
   };
+}
+
+/**
+ * Polls the backend to check if an active checkout session was paid
+ */
+export async function checkStripeSessionStatus(sessionId: string): Promise<{
+  paid: boolean;
+  status?: string;
+  amount?: number;
+  customerEmail?: string;
+  metadata?: any;
+}> {
+  try {
+    const res = await fetch(`/api/stripe/check-session-status?sessionId=${encodeURIComponent(sessionId)}`);
+    if (!res.ok) return { paid: false };
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    console.warn('Check session status error:', e);
+    return { paid: false };
+  }
+}
+
+/**
+ * Syncs and retrieves all completed Stripe purchases for a user
+ */
+export async function syncUserPurchasesFromStripe(
+  userId: string,
+  email?: string
+): Promise<{
+  success: boolean;
+  count: number;
+  purchases: Array<{
+    id: string;
+    amount: number;
+    itemType: 'pack' | 'tier';
+    itemId: string;
+    itemName: string;
+    actionDelta: number;
+    email: string;
+    userId: string;
+    paymentMethod: string;
+    status: 'completed';
+    createdAt: string;
+  }>;
+}> {
+  try {
+    const url = `/api/stripe/sync-user-purchases?userId=${encodeURIComponent(userId)}&email=${encodeURIComponent(email || '')}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      return { success: false, count: 0, purchases: [] };
+    }
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('Failed to sync Stripe purchases:', err);
+    return { success: false, count: 0, purchases: [] };
+  }
 }
