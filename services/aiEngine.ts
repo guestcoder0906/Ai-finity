@@ -238,7 +238,15 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
     - Held in Jaws: Healing Herb: 0.1 lbs, 4x1 inches. (Held in mouth/teeth)
     - Overflow Hold: Rolled Map: 0.3 lbs, 12x2 inches. (Overflow: Yes - awkwardly clutched under arm while hands are occupied; risks dropping or getting knocked down))
   * If holding nothing: "- (None - Hands/Appendages free)"
-- Dynamic Overflow Rule (CRITICAL): If the character wants or attempts to hold more items than their anatomy normally allows (e.g. clutching an extra item under an arm, tucking something under a chin, clamping an item in their teeth while hands are full), the AI dynamically marks it as an overflow hold. Overflow items are NOT securely gripped — they might slip, drop, or get knocked down depending on narrative context (combat collisions, sudden dodging, sprinting, climbing, jumping, or taking damage) determined dynamically by AI!
+- Dynamic Overflow & Scaled Accidental Drop Rule (CRITICAL):
+  1. Overflow Mechanics: If a character holds more items than their anatomy normally allows (e.g. clutching an extra item under an arm, tucking something under a chin, clamping an item in their teeth while hands are full), or if items protrude from containers, the AI dynamically marks them as overflow.
+  2. Overflow Strain Scaling: The MORE items added to overflow, the higher the overall chance of dropping items by accident.
+  3. Weight & Size Scaling: The heavier and bigger each item is, the bigger chance of dropping by accident based on context and scaled random chance. Bigger and heavier items have a significantly higher chance of dropping than smaller/lighter ones!
+  4. Context & Scaled Random Chance: Active physical movement, combat, sprinting, dodging, climbing, collisions, jumping, or taking hits increases the accidental drop chance. When an accidental drop occurs, the scaled random chance selects the heavier and bigger items first with higher probability. If an accidental drop occurs, narrate it vividly, remove the dropped item from the character file, place it on the ground at their current coordinates in "CurrentMap.json", and emit an update!
+- Starting Carried Items Limit Rule (CRITICAL MANDATE):
+  * At character creation / game start, the MAXIMUM number of carrying items a character can start with (sum of equipped gear, worn armor, carried containers, and items inside containers) is LESS THAN OR EQUAL TO 2x their hand slots (e.g. standard 2-handed humanoid = max 4 starting carrying items; 1-slot mouth/quadruped = max 2 items; 4 arms = max 8 items; 0 hand slots = 0 items).
+  * Any extra background items, heirlooms, or gear MUST be placed under [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached location (e.g. [Location: Starting Home / Camp Stash]).
+  * DURING ADVENTURE RULE: Once the adventure begins, characters CAN carry more than this limit without restriction (subject only to container space, encumbrance, and overflow rules)!
 - Weight & Capacity Mandate: All items currently held count toward total items capacity, carried weight, and encumbrance like usual.
 
 [CONTAINERS & CARRIED GEAR]
@@ -251,7 +259,7 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
   * Foldable Items Rule: Pliable, flexible, and foldable items (e.g. leather tunics, cloth clothes, cloaks, robes, bedrolls, blankets, ropes, bandages, parchment) fold down and compress to fit inside containers. A foldable item does NOT trigger an overflow warning simply because its unfolded dimensions exceed the container dimensions. The AI determines if a foldable item can be folded enough to fit alongside other items in the container.
   * Rigid Items & "Does Not Fit" Rule: Rigid, inflexible items (e.g. iron armor, steel plate, breastplates, shields, staves, spears, solid wooden/metal chests) cannot fold down.
     - If a rigid item has ALL dimensions bigger than the smallest dimension of the container, it DOES NOT FIT at all in the first place! It cannot be placed into the container (flag as: "Item Name: ... (Does Not Fit: Rigid item's dimensions exceed container opening/smallest dimension)").
-    - If a rigid item fits through the container opening but its length exceeds the container's max depth (e.g. a 60-inch staff placed inside an 18-inch backpack), it protrudes and overflows: "(Overflow: Yes - rigid item sticks out of container; risks dropping or being knocked down by accident during story)".
+    - If a rigid item fits through the container opening but its length exceeds the container's max depth (e.g. a 60-inch staff placed inside an 18-inch backpack), it protrudes and overflows: "(Overflow: Yes - rigid item sticks out of container; heavier/bulkier items have higher chance of dropping by accident based on context and scaled random chance)".
 - Total Carried Weight on Person: (The code automatically sums all weight of equipped gear, armor, containers, and items inside containers, e.g. "24 lbs / 165 lbs (14.5% body weight - Good: Unencumbered)")
 
 [OWNED / STORED ITEMS (NOT ON PERSON)]
@@ -808,7 +816,7 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. If the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. If the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
           const res = await this.handleRequest(prompt, undefined, username);
           resolve(res);
         } catch (e) {
@@ -3291,6 +3299,22 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           // Auto-synchronize weight, dimensions, containers, and encumbrance on character files
           if (typeof contentStr === 'string' && filename.endsWith('.txt') && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CONTAINERS') || contentStr.includes('[INVENTORY'))) {
             try {
+              const existingCharacterFile = this.fs.read(filename);
+              // If this is a newly created character file, enforce starting inventory carrying limit (<= 2x hand slots)
+              if (!existingCharacterFile) {
+                const limitEnforcement = WeightInventoryEngine.enforceStartingInventoryLimit(contentStr);
+                if (limitEnforcement.modified) {
+                  contentStr = limitEnforcement.updatedContent;
+                  if (data.updates && Array.isArray(data.updates)) {
+                    data.updates.push({
+                      type: 'misc',
+                      text: `Starting Inventory Limit Enforced: Carried items capped at ${limitEnforcement.maxAllowed} (2x ${limitEnforcement.handSlots} hand slots). Excess items (${limitEnforcement.movedItems.join(', ')}) placed in [OWNED / STORED ITEMS (NOT ON PERSON)].`,
+                      value: 0
+                    });
+                  }
+                }
+              }
+
               const activeTime = this.fs.read('WorldTime.txt') || undefined;
               const syncResult = WeightInventoryEngine.syncCharacterFileContent(contentStr, activeTime);
               contentStr = syncResult.updatedContent;
@@ -3307,19 +3331,49 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
                     });
                   }
                 }
+
+                // Report overall overflow accidental drop chance
+                if (stats.totalOverflowCount > 0) {
+                  const hasOverallOverflowUpdate = data.updates.some(u => u.text && u.text.toLowerCase().includes('accidental drop risk'));
+                  if (!hasOverallOverflowUpdate) {
+                    data.updates.push({
+                      type: 'misc',
+                      text: `Overflow Alert: ${stats.totalOverflowCount} item(s) in overflow (${stats.overallOverflowDropChancePercent}% accidental drop risk). Heavier/bulkier items have higher chance of dropping than lighter/smaller ones!`,
+                      value: 0
+                    });
+                  }
+                }
+
+                // Individual container overflow items with weight-scaled drop risk
                 for (const cont of stats.containers) {
                   if (cont.hasOverflow) {
                     for (const item of cont.items) {
                       if (item.isOverflow) {
                         const hasOverflowUpdate = data.updates.some(u => u.text && u.text.includes(item.name) && u.text.includes('overflow'));
                         if (!hasOverflowUpdate) {
+                          const dropPct = item.dropChancePercent || 25;
                           data.updates.push({
                             type: 'misc',
-                            text: `Warning: [${item.name}] overflows [${cont.name}] dimensions - risks dropping!`,
+                            text: `Warning: [${item.name}] (${item.weight} lbs) overflows [${cont.name}] (${dropPct}% accidental drop risk - scaled by weight & size)`,
                             value: 0
                           });
                         }
                       }
+                    }
+                  }
+                }
+
+                // Individual held overflow items
+                for (const held of stats.currentlyHolding) {
+                  if (held.isOverflowHold) {
+                    const hasHeldOverflowUpdate = data.updates.some(u => u.text && u.text.includes(held.name) && u.text.includes('overflow hold'));
+                    if (!hasHeldOverflowUpdate) {
+                      const dropPct = held.dropChancePercent || 25;
+                      data.updates.push({
+                        type: 'misc',
+                        text: `Warning: [${held.name}] (${held.weight} lbs) held in overflow (${dropPct}% accidental drop risk - heavier/bulkier items drop first)`,
+                        value: 0
+                      });
                     }
                   }
                 }

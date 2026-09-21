@@ -803,8 +803,22 @@ const Sidebar: React.FC<SidebarProps> = ({
 
                                   <div className="text-[8.5px] text-neutral-400 pl-1 flex items-center justify-between">
                                     <span className="truncate">Anatomy: {pStats.holdingCapacity.holdingLimbsDescription}</span>
-                                    <span className="text-neutral-500 shrink-0">Cap: {pStats.holdingCapacity.maxStandardHoldCount} items</span>
+                                    <span className="text-neutral-500 shrink-0">
+                                      Slots: {pStats.handSlots !== undefined ? pStats.handSlots : pStats.holdingCapacity.maxStandardHoldCount} (Start Max: {pStats.maxStartingCarryingItems || (pStats.handSlots !== undefined ? pStats.handSlots : pStats.holdingCapacity.maxStandardHoldCount || 2) * 2})
+                                    </span>
                                   </div>
+
+                                  {(pStats.holdingCapacity.hasOverflowHold || (pStats.totalOverflowCount && pStats.totalOverflowCount > 0)) && (
+                                    <div className="text-[8px] bg-red-950/60 border border-red-800/70 text-red-300 rounded px-1.5 py-0.5 flex items-center justify-between">
+                                      <span className="flex items-center gap-1 truncate">
+                                        <AlertTriangle size={9} className="text-red-400 shrink-0" />
+                                        <span>Accidental Drop Risk ({pStats.totalOverflowCount || 1} overflow):</span>
+                                      </span>
+                                      <span className="font-mono font-bold text-red-200 shrink-0">
+                                        {pStats.overallOverflowDropChancePercent || pStats.holdingCapacity.overflowDropChancePercent || 25}% chance
+                                      </span>
+                                    </div>
+                                  )}
 
                                   {pStats.currentlyHolding.length > 0 ? (
                                     <div className="text-[9px] text-gray-300 pl-1 border-l border-amber-800/60 space-y-1 mt-0.5">
@@ -829,9 +843,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                                             </span>
                                           </div>
                                           {it.isOverflowHold && (
-                                            <div className="text-[8px] text-red-400 flex items-center gap-1 mt-0.5">
-                                              <AlertTriangle size={9} className="shrink-0 text-red-400" />
-                                              <span>{it.overflowWarning || 'Held with overflow; risks dropping or being knocked down.'}</span>
+                                            <div className="text-[8px] text-red-400 flex items-center justify-between mt-0.5 pt-0.5 border-t border-red-900/40">
+                                              <div className="flex items-center gap-1 truncate pr-1">
+                                                <AlertTriangle size={9} className="shrink-0 text-red-400" />
+                                                <span className="truncate">{it.overflowWarning || 'Held with overflow; heavier/bulkier items drop first.'}</span>
+                                              </div>
+                                              {it.dropChancePercent !== undefined && (
+                                                <span className="font-mono font-bold text-red-200 shrink-0">
+                                                  {it.dropChancePercent}% drop
+                                                </span>
+                                              )}
                                             </div>
                                           )}
                                         </div>
@@ -970,7 +991,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                                                 {cont.items.map((it, ii) => (
                                                   <div key={ii} className="flex justify-between items-center text-[9px] hover:bg-neutral-900/40 px-1 py-0.5 rounded">
                                                     <span className={`truncate pr-1 ${it.doesNotFit ? 'text-red-400 font-semibold' : it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}`}>
-                                                      • {it.name} {it.doesNotFit ? '⛔ (Does Not Fit)' : it.isOverflow ? '⚠️ (Overflow)' : ''}
+                                                      • {it.name} {it.doesNotFit ? '⛔ (Does Not Fit)' : it.isOverflow ? `⚠️ (Overflow: ${it.dropChancePercent || 25}% Drop Risk)` : ''}
                                                     </span>
                                                     <span className="font-mono text-gray-500 text-[8px] shrink-0">
                                                       {it.weight} lbs {it.dimensions.raw ? `(${it.dimensions.raw})` : ''}

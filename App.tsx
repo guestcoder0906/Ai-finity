@@ -912,7 +912,7 @@ function App() {
         // Host creates character for new player
         updateProcessing(1);
         try {
-          const prompt = `Create a highly detailed and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".\n\nCRITICAL: Check your context. If a character file for player "${newUsername}" (ending in "-${newUsername}.txt") ALREADY EXISTS, you MUST update that specific file and NOT create a new one. Do not create duplicates. Return the character file AND update "CurrentMap.json" to place the new player at the appropriate starting location. DO NOT modify, empty, or delete ANY OTHER existing files (do not use null). Make sure the character file includes Physical Dimensions (Height, Width, Depth), Body Weight, Speed, Max Lift Strength (100% of body weight for average human with 1.0x strength), equipped containers with max space dimensions (e.g. 18x12 inches for backpack), items with detectable weights and dimensions, and total carried weight.`;
+          const prompt = `Create a highly detailed and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".\n\nCRITICAL: Check your context. If a character file for player "${newUsername}" (ending in "-${newUsername}.txt") ALREADY EXISTS, you MUST update that specific file and NOT create a new one. Do not create duplicates. Return the character file AND update "CurrentMap.json" to place the new player at the appropriate starting location. DO NOT modify, empty, or delete ANY OTHER existing files (do not use null). Make sure the character file includes Physical Dimensions (Height, Width, Depth), Body Weight, Speed, Max Lift Strength (100% of body weight for average human with 1.0x strength), equipped containers with max space dimensions (e.g. 18x12 inches for backpack), items with detectable weights and dimensions, and total carried weight.\n\nSTARTING INVENTORY LIMIT RULE (CRITICAL): The maximum number of carrying items this character starts with (equipped gear + carried in containers) MUST BE LESS THAN OR EQUAL TO 2x their hand slots (e.g. max 4 items for a 2-handed humanoid; 1 slot = max 2 items). Any additional items, background equipment, or family heirlooms must be placed under [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached location (e.g. [Location: Starting Home / Camp Stash]). During the adventure, characters can carry more than this limit!`;
           await aiEngine.processAction(prompt);
           ms.syncState({
             fileSystemState: fileSystem.exportState(),
@@ -1426,7 +1426,10 @@ function App() {
               <p className="mt-1 italic">{roomState?.narrative?.filter((n: any) => n.type === 'user')[0]?.text || 'A new adventure awaits...'}</p>
             </div>
 
-            <p className="text-sm text-gray-400 mb-4">Describe your character's class, appearance, and background.</p>
+            <p className="text-sm text-gray-400 mb-2">Describe your character's class, appearance, and background.</p>
+            <div className="mb-3 bg-amber-950/40 border border-amber-900/50 p-2 rounded text-[11px] text-amber-300/90 leading-tight">
+              <strong>Starting Inventory Limit:</strong> Characters can start with at most 2x their hand slots in carried items (e.g. max 4 items for 2 hands). Extra items will be placed in your starting home/camp stash. (During the adventure, you can carry more!)
+            </div>
             <textarea
               value={characterDescription}
               onChange={(e) => setCharacterDescription(e.target.value)}

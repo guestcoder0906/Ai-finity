@@ -44,6 +44,8 @@ export interface ItemInfo {
   doesNotFit?: boolean;
   fitStatus?: 'fits' | 'overflow' | 'does_not_fit';
   overflowReason?: string;
+  dropChancePercent?: number; // Scaled random accidental drop probability %
+  dropRiskScore?: number; // Relative vulnerability score based on weight and dimensions
   rawText: string;
   usage?: ItemUsageInfo;
   temporaryEffect?: {
@@ -65,6 +67,7 @@ export interface ContainerInfo {
   totalWeight: number; // container weight + items weight
   hasOverflow: boolean;
   hasDoesNotFit?: boolean;
+  overflowDropChancePercent?: number;
   rawText: string;
 }
 
@@ -83,6 +86,9 @@ export interface HoldingCapacityInfo {
   hasOverflowHold: boolean;
   overflowReason?: string;
   freeSlots: number;
+  overflowDropChancePercent?: number; // Overall scaled accidental drop chance for overflow items
+  totalOverflowCount?: number;
+  maxStartingCarryingItems?: number; // <= 2x hand slots limit at start
 }
 
 export interface CurrencyEntry {
@@ -136,6 +142,10 @@ export interface CharacterPhysicalStats {
   passengerWeight: number;
   currentlyHolding: HeldItemInfo[];
   holdingCapacity: HoldingCapacityInfo;
+  handSlots: number;
+  maxStartingCarryingItems: number; // <= 2x hand slots limit at start
+  totalOverflowCount: number; // total items in overflow across hands & containers
+  overallOverflowDropChancePercent: number; // scaled random chance of accidental drop
   containers: ContainerInfo[];
   equippedGear: ItemInfo[];
   carriedItems: ItemInfo[];
@@ -975,6 +985,255 @@ export class WeightInventoryEngine {
       canFit: fit.canFit,
       isFoldable: fit.isFoldable,
       reason: fit.reason
+    };
+  }
+
+  /**
+   * Calculates an item's vulnerability/risk score for slipping or being dropped accidentally when in overflow.
+   * Scaled so that heavier and bigger (longer/bulkier) items have a significantly higher score than smaller, lighter ones.
+   */
+  public static calculateItemDropRisk(item: { weight?: number; dimensions?: ParsedDimensions }): number {
+    const weight = Math.max(0.1, item.weight !== undefined && !isNaN(item.weight) ? item.weight : 0.5);
+
+    // Extract dimensions
+    let maxDim = 4; // default minimum baseline 4 inches
+    let volumeEst = 8; // default baseline cubic inches
+    if (item.dimensions) {
+      const h = item.dimensions.height || 0;
+      const w = item.dimensions.width || 0;
+      const d = item.dimensions.depth || 0;
+      const validDims = [h, w, d].filter(v => v > 0);
+      if (validDims.length > 0) {
+        maxDim = Math.max(2, ...validDims);
+        volumeEst = validDims.reduce((acc, val) => acc * Math.max(0.5, val), 1);
+      }
+    }
+
+    // Weight factor: scales progressively (heavier items are much harder to balance awkwardly)
+    // Small dagger / feather (0.1 - 1 lb) -> 0.3 - 1.0
+    // Longsword / Shield (3 - 6 lbs) -> 2.2 - 3.8
+    // Warhammer / Greatsword / Plate (8 - 25 lbs) -> 4.7 - 11.2
+    const weightFactor = Math.pow(weight, 0.75);
+
+    // Dimension / Size factor: scales with maximum dimension and cubic bulk
+    // Longer/bulkier items catch on scenery, terrain, limbs, and lack secure grip
+    const lengthFactor = Math.max(0.5, maxDim / 12); // relative to 1 foot
+    const bulkFactor = Math.pow(Math.max(1, volumeEst) / 64, 0.33); // relative to 4x4x4" block
+    const sizeFactor = lengthFactor * bulkFactor;
+
+    // Combined risk index
+    const risk = weightFactor * sizeFactor;
+    return Math.max(0.1, Math.round(risk * 100) / 100);
+  }
+
+  /**
+   * Calculates the overall accidental drop chance and per-item drop probability for all items in overflow.
+   *
+   * User mandate:
+   * "the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping
+   *  by accident based on context and the scaled random chance which scales for heavier bigger items
+   *  and bigger heavier items have higher chance of dropping than smaller/lighter ones."
+   *
+   * @param overflowItems Array of items currently in overflow (held or in containers)
+   * @param context Strenuousness of the situation ('calm' | 'normal' | 'strenuous' | 'combat' or custom numeric multiplier)
+   */
+  public static calculateOverflowDropProbabilities(
+    overflowItems: Array<ItemInfo | HeldItemInfo>,
+    context: 'calm' | 'normal' | 'strenuous' | 'combat' | number = 'normal'
+  ): {
+    overallChancePercent: number;
+    totalOverflowCount: number;
+    itemDropChances: Array<{
+      item: ItemInfo | HeldItemInfo;
+      dropChancePercent: number;
+      riskScore: number;
+      relativeWeightPercent: number;
+    }>;
+  } {
+    const totalOverflowCount = overflowItems.length;
+    if (totalOverflowCount === 0) {
+      return {
+        overallChancePercent: 0,
+        totalOverflowCount: 0,
+        itemDropChances: []
+      };
+    }
+
+    // Context multiplier:
+    // calm: standing, resting, light dialogue
+    // normal: walking, searching, examining, routine tasks
+    // strenuous: jogging, climbing, jumping, hauling, dodging
+    // combat: melee fighting, sprinting, taking hits, explosive collisions
+    let contextMult = 1.0;
+    if (typeof context === 'number') {
+      contextMult = Math.max(0.2, context);
+    } else if (context === 'calm') {
+      contextMult = 0.5;
+    } else if (context === 'strenuous') {
+      contextMult = 1.6;
+    } else if (context === 'combat') {
+      contextMult = 2.4;
+    }
+
+    // 1. More items added to overflow -> scales overall chance up!
+    // Base chance starts at 15% with 1 item, and increases by ~12% per additional overflow item
+    const countScaling = 15 + (totalOverflowCount - 1) * 12;
+
+    // 2. Individual item risk calculation (heavier and bigger items have higher risk score)
+    const itemRisks = overflowItems.map(item => {
+      const risk = WeightInventoryEngine.calculateItemDropRisk(item);
+      return { item, risk };
+    });
+
+    const totalRiskScore = itemRisks.reduce((sum, r) => sum + r.risk, 0);
+    const avgRiskScore = totalRiskScore / totalOverflowCount;
+
+    // Heavier/bulkier overall load increases the baseline chance:
+    // Baseline avgRisk ~ 1.0 for medium items; heavy loads scale this up
+    const loadWeightSizeMultiplier = Math.min(2.5, Math.max(0.6, 0.6 + avgRiskScore * 0.4));
+
+    // Calculate overall accidental drop chance in this turn/action
+    const rawOverallChance = countScaling * contextMult * loadWeightSizeMultiplier;
+    const overallChancePercent = Math.min(95, Math.max(5, Math.round(rawOverallChance)));
+
+    // 3. Scaled random chance per item:
+    // Bigger and heavier items have a significantly HIGHER chance of dropping than smaller/lighter ones!
+    const itemDropChances = itemRisks.map(({ item, risk }) => {
+      const relativeWeight = totalRiskScore > 0 ? (risk / totalRiskScore) : (1 / totalOverflowCount);
+      const relativeWeightPercent = Math.round(relativeWeight * 1000) / 10;
+
+      // Each item's individual drop probability if tested:
+      // An item's individual chance scales with its relative weight/size share
+      const itemChance = Math.min(95, Math.max(3, Math.round(overallChancePercent * relativeWeight * Math.min(2.5, Math.sqrt(totalOverflowCount)))));
+
+      return {
+        item,
+        riskScore: risk,
+        dropChancePercent: itemChance,
+        relativeWeightPercent
+      };
+    });
+
+    // Sort item chances descending so the heaviest/biggest items are listed first
+    itemDropChances.sort((a, b) => b.dropChancePercent - a.dropChancePercent);
+
+    return {
+      overallChancePercent,
+      totalOverflowCount,
+      itemDropChances
+    };
+  }
+
+  /**
+   * Helper to get the maximum carrying items a character can start with (<= 2x hand slots).
+   */
+  public static getMaxStartingCarryingItems(handSlots: number): number {
+    return Math.max(0, Math.round(handSlots * 2));
+  }
+
+  /**
+   * Enforces the starting carrying items limit rule:
+   * "Make max carrying items a character can start with is less than or equal to 2x their hand slots (but during adventure they can carry more than limit)"
+   *
+   * If a starting character file has more than 2x hand slots items in equipped/carried gear,
+   * cleanly moves the excess items to [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached starting location.
+   */
+  public static enforceStartingInventoryLimit(fileContent: string): {
+    updatedContent: string;
+    modified: boolean;
+    handSlots: number;
+    maxAllowed: number;
+    totalCarriedCount: number;
+    movedItems: string[];
+  } {
+    if (!fileContent || !fileContent.trim()) {
+      return { updatedContent: fileContent, modified: false, handSlots: 2, maxAllowed: 4, totalCarriedCount: 0, movedItems: [] };
+    }
+
+    const stats = WeightInventoryEngine.parseCharacterFile(fileContent);
+    const handSlots = stats.handSlots !== undefined ? stats.handSlots : (stats.holdingCapacity.maxStandardHoldCount || 2);
+    const maxAllowed = WeightInventoryEngine.getMaxStartingCarryingItems(handSlots);
+
+    // Collect all carried/equipped items (equipped gear, containers, carried loose, and held items not already in equipped)
+    const carriedList: Array<{ item: ItemInfo; section: 'equipped' | 'container_item' | 'loose' | 'held' }> = [];
+    for (const eq of stats.equippedGear) {
+      carriedList.push({ item: eq, section: 'equipped' });
+    }
+    for (const cont of stats.containers) {
+      for (const it of cont.items) {
+        carriedList.push({ item: it, section: 'container_item' });
+      }
+    }
+    for (const loose of stats.carriedItems) {
+      carriedList.push({ item: loose, section: 'loose' });
+    }
+    for (const held of stats.currentlyHolding) {
+      const alreadyIn = carriedList.some(c => c.item.name.toLowerCase() === held.name.toLowerCase());
+      if (!alreadyIn) {
+        carriedList.push({ item: held, section: 'held' });
+      }
+    }
+
+    if (carriedList.length <= maxAllowed) {
+      return {
+        updatedContent: fileContent,
+        modified: false,
+        handSlots,
+        maxAllowed,
+        totalCarriedCount: carriedList.length,
+        movedItems: []
+      };
+    }
+
+    // Need to move excess items! Keep the first maxAllowed most essential items (e.g. worn armor, primary weapon, containers)
+    const itemsToMove = carriedList.slice(maxAllowed);
+    const movedNames = itemsToMove.map(m => m.item.name);
+
+    let updated = fileContent;
+
+    // Ensure [OWNED / STORED ITEMS (NOT ON PERSON)] exists
+    if (!updated.includes('[OWNED / STORED ITEMS (NOT ON PERSON)]')) {
+      const insertPos = updated.indexOf('[CURRENCY & FINANCIAL BALANCE]') !== -1
+        ? updated.indexOf('[CURRENCY & FINANCIAL BALANCE]')
+        : updated.indexOf('[ATTACKS & COMBAT ACTIONS]') !== -1
+          ? updated.indexOf('[ATTACKS & COMBAT ACTIONS]')
+          : updated.length;
+      const storedSection = `[OWNED / STORED ITEMS (NOT ON PERSON)]\n- (Items owned by character stored at home, vault, camp, or stash. Their weight is NOT added to carried weight)\n\n`;
+      updated = updated.substring(0, insertPos) + storedSection + updated.substring(insertPos);
+    }
+
+    // For each moved item, remove from its original line in file and append to stored section
+    for (const moveEntry of itemsToMove) {
+      const it = moveEntry.item;
+      if (it.rawText && updated.includes(it.rawText)) {
+        updated = updated.replace(it.rawText, '');
+      } else {
+        const escaped = it.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const itemLineRegex = new RegExp(`^[\\t ]*[-*•>\\s]*${escaped}[^\\n\\r]*[\\r\\n]*`, 'gmi');
+        updated = updated.replace(itemLineRegex, '');
+      }
+
+      // Add to [OWNED / STORED ITEMS (NOT ON PERSON)]
+      const cleanDim = it.dimensions?.raw || (it.dimensions?.height ? `${it.dimensions.height}x${it.dimensions.width} in` : 'Standard size');
+      const storedLine = `- ${it.name}: Weight: ${it.weight} lbs. Dimensions: ${cleanDim}. [Location: Starting Home / Stash (Stored to respect starting carried item limit <= 2x hand slots: max ${maxAllowed} items)]\n`;
+
+      const storedIdx = updated.indexOf('[OWNED / STORED ITEMS (NOT ON PERSON)]');
+      if (storedIdx !== -1) {
+        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, storedIdx + 38);
+        const insertAt = nextH > 0 ? nextH : updated.length;
+        updated = updated.substring(0, insertAt) + storedLine + updated.substring(insertAt);
+      }
+    }
+
+    // Re-sync file
+    const resynced = WeightInventoryEngine.syncCharacterFileContent(updated);
+    return {
+      updatedContent: resynced.updatedContent,
+      modified: true,
+      handSlots,
+      maxAllowed,
+      totalCarriedCount: maxAllowed,
+      movedItems: movedNames
     };
   }
 
@@ -2402,6 +2661,49 @@ export class WeightInventoryEngine {
     const hasOverflowHold = currentlyHolding.some(h => h.isOverflowHold);
     const freeSlots = holdingCapacityApplies ? Math.max(0, maxStandardHoldCount - nonOverflowCount) : 0;
 
+    const handSlots = maxStandardHoldCount;
+    const maxStartingCarryingItems = WeightInventoryEngine.getMaxStartingCarryingItems(handSlots);
+
+    // Collect all overflow items across currentlyHolding and containers
+    const overflowHeld = currentlyHolding.filter(h => h.isOverflowHold);
+    const overflowContItems: ItemInfo[] = [];
+    for (const cont of containers) {
+      for (const it of cont.items) {
+        if (it.isOverflow) {
+          overflowContItems.push(it);
+        }
+      }
+    }
+    const allOverflowItems = [...overflowHeld, ...overflowContItems];
+    const totalOverflowCount = allOverflowItems.length;
+
+    // Calculate scaled accidental drop chances:
+    // "the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping
+    //  by accident based on context and the scaled random chance which scales for heavier bigger items
+    //  and bigger heavier items have higher chance of dropping than smaller/lighter ones."
+    const dropProbResult = WeightInventoryEngine.calculateOverflowDropProbabilities(allOverflowItems, 'normal');
+    const overallOverflowDropChancePercent = dropProbResult.overallChancePercent;
+
+    for (const prob of dropProbResult.itemDropChances) {
+      prob.item.dropChancePercent = prob.dropChancePercent;
+      prob.item.dropRiskScore = prob.riskScore;
+      if ('holdingLimb' in prob.item) {
+        (prob.item as HeldItemInfo).overflowWarning = `Overflow hold: ${prob.dropChancePercent}% accidental drop risk (scales with weight & size; heavier/bulkier items drop first).`;
+      } else if (prob.item.overflowReason) {
+        prob.item.overflowReason += ` (${prob.dropChancePercent}% accidental drop risk; heavier/bulkier items drop first).`;
+      }
+    }
+
+    for (const cont of containers) {
+      if (cont.hasOverflow) {
+        const contOverflows = cont.items.filter(i => i.isOverflow);
+        if (contOverflows.length > 0) {
+          const highestItemChance = Math.max(...contOverflows.map(i => i.dropChancePercent || 0));
+          cont.overflowDropChancePercent = highestItemChance;
+        }
+      }
+    }
+
     const holdingCapacity: HoldingCapacityInfo = {
       applies: holdingCapacityApplies,
       holdingLimbsDescription,
@@ -2409,8 +2711,13 @@ export class WeightInventoryEngine {
       currentHeldCount: currentlyHolding.length,
       isFull,
       hasOverflowHold,
-      overflowReason: hasOverflowHold ? 'Character is holding items with overflow beyond standard anatomical capacity; risks dropping or being knocked down.' : undefined,
-      freeSlots
+      overflowReason: hasOverflowHold
+        ? `Character is holding items with overflow beyond standard capacity (${overflowHeld.length} overflow held; ${overallOverflowDropChancePercent}% accidental drop risk; heavier/bulkier items drop first).`
+        : undefined,
+      freeSlots,
+      overflowDropChancePercent: overallOverflowDropChancePercent,
+      totalOverflowCount,
+      maxStartingCarryingItems
     };
 
     // Calculate Total Carried Weight on Person:
@@ -2521,6 +2828,10 @@ export class WeightInventoryEngine {
       passengerWeight: Math.round(passengerWeight * 10) / 10,
       currentlyHolding,
       holdingCapacity,
+      handSlots,
+      maxStartingCarryingItems,
+      totalOverflowCount,
+      overallOverflowDropChancePercent,
       containers,
       equippedGear,
       carriedItems,
@@ -2717,8 +3028,9 @@ export class WeightInventoryEngine {
     if (stats.holdingCapacity.applies && (stats.currentlyHolding.length > 0 || updated.includes('[CURRENTLY HOLDING]'))) {
       const holdingLines: string[] = [];
       holdingLines.push(`- Holding Anatomy: ${stats.holdingCapacity.holdingLimbsDescription}`);
+      holdingLines.push(`- Hand Slots & Starting Capacity: ${stats.handSlots} hand slots (Max starting carrying limit: ${stats.maxStartingCarryingItems} items; can carry more during adventure)`);
       const statusSuffix = stats.holdingCapacity.hasOverflowHold
-        ? ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} - Overflow Hold: Items risk dropping!)`
+        ? ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} - Overflow Hold: ${stats.holdingCapacity.overflowDropChancePercent || 25}% accidental drop risk; heavier/bulkier items drop first)`
         : stats.holdingCapacity.isFull
           ? ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} Occupied - Full)`
           : ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} Occupied - ${stats.holdingCapacity.freeSlots} Free)`;
@@ -2751,7 +3063,10 @@ export class WeightInventoryEngine {
           }
 
           const limbPrefix = h.holdingLimb ? `${h.holdingLimb}: ` : '';
-          const overflowSuffix = h.isOverflowHold ? ' (Overflow: Yes - risks dropping)' : '';
+          const dropRiskPct = h.dropChancePercent || 25;
+          const overflowSuffix = h.isOverflowHold
+            ? ` (Overflow: Yes - ${dropRiskPct}% accidental drop risk; heavier/bulkier items drop first)`
+            : '';
           holdingLines.push(`  * ${limbPrefix}${cleanName}: Weight: ${h.weight} lbs. Dimensions: ${cleanDim}.${overflowSuffix}`);
         }
       }
