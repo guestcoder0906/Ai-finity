@@ -559,6 +559,40 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Intelligently finds the container matching a target container name.
+   * Handles partial matching, keyword matching (backpack, pouch, satchel, etc.),
+   * and falls back gracefully to the first available container.
+   */
+  public static findMatchingContainer(containers: ContainerInfo[], targetName?: string): ContainerInfo | undefined {
+    if (!containers || containers.length === 0) return undefined;
+    if (!targetName || !targetName.trim()) return containers[0];
+
+    const target = targetName.trim().toLowerCase();
+
+    // 1. Exact match (case insensitive)
+    const exact = containers.find(c => c.name.toLowerCase() === target);
+    if (exact) return exact;
+
+    // 2. Contains match (either container name contains target or target contains container name)
+    const contains = containers.find(c => {
+      const cName = c.name.toLowerCase();
+      return cName.includes(target) || target.includes(cName);
+    });
+    if (contains) return contains;
+
+    // 3. Keyword matching (backpack, satchel, pouch, bag, sack, quiver, chest, etc.)
+    const keywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'chest', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
+    const matchedKey = keywords.find(k => target.includes(k));
+    if (matchedKey) {
+      const keyMatch = containers.find(c => c.name.toLowerCase().includes(matchedKey));
+      if (keyMatch) return keyMatch;
+    }
+
+    // 4. Default to first container
+    return containers[0];
+  }
+
+  /**
    * Parses an item line, extracting name, weight, dimensions, container, and overflow notes.
    * Example lines:
    * - "feather 0 weight 3x0 inch"
@@ -645,9 +679,27 @@ export class WeightInventoryEngine {
 
     // Parse container
     let containerName = defaultContainer;
-    const containerMatch = rest.match(/container[:=\s]*\[?([a-zA-Z0-9_\s]+)\]?/i);
+    const containerMatch = rest.match(/container[:=\s]*\[?([a-zA-Z0-9_\s'-]+)\]?/i);
     if (containerMatch) {
       containerName = containerMatch[1].trim();
+    } else {
+      const insideMatch = rest.match(/(?:inside|in container|stored in|in:)\s*\[?([a-zA-Z0-9_\s'-]+)\]?/i);
+      if (insideMatch) {
+        containerName = insideMatch[1].trim();
+      } else {
+        const bracketMatch = rest.match(/\[([a-zA-Z0-9_\s'-]+)\]/i);
+        if (bracketMatch) {
+          const inner = bracketMatch[1].trim().toLowerCase();
+          if (inner.includes('backpack') || inner.includes('pouch') || inner.includes('satchel') || inner.includes('bag') || inner.includes('sack') || inner.includes('chest') || inner.includes('quiver') || inner.includes('haversack')) {
+            containerName = bracketMatch[1].trim();
+          }
+        } else {
+          const parenMatch = rest.match(/\((?:in:?\s*)?([A-Za-z0-9\s'-]+(?:backpack|pouch|satchel|bag|chest|sack|quiver|haversack|case)[A-Za-z0-9\s'-]*)\)/i);
+          if (parenMatch) {
+            containerName = parenMatch[1].replace(/^(?:in|inside|stored in)\s+/i, '').trim();
+          }
+        }
+      }
     }
 
     // Check overflow & does not fit notes in text
@@ -890,51 +942,74 @@ export class WeightInventoryEngine {
         currentSection.includes('GEAR')
       ) {
         // Check for subsection headers
-        if (
-          lower.startsWith('- containers equipped/carried:') ||
-          lower.startsWith('- containers carried:') ||
-          lower.startsWith('- containers equipped:') ||
-          lower.startsWith('- containers:') ||
-          lower.startsWith('containers equipped:') ||
-          lower.startsWith('containers:')
-        ) {
+        const isContainersHeader = (
+          (lower.startsWith('- containers') || lower.startsWith('* containers') || lower.startsWith('containers') || lower.includes('equipped containers') || lower.includes('containers carried') || lower.includes('containers equipped')) &&
+          !lower.includes('inside') && !lower.includes('content') && !lower.includes('inventory')
+        );
+
+        if (isContainersHeader) {
           activeSubsection = 'containers';
           activeContainerName = '';
           continue;
         }
 
-        if (
-          lower.startsWith('- equipped gear & armor:') ||
-          lower.startsWith('- equipped gear:') ||
-          lower.startsWith('- equipped armor:') ||
-          lower.startsWith('- equipped items:') ||
-          lower.startsWith('- worn gear:') ||
-          lower.startsWith('- worn armor:') ||
+        const isEquippedHeader = (
+          lower.includes('equipped gear') ||
+          lower.includes('equipped armor') ||
+          lower.includes('equipped items') ||
+          lower.includes('worn gear') ||
+          lower.includes('worn armor') ||
           lower.startsWith('- equipped:') ||
-          lower.startsWith('equipped gear & armor:') ||
-          lower.startsWith('equipped gear:') ||
-          lower.startsWith('equipped armor:')
-        ) {
+          lower.startsWith('* equipped:') ||
+          lower.startsWith('equipped:')
+        );
+
+        if (isEquippedHeader) {
           activeSubsection = 'equipped';
           activeContainerName = '';
           continue;
         }
 
-        if (
-          lower.startsWith('- carried inventory (inside containers):') ||
-          lower.startsWith('- carried inventory:') ||
-          lower.startsWith('- items inside containers:') ||
-          lower.startsWith('- items in containers:') ||
-          lower.startsWith('- container inventory:') ||
-          lower.startsWith('- carried items:') ||
-          lower.startsWith('carried inventory:') ||
-          lower.startsWith('carried items:')
-        ) {
+        const isInsideContainersHeader = (
+          lower.includes('inside container') ||
+          lower.includes('inside containers') ||
+          lower.includes('in container') ||
+          lower.includes('in containers') ||
+          lower.includes('carried inventory') ||
+          lower.includes('container inventory') ||
+          lower.includes('container contents') ||
+          lower.includes('items inside') ||
+          lower.includes('items in container') ||
+          lower.includes('items in backpack') ||
+          lower.includes('inside backpack') ||
+          lower.includes('inside satchel') ||
+          lower.includes('inside pouch') ||
+          lower.includes('backpack contents') ||
+          lower.includes('satchel contents') ||
+          lower.includes('pouch contents') ||
+          (lower.startsWith('- carried items') && !lower.includes('loose')) ||
+          (lower.startsWith('carried items') && !lower.includes('loose'))
+        );
+
+        if (isInsideContainersHeader) {
           activeSubsection = 'inside_containers';
           if (!activeContainerName && containers.length > 0) {
             activeContainerName = containers[0].name;
           }
           continue;
+        }
+
+        // Check if line switches active container (e.g. "- Backpack:" or "- Inside Leather Satchel:")
+        if (containers.length > 0) {
+          const strippedName = line.replace(/^[-*•>\s]+/, '').replace(/[:=\(\[\)].*$/, '').trim();
+          if (strippedName) {
+            const matching = this.findMatchingContainer(containers, strippedName);
+            if (matching && (line.includes(':') || lower.includes('contents') || lower.includes('inside'))) {
+              activeSubsection = 'inside_containers';
+              activeContainerName = matching.name;
+              continue;
+            }
+          }
         }
 
         // Ignore metadata notes, empty markers, or summary lines
@@ -956,26 +1031,39 @@ export class WeightInventoryEngine {
         }
 
         // Container definition: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
-        const isContainerDef = (
-          lower.includes('backpack') ||
-          lower.includes('satchel') ||
-          lower.includes('pouch') ||
-          lower.includes('sack') ||
-          lower.includes('bag') ||
-          lower.includes('haversack') ||
-          lower.includes('chest')
-        ) && (
-          lower.includes('dimension') ||
-          lower.includes('capacity') ||
-          lower.includes('max space') ||
-          lower.includes('max weight')
+        const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'chest', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
+        const hasContainerKeyword = containerKeywords.some(kw => lower.includes(kw));
+        const isExplicitItemInContainer = lower.includes('container:') || lower.includes('inside container') || lower.includes('in backpack') || lower.includes('in satchel') || lower.includes('in pouch') || lower.includes('in bag');
+
+        const isContainerDef = (activeSubsection === 'containers' && !lower.startsWith('total') && !isExplicitItemInContainer) || (
+          hasContainerKeyword &&
+          !isExplicitItemInContainer &&
+          (
+            lower.includes('dimension') ||
+            lower.includes('capacity') ||
+            lower.includes('max space') ||
+            lower.includes('max weight') ||
+            lower.includes('max:') ||
+            lower.includes('holds') ||
+            /\b\d+\s*x\s*\d+/i.test(lower) ||
+            lower.includes('empty weight')
+          )
         );
 
         if (isContainerDef) {
-          const name = line.split(/[:=]/)[0].replace(/^[-*•>]\s*/, '').trim();
+          let name = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').trim();
+          const parenIdx = name.search(/[\(\[]/);
+          if (parenIdx > 0) {
+            name = name.substring(0, parenIdx).trim();
+          }
+          if (!name) name = 'Backpack';
 
           // Distinguish container empty weight from max capacity
-          let containerWeight = 2.0; // default empty container wt
+          let containerWeight = 2.0;
+          if (lower.includes('pouch')) containerWeight = 0.5;
+          if (lower.includes('satchel')) containerWeight = 1.0;
+          if (lower.includes('chest')) containerWeight = 15.0;
+
           const emptyWeightMatch = line.match(/(?:empty\s*weight|weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (emptyWeightMatch) {
             containerWeight = parseFloat(emptyWeightMatch[1]);
@@ -987,12 +1075,26 @@ export class WeightInventoryEngine {
           }
 
           let maxWeightCapacity: number | undefined;
-          const capMatch = line.match(/(?:max\s*(?:weight|capacity)|capacity)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
+          const capMatch = line.match(/(?:max\s*(?:weight|capacity)|capacity|holds\s*up\s*to)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (capMatch) {
             maxWeightCapacity = parseFloat(capMatch[1]);
+          } else {
+            // Sensible defaults
+            if (lower.includes('pouch')) maxWeightCapacity = 5;
+            else if (lower.includes('satchel')) maxWeightCapacity = 20;
+            else if (lower.includes('quiver')) maxWeightCapacity = 10;
+            else if (lower.includes('chest')) maxWeightCapacity = 100;
+            else maxWeightCapacity = 40;
           }
 
-          const maxDim = this.parseDimensions(line);
+          let maxDim = this.parseDimensions(line);
+          if (!maxDim.raw) {
+            if (lower.includes('pouch')) maxDim = this.parseDimensions('6x4x3 inches');
+            else if (lower.includes('satchel')) maxDim = this.parseDimensions('12x10x4 inches');
+            else if (lower.includes('quiver')) maxDim = this.parseDimensions('24x4x4 inches');
+            else if (lower.includes('chest')) maxDim = this.parseDimensions('36x24x20 inches');
+            else maxDim = this.parseDimensions('18x12x8 inches');
+          }
 
           activeContainerName = name;
           containers.push({
@@ -1029,57 +1131,53 @@ export class WeightInventoryEngine {
             equippedGear.push(item);
           } else if (activeSubsection === 'inside_containers' || activeContainerName || item.containerName) {
             // Put in targeted or active container
-            const targetName = item.containerName || activeContainerName || (containers.length > 0 ? containers[0].name : '');
-            const cont = containers.find(c => c.name.toLowerCase() === targetName.toLowerCase()) || containers[0];
+            let cont = this.findMatchingContainer(containers, item.containerName || activeContainerName);
 
-            if (cont) {
-              item.category = 'carried';
-              item.containerName = cont.name;
-
-              // Auto-Equip Rule: If item is wearable (e.g. leather tunic, cloth robes, armor) and character has no equipped armor,
-              // auto-equip it unless marked as spare/backup
-              const isWearable = (
-                lower.includes('armor base') ||
-                lower.includes('armor:') ||
-                (this.isFoldableItem(item.name, line) && (lower.includes('tunic') || lower.includes('robe') || lower.includes('cloak') || lower.includes('armor')))
-              );
-              const alreadyHasArmor = equippedGear.some(g => {
-                const gl = g.name.toLowerCase();
-                return gl.includes('tunic') || gl.includes('armor') || gl.includes('robe') || gl.includes('cuirass') || gl.includes('mail');
-              });
-
-              if (isWearable && !alreadyHasArmor && !lower.includes('spare') && !lower.includes('backup') && equippedGear.length === 0) {
-                item.category = 'equipped';
-                item.containerName = undefined;
-                item.isOverflow = false;
-                item.doesNotFit = false;
-                equippedGear.push(item);
-              } else {
-                // Check container fit with new rule
-                const fitCheck = this.checkContainerFit(item, cont.maxDimensions, {
-                  currentWeight: cont.currentItemsWeight
-                });
-
-                item.isFoldable = fitCheck.isFoldable;
-                item.fitStatus = fitCheck.status;
-
-                if (fitCheck.doesNotFit) {
-                  item.doesNotFit = true;
-                  item.overflowReason = fitCheck.reason;
-                  cont.hasDoesNotFit = true;
-                } else if (fitCheck.isOverflow) {
-                  item.isOverflow = true;
-                  item.overflowReason = fitCheck.reason;
-                  cont.hasOverflow = true;
-                }
-
-                cont.items.push(item);
-                cont.currentItemsWeight += item.weight;
-                cont.totalWeight += item.weight;
-              }
-            } else {
-              carriedItems.push(item);
+            // Auto-recovery: If items in container were written without an explicit container header/definition,
+            // auto-create a container so items are NEVER lost into loose items!
+            if (!cont) {
+              const defaultName = item.containerName || activeContainerName || 'Backpack';
+              const defaultDim = this.parseDimensions('18x12x8 inches');
+              cont = {
+                name: defaultName,
+                weight: 2.0,
+                dimensions: defaultDim,
+                maxDimensions: defaultDim,
+                maxWeightCapacity: 40,
+                items: [],
+                currentItemsWeight: 0,
+                totalWeight: 2.0,
+                hasOverflow: false,
+                hasDoesNotFit: false,
+                rawText: `- ${defaultName}: Dimensions 18x12x8 inches, Max Capacity: 40 lbs, Weight: 2 lbs`
+              };
+              containers.push(cont);
             }
+
+            item.category = 'carried';
+            item.containerName = cont.name;
+
+            // Check container fit
+            const fitCheck = this.checkContainerFit(item, cont.maxDimensions, {
+              currentWeight: cont.currentItemsWeight
+            });
+
+            item.isFoldable = fitCheck.isFoldable;
+            item.fitStatus = fitCheck.status;
+
+            if (fitCheck.doesNotFit) {
+              item.doesNotFit = true;
+              item.overflowReason = fitCheck.reason;
+              cont.hasDoesNotFit = true;
+            } else if (fitCheck.isOverflow) {
+              item.isOverflow = true;
+              item.overflowReason = fitCheck.reason;
+              cont.hasOverflow = true;
+            }
+
+            cont.items.push(item);
+            cont.currentItemsWeight += item.weight;
+            cont.totalWeight += item.weight;
           } else if (lower.includes('equipped') || lower.includes('wielding') || lower.includes('wearing') || lower.includes('armor:')) {
             item.category = 'equipped';
             equippedGear.push(item);

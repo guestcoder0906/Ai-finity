@@ -606,12 +606,45 @@ export class AIEngine {
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
-          // Auto-include player character file in filesToUpdate if energy or stats are affected
+          // Auto-include player character file in filesToUpdate if energy, stats, or inventory/containers are affected
           const playerFile = this.findPlayerCharacterFile(username);
-          if (playerFile && audit.energyAudit && audit.energyAudit.expectedChange !== 0) {
-            if (!audit.filesToUpdate) audit.filesToUpdate = [];
-            if (!audit.filesToUpdate.includes(playerFile)) {
-              audit.filesToUpdate.push(playerFile);
+          if (playerFile) {
+            const isEnergyAffected = audit.energyAudit && audit.energyAudit.expectedChange !== 0;
+            const actionLower = (action || '').toLowerCase();
+            const intentLower = (audit.intent || '').toLowerCase();
+            const isInventoryAffected = (
+              actionLower.includes('put') ||
+              actionLower.includes('place') ||
+              actionLower.includes('store') ||
+              actionLower.includes('stash') ||
+              actionLower.includes('pack') ||
+              actionLower.includes('pick up') ||
+              actionLower.includes('take') ||
+              actionLower.includes('grab') ||
+              actionLower.includes('loot') ||
+              actionLower.includes('collect') ||
+              actionLower.includes('gather') ||
+              actionLower.includes('backpack') ||
+              actionLower.includes('pouch') ||
+              actionLower.includes('satchel') ||
+              actionLower.includes('bag') ||
+              actionLower.includes('container') ||
+              actionLower.includes('item') ||
+              actionLower.includes('drop') ||
+              intentLower.includes('item') ||
+              intentLower.includes('inventory') ||
+              intentLower.includes('container') ||
+              intentLower.includes('backpack') ||
+              intentLower.includes('loot') ||
+              intentLower.includes('pick up') ||
+              intentLower.includes('store')
+            );
+
+            if (isEnergyAffected || isInventoryAffected) {
+              if (!audit.filesToUpdate) audit.filesToUpdate = [];
+              if (!audit.filesToUpdate.includes(playerFile)) {
+                audit.filesToUpdate.push(playerFile);
+              }
             }
           }
 
@@ -625,7 +658,10 @@ CRITICAL REMINDERS:
    - NOTHING MISSING: All players' observable and known areas, landmarks, items, npcs, structures, terrain, hazards, containers, and loot MUST be on the map with everything updated correctly.
    - FLEXIBLE SHAPES & HIGH DETAIL: Generate flexible shapes (not just circles/squares): use oblong ellipses (shape: "ellipse" with cx, cy, rx, ry, rotation) for oblong forests/groves/clearings, polygons for irregular terrain/rivers, and high-detail architectural buildings (such as individual market stalls, shops, and taverns in a market).
    - Every entity, NPC, obstacle, item, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
-4. INVENTORY & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created. If items are bigger than container space or would overflow (such as clothes, armor, cloaks, footwear, worn gear, or held weapons), automatically equip/wear them under [Equipped Gear & Armor] if sensible in context to avoid overflowing containers.
+4. INVENTORY, CONTAINERS & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
+   - CONTAINER INTEGRITY (CRITICAL): If the player picks up, finds, loots, or places an item in a container (e.g. backpack, satchel, pouch), you MUST update the player's character file ("CharacterName-USERNAME.txt").
+   - Under [CONTAINERS & CARRIED GEAR], under "- Carried Inventory (Inside Containers):", add the item formatted with detectable weight, dimensions, and container name: e.g. "- Iron Dagger: 2 lbs, 10x2 inches. Container: [Backpack]". Ensure the container exists under "- Containers Equipped/Carried:".
+   - If an item would overflow or exceeds container capacity, or is wearable and contextually sensible, equip under [Equipped Gear & Armor].
 5. STATS & ENERGY: Whenever energy, stamina, or mana is expended or restored (from attacks, abilities, spells, sprinting, physical exertion, or resting), you MUST update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the change in the "updates" array (e.g. {"type": "stat", "text": "Energy -10", "value": -10}). NEVER forget to update the character's energy when it changes.
 6. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
 7. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
@@ -1647,11 +1683,154 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
+  private syncPlayerInventory(data: AIResponse, username?: string) {
+    if (!data) return;
+
+    const targetFile = this.findPlayerCharacterFile(username, data.files);
+    if (!targetFile) return;
+
+    // Get current file content (incoming file from AI, or existing from disk)
+    let incomingFileData = data.files ? data.files[targetFile] : null;
+    let content: string | null = null;
+    if (incomingFileData) {
+      content = typeof incomingFileData === 'string'
+        ? incomingFileData
+        : (typeof incomingFileData === 'object' && incomingFileData.content ? incomingFileData.content : null);
+    }
+    if (!content) {
+      content = this.fs.read(targetFile);
+    }
+    if (!content) return;
+
+    // Extract items mentioned in updates or narrative
+    const itemsToAdd: Array<{ name: string; container?: string }> = [];
+
+    // 1. From data.updates
+    if (data.updates && Array.isArray(data.updates)) {
+      for (const u of data.updates) {
+        if (!u.text) continue;
+        const text = u.text;
+        const lower = text.toLowerCase();
+        if (
+          u.type === 'item' ||
+          u.type === 'loot' ||
+          lower.includes('added') ||
+          lower.includes('acquired') ||
+          lower.includes('picked up') ||
+          lower.includes('placed') ||
+          lower.includes('stored') ||
+          lower.includes('looted')
+        ) {
+          const containerMatch = text.match(/(?:to|in|into)\s+(?:the\s+)?([A-Za-z0-9\s'-]+(?:backpack|pouch|satchel|bag|chest|sack|quiver))/i);
+          const targetCont = containerMatch ? containerMatch[1].trim() : undefined;
+
+          let itemName = text
+            .replace(/^(?:added|acquired|picked up|placed|stored|looted|found)\s+/i, '')
+            .replace(/\s+(?:to|in|into)\s+(?:the\s+)?(?:backpack|pouch|satchel|bag|chest|sack|quiver).*$/i, '')
+            .replace(/[:=].*$/, '')
+            .trim();
+
+          if (itemName.length > 1 && itemName.length < 40 && !itemName.toLowerCase().includes('energy') && !itemName.toLowerCase().includes('damage')) {
+            itemsToAdd.push({ name: itemName, container: targetCont });
+          }
+        }
+      }
+    }
+
+    // 2. From narrative
+    if (data.narrative) {
+      const placedMatches = Array.from(data.narrative.matchAll(/(?:place|places|placed|stow|stows|stowed|put|puts|store|stores|stored|pack|packs|packed)\s+(?:the|a|an)?\s+([A-Za-z0-9\s'-]{2,30}?)\s+(?:in|into|inside)\s+(?:your|their|his|her)?\s*([A-Za-z0-9\s'-]*(?:backpack|pouch|satchel|bag|chest|sack|quiver))/gi));
+      for (const m of placedMatches) {
+        const itemName = m[1].trim();
+        const contName = m[2].trim();
+        if (itemName && itemName.length > 1 && !itemName.toLowerCase().includes('hand') && !itemName.toLowerCase().includes('foot')) {
+          if (!itemsToAdd.some(it => it.name.toLowerCase() === itemName.toLowerCase())) {
+            itemsToAdd.push({ name: itemName, container: contName });
+          }
+        }
+      }
+    }
+
+    if (itemsToAdd.length === 0) return;
+
+    // Check if character already has each item
+    const stats = WeightInventoryEngine.parseCharacterStatsAndInventory(content);
+    const existingNames = new Set([
+      ...stats.containers.flatMap(c => c.items.map(i => i.name.toLowerCase())),
+      ...stats.equippedGear.map(i => i.name.toLowerCase()),
+      ...stats.carriedItems.map(i => i.name.toLowerCase()),
+      ...stats.storedItems.map(i => i.name.toLowerCase()),
+    ]);
+
+    const genuinelyNewItems = itemsToAdd.filter(it => !existingNames.has(it.name.toLowerCase()));
+    if (genuinelyNewItems.length === 0) return;
+
+    // Format new items to append to character's container
+    let updatedContent = content;
+
+    // Ensure [CONTAINERS & CARRIED GEAR] section exists
+    if (!updatedContent.includes('[CONTAINERS & CARRIED GEAR]') && !updatedContent.includes('[INVENTORY')) {
+      const insertPos = updatedContent.indexOf('[OWNED / STORED') >= 0
+        ? updatedContent.indexOf('[OWNED / STORED')
+        : (updatedContent.indexOf('[STATUS EFFECTS') >= 0 ? updatedContent.indexOf('[STATUS EFFECTS') : updatedContent.length);
+
+      const newSection = `\n[CONTAINERS & CARRIED GEAR]\n- Total Carried Weight on Person: 2.0 lbs / ${stats.bodyWeight || 150} lbs (GOOD: Unencumbered) | Max Lift: ${stats.maxLiftStrength || 150} lbs\n- Containers Equipped/Carried:\n  * Backpack: Dimensions 18x12x8 inches, Max Capacity: 40 lbs, Weight: 2 lbs\n- Carried Inventory (Inside Containers):\n`;
+      updatedContent = updatedContent.substring(0, insertPos) + newSection + updatedContent.substring(insertPos);
+    }
+
+    // Find the insertion point: under "- Carried Inventory (Inside Containers):" or at the end of [CONTAINERS & CARRIED GEAR]
+    for (const item of genuinelyNewItems) {
+      const containerLabel = item.container || (stats.containers.length > 0 ? stats.containers[0].name : 'Backpack');
+      const itemLine = `  - ${item.name}: 1.0 lbs, 8x4x2 inches. Container: [${containerLabel}]\n`;
+
+      const carriedIdx = updatedContent.search(/^[-\s]*carried inventory.*:$/im);
+      if (carriedIdx >= 0) {
+        const lineEnd = updatedContent.indexOf('\n', carriedIdx);
+        const insertAt = lineEnd >= 0 ? lineEnd + 1 : updatedContent.length;
+        const afterHeader = updatedContent.substring(insertAt);
+        if (afterHeader.trim().startsWith('* (none)') || afterHeader.trim().startsWith('- (none)')) {
+          const noneEnd = updatedContent.indexOf('\n', insertAt);
+          updatedContent = updatedContent.substring(0, insertAt) + itemLine + (noneEnd >= 0 ? updatedContent.substring(noneEnd + 1) : '');
+        } else {
+          updatedContent = updatedContent.substring(0, insertAt) + itemLine + updatedContent.substring(insertAt);
+        }
+      } else {
+        const containersHeaderIdx = updatedContent.indexOf('[CONTAINERS & CARRIED GEAR]');
+        if (containersHeaderIdx >= 0) {
+          const nextHeader = updatedContent.indexOf('[', containersHeaderIdx + 25);
+          const insertAt = nextHeader > 0 ? nextHeader : updatedContent.length;
+          updatedContent = updatedContent.substring(0, insertAt) + `- Carried Inventory (Inside Containers):\n${itemLine}\n` + updatedContent.substring(insertAt);
+        } else {
+          updatedContent += `\n- Carried Inventory (Inside Containers):\n${itemLine}`;
+        }
+      }
+    }
+
+    // Re-sync file through WeightInventoryEngine
+    try {
+      const activeTime = this.fs.read('WorldTime.txt') || undefined;
+      const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime);
+      updatedContent = res.updatedContent;
+    } catch (e) {
+      console.warn("Inventory sync engine error", e);
+    }
+
+    if (!data.files || typeof data.files !== 'object') data.files = {};
+    if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+      (data.files[targetFile] as any).content = updatedContent;
+    } else {
+      data.files[targetFile] = updatedContent;
+    }
+  }
+
   private processResponseData(data: AIResponse, username?: string) {
     if (!data) return;
 
     // Ensure character energy is always properly updated and in sync
     this.syncPlayerEnergy(data, username);
+
+    // Ensure items added or placed in containers are properly reflected
+    this.syncPlayerInventory(data, username);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username

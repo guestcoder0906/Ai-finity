@@ -1,5 +1,7 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import Stripe from 'stripe';
 
@@ -50,6 +52,235 @@ async function startServer() {
       publishableKey: process.env.VITE_STRIPE_PUBLISHABLE_KEY || null,
       mode: isLive ? 'live' : 'test'
     });
+  });
+
+  // Persistent File-Backed User Accounts Store
+  // Guarantees registration & login work seamlessly even if Firebase Auth Email Provider is disabled
+  interface StoredAccount {
+    uid: string;
+    email: string;
+    emailLower: string;
+    username: string;
+    usernameLower: string;
+    salt: string;
+    hash: string;
+    role: 'user' | 'mod' | 'admin';
+    tier: 'free' | 'adventurer' | 'legendary';
+    actionCredits: number;
+    dailyActionsUsed: number;
+    dailyActionsDate: string;
+    hasInfiniteActions: boolean;
+    canSaveMultipleAdventures: boolean;
+    canPostCommunityAdventures: boolean;
+    showGlowingName: boolean;
+    authProvider: 'password' | 'google';
+    createdAt: string;
+  }
+
+  const ACCOUNTS_FILE = path.join(process.cwd(), 'data', 'accounts.json');
+
+  function loadAccounts(): Record<string, StoredAccount> {
+    try {
+      if (!fs.existsSync(ACCOUNTS_FILE)) {
+        return {};
+      }
+      const raw = fs.readFileSync(ACCOUNTS_FILE, 'utf-8');
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('Failed to read accounts file:', e);
+      return {};
+    }
+  }
+
+  function saveAccounts(accounts: Record<string, StoredAccount>) {
+    try {
+      const dir = path.dirname(ACCOUNTS_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('Failed to save accounts file:', e);
+    }
+  }
+
+  function hashPassword(password: string, salt: string): string {
+    return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  }
+
+  function sanitizeProfile(account: StoredAccount) {
+    const { salt, hash, emailLower, usernameLower, ...profile } = account;
+    return profile;
+  }
+
+  function isDefaultAdmin(email?: string, username?: string): boolean {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanUser = (username || '').trim().toLowerCase();
+    return cleanEmail === 'chloe.a.alba.1@gmail.com' || cleanUser === 'chloe';
+  }
+
+  // Fallback Email Registration Endpoint
+  app.post('/api/auth/register', (req, res) => {
+    try {
+      const { email, pass, username } = req.body;
+      const cleanEmail = (email || '').trim();
+      const cleanUsername = (username || '').trim();
+      const cleanPass = String(pass || '');
+
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        return res.status(400).json({ error: 'Please enter a valid email address.' });
+      }
+      if (!cleanUsername || cleanUsername.length < 2 || cleanUsername.length > 20) {
+        return res.status(400).json({ error: 'Username must be between 2 and 20 characters.' });
+      }
+      if (cleanPass.length < 6) {
+        return res.status(400).json({ error: 'Password should be at least 6 characters.' });
+      }
+
+      const accounts = loadAccounts();
+      const emailLower = cleanEmail.toLowerCase();
+      const usernameLower = cleanUsername.toLowerCase();
+
+      // Check for conflicts
+      for (const acc of Object.values(accounts)) {
+        if (acc.emailLower === emailLower) {
+          return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+        }
+        if (acc.usernameLower === usernameLower) {
+          return res.status(409).json({ error: 'Username is already taken. Please choose another.' });
+        }
+      }
+
+      const uid = `usr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const salt = crypto.randomBytes(16).toString('hex');
+      const hash = hashPassword(cleanPass, salt);
+      const isAdmin = isDefaultAdmin(cleanEmail, cleanUsername);
+
+      const newAccount: StoredAccount = {
+        uid,
+        email: cleanEmail,
+        emailLower,
+        username: cleanUsername,
+        usernameLower,
+        salt,
+        hash,
+        role: isAdmin ? 'admin' : 'user',
+        tier: isAdmin ? 'legendary' : 'free',
+        actionCredits: isAdmin ? 999999 : 50,
+        dailyActionsUsed: 0,
+        dailyActionsDate: new Date().toISOString().split('T')[0],
+        hasInfiniteActions: isAdmin,
+        canSaveMultipleAdventures: isAdmin,
+        canPostCommunityAdventures: isAdmin,
+        showGlowingName: isAdmin,
+        authProvider: 'password',
+        createdAt: new Date().toISOString()
+      };
+
+      accounts[uid] = newAccount;
+      saveAccounts(accounts);
+
+      const profile = sanitizeProfile(newAccount);
+      return res.status(200).json({ user: profile });
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      return res.status(500).json({ error: err.message || 'Registration failed.' });
+    }
+  });
+
+  // Fallback Email Login Endpoint
+  app.post('/api/auth/login', (req, res) => {
+    try {
+      const { email, pass } = req.body;
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const cleanPass = String(pass || '');
+
+      if (!cleanEmail || !cleanPass) {
+        return res.status(400).json({ error: 'Email and password are required.' });
+      }
+
+      const accounts = loadAccounts();
+      const account = Object.values(accounts).find(
+        (a) => a.emailLower === cleanEmail || a.usernameLower === cleanEmail
+      );
+
+      if (!account) {
+        return res.status(404).json({
+          error: 'No account found with this email. Please sign up to create your account.',
+          accountNotFound: true
+        });
+      }
+
+      const checkHash = hashPassword(cleanPass, account.salt);
+      if (checkHash !== account.hash) {
+        return res.status(401).json({ error: 'Invalid password for this account. Please try again.' });
+      }
+
+      // Check if admin status should be promoted
+      if (isDefaultAdmin(account.email, account.username) && account.role !== 'admin') {
+        account.role = 'admin';
+        account.tier = 'legendary';
+        account.hasInfiniteActions = true;
+        account.canSaveMultipleAdventures = true;
+        account.canPostCommunityAdventures = true;
+        account.showGlowingName = true;
+        accounts[account.uid] = account;
+        saveAccounts(accounts);
+      }
+
+      const profile = sanitizeProfile(account);
+      return res.status(200).json({ user: profile });
+    } catch (err: any) {
+      console.error('Login error:', err);
+      return res.status(500).json({ error: err.message || 'Login failed.' });
+    }
+  });
+
+  // Retrieve user profile by UID
+  app.get('/api/auth/user/:uid', (req, res) => {
+    try {
+      const { uid } = req.params;
+      const accounts = loadAccounts();
+      const account = accounts[uid];
+      if (!account) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      return res.status(200).json({ user: sanitizeProfile(account) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update profile
+  app.post('/api/auth/update-profile', (req, res) => {
+    try {
+      const { uid, updates } = req.body;
+      if (!uid || !updates) {
+        return res.status(400).json({ error: 'uid and updates are required' });
+      }
+      const accounts = loadAccounts();
+      const account = accounts[uid];
+      if (!account) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Allowed updates
+      if (typeof updates.actionCredits === 'number') account.actionCredits = updates.actionCredits;
+      if (typeof updates.tier === 'string') account.tier = updates.tier;
+      if (typeof updates.role === 'string') account.role = updates.role;
+      if (typeof updates.dailyActionsUsed === 'number') account.dailyActionsUsed = updates.dailyActionsUsed;
+      if (typeof updates.dailyActionsDate === 'string') account.dailyActionsDate = updates.dailyActionsDate;
+      if (typeof updates.hasInfiniteActions === 'boolean') account.hasInfiniteActions = updates.hasInfiniteActions;
+      if (typeof updates.canSaveMultipleAdventures === 'boolean') account.canSaveMultipleAdventures = updates.canSaveMultipleAdventures;
+      if (typeof updates.canPostCommunityAdventures === 'boolean') account.canPostCommunityAdventures = updates.canPostCommunityAdventures;
+      if (typeof updates.showGlowingName === 'boolean') account.showGlowingName = updates.showGlowingName;
+
+      accounts[uid] = account;
+      saveAccounts(accounts);
+      return res.status(200).json({ user: sanitizeProfile(account) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // Persistent in-memory store for checkout sessions (guarantees receipts & balances are never lost)

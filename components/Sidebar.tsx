@@ -88,6 +88,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
   const [expandedStoredItems, setExpandedStoredItems] = useState<{ [filename: string]: boolean }>({});
+  const [expandedContainers, setExpandedContainers] = useState<{ [containerKey: string]: boolean }>({});
+  const [dismissedUpdates, setDismissedUpdates] = useState<Set<number>>(new Set());
   const isHost = roomState?.hostUsername === username;
   const expandedRef = useRef<HTMLDivElement>(null);
   const filesListRef = useRef<HTMLDivElement>(null);
@@ -656,44 +658,115 @@ const Sidebar: React.FC<SidebarProps> = ({
                               {/* Containers & Overflow Detection */}
                               {pStats.containers.length > 0 && (
                                 <div className="space-y-1 pt-1 border-t border-neutral-800">
-                                  <div className="text-[10px] text-gray-400 font-medium flex items-center gap-1">
-                                    <Package size={11} className="text-blue-400" />
-                                    Equipped Containers ({pStats.containers.length}):
-                                  </div>
-                                  {pStats.containers.map((cont, ci) => (
-                                    <div key={ci} className="bg-neutral-950/80 p-1.5 rounded border border-neutral-800 text-[10px]">
-                                      <div className="flex justify-between items-center">
-                                        <span className="text-blue-300 font-medium">{cont.name}</span>
-                                        <span className="text-gray-400 font-mono text-[9px]">
-                                          Max Space: {cont.maxDimensions.raw || '18x12"'} | Weight: {cont.totalWeight} lbs
-                                        </span>
-                                      </div>
-                                      {cont.hasDoesNotFit && (
-                                        <div className="mt-1 flex items-center gap-1 text-[9px] text-red-400 bg-red-950/50 p-1 rounded border border-red-800/60">
-                                          <AlertOctagon size={11} className="text-red-400 shrink-0" />
-                                          <span>Cannot Fit: Rigid item's dimensions exceed container opening/smallest dimension!</span>
-                                        </div>
-                                      )}
-                                      {cont.hasOverflow && (
-                                        <div className="mt-1 flex items-center gap-1 text-[9px] text-amber-400 bg-amber-950/50 p-1 rounded border border-amber-800/60">
-                                          <AlertTriangle size={11} className="text-amber-400 shrink-0" />
-                                          <span>Container Overflow: Rigid item protrudes/sticks out and risks dropping during story!</span>
-                                        </div>
-                                      )}
-                                      {cont.items.length > 0 && (
-                                        <div className="mt-1 text-[9px] text-gray-400 pl-1 border-l border-neutral-800 space-y-0.5">
-                                          {cont.items.map((it, ii) => (
-                                            <div key={ii} className="flex justify-between items-center">
-                                              <span className={it.doesNotFit ? 'text-red-400 font-semibold' : it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}>
-                                                • {it.name} {it.doesNotFit ? '⛔ (Does Not Fit)' : it.isOverflow ? '⚠️ (Overflow: Risks Dropping)' : ''}
-                                              </span>
-                                              <span className="font-mono text-gray-500">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
+                                  <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                                    <div className="flex items-center gap-1">
+                                      <Package size={11} className="text-blue-400" />
+                                      <span>Equipped Containers ({pStats.containers.length}):</span>
                                     </div>
-                                  ))}
+                                    {pStats.containers.length > 1 && (
+                                      <div className="flex items-center gap-1.5 text-[8.5px]">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updates: { [k: string]: boolean } = {};
+                                            pStats.containers.forEach((c, idx) => {
+                                              updates[`${filename}_${c.name}_${idx}`] = true;
+                                            });
+                                            setExpandedContainers(prev => ({ ...prev, ...updates }));
+                                          }}
+                                          className="text-blue-400 hover:text-blue-300 transition-colors"
+                                          title="Expand all containers"
+                                        >
+                                          Expand All
+                                        </button>
+                                        <span className="text-neutral-700">|</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updates: { [k: string]: boolean } = {};
+                                            pStats.containers.forEach((c, idx) => {
+                                              updates[`${filename}_${c.name}_${idx}`] = false;
+                                            });
+                                            setExpandedContainers(prev => ({ ...prev, ...updates }));
+                                          }}
+                                          className="text-neutral-500 hover:text-neutral-300 transition-colors"
+                                          title="Collapse all containers"
+                                        >
+                                          Collapse All
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {pStats.containers.map((cont, ci) => {
+                                    const containerKey = `${filename}_${cont.name}_${ci}`;
+                                    const isExpanded = expandedContainers[containerKey] !== false; // expanded by default so user can immediately see items!
+                                    return (
+                                      <div key={ci} className="bg-neutral-950/90 rounded border border-neutral-800 text-[10px] overflow-hidden transition-colors">
+                                        <button
+                                          type="button"
+                                          onClick={() => setExpandedContainers(prev => ({ ...prev, [containerKey]: !isExpanded }))}
+                                          className="w-full text-left p-1.5 flex items-center justify-between hover:bg-neutral-900/60 transition-colors cursor-pointer group select-none"
+                                          title={isExpanded ? "Click to collapse container items" : "Click to expand container items"}
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                                            <span className="text-gray-500 group-hover:text-blue-400 transition-colors shrink-0">
+                                              {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                            </span>
+                                            <span className="text-blue-300 font-semibold truncate group-hover:text-blue-200">
+                                              {cont.name}
+                                            </span>
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-950/70 border border-blue-800/40 text-blue-300 shrink-0 font-medium">
+                                              {cont.items.length} {cont.items.length === 1 ? 'item' : 'items'}
+                                            </span>
+                                          </div>
+                                          <div className="text-right shrink-0">
+                                            <span className="text-gray-400 font-mono text-[8.5px]">
+                                              {cont.totalWeight} lbs
+                                            </span>
+                                            <span className="text-gray-600 text-[8px] block">
+                                              Max: {cont.maxDimensions.raw || '18x12"'}
+                                            </span>
+                                          </div>
+                                        </button>
+
+                                        {cont.hasDoesNotFit && (
+                                          <div className="mx-1.5 mb-1 flex items-center gap-1 text-[8.5px] text-red-400 bg-red-950/60 p-1 rounded border border-red-800/60">
+                                            <AlertOctagon size={11} className="text-red-400 shrink-0" />
+                                            <span>Cannot Fit: Rigid item's dimensions exceed container opening!</span>
+                                          </div>
+                                        )}
+                                        {cont.hasOverflow && (
+                                          <div className="mx-1.5 mb-1 flex items-center gap-1 text-[8.5px] text-amber-400 bg-amber-950/60 p-1 rounded border border-amber-800/60">
+                                            <AlertTriangle size={11} className="text-amber-400 shrink-0" />
+                                            <span>Container Overflow: Rigid item protrudes and risks dropping!</span>
+                                          </div>
+                                        )}
+
+                                        {isExpanded && (
+                                          <div className="px-2 pb-1.5 pt-0.5 border-t border-neutral-800/70 bg-black/40 space-y-1">
+                                            {cont.items.length === 0 ? (
+                                              <div className="text-[9px] text-gray-500 italic py-1 pl-1">
+                                                Empty (no items inside this container yet)
+                                              </div>
+                                            ) : (
+                                              <div className="space-y-0.5 pt-0.5">
+                                                {cont.items.map((it, ii) => (
+                                                  <div key={ii} className="flex justify-between items-center text-[9px] hover:bg-neutral-900/40 px-1 py-0.5 rounded">
+                                                    <span className={`truncate pr-1 ${it.doesNotFit ? 'text-red-400 font-semibold' : it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}`}>
+                                                      • {it.name} {it.doesNotFit ? '⛔ (Does Not Fit)' : it.isOverflow ? '⚠️ (Overflow)' : ''}
+                                                    </span>
+                                                    <span className="font-mono text-gray-500 text-[8px] shrink-0">
+                                                      {it.weight} lbs {it.dimensions.raw ? `(${it.dimensions.raw})` : ''}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
 
@@ -765,23 +838,59 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
             
             {/* Status Section inside Files Tab */}
-            <div className="h-24 sm:h-28 max-h-36 min-h-[55px] border-t border-neutral-800 flex flex-col bg-neutral-950 shrink-0">
-              <div className="p-1.5 sm:p-2 border-b border-neutral-800 bg-neutral-900 text-gray-400 font-bold uppercase tracking-wider text-[9.5px] sm:text-[10px] flex items-center gap-1">
-                <Activity size={12} /> Live Status Updates
-              </div>
-              <div className="flex-1 overflow-y-auto p-1.5 sm:p-2 font-mono text-[9.5px] sm:text-[10px] md:text-xs" style={{ WebkitOverflowScrolling: 'touch' }}>
-                {(updates || []).length === 0 && <span className="text-gray-700 italic">No updates...</span>}
-                {(updates || []).map((u, i) => (
-                  <div key={i} className="mb-1 animate-in fade-in slide-in-from-left-2 duration-300">
-                    <span className={
-                      u.value < 0 ? 'text-red-400' :
-                        u.value > 0 ? 'text-green-400' :
-                          'text-yellow-400'
-                    }>
-                      {u.text}
+            <div className="h-28 sm:h-32 max-h-40 min-h-[60px] border-t border-neutral-800 flex flex-col bg-neutral-950 shrink-0">
+              <div className="p-1.5 sm:p-2 border-b border-neutral-800 bg-neutral-900 text-gray-400 font-bold uppercase tracking-wider text-[9.5px] sm:text-[10px] flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Activity size={12} className="text-amber-400" />
+                  <span>Live Status Updates</span>
+                  {(updates || []).filter((_, i) => !dismissedUpdates.has(i)).length > 0 && (
+                    <span className="text-[8px] px-1 py-0.2 rounded bg-neutral-800 text-gray-300 font-normal">
+                      {(updates || []).filter((_, i) => !dismissedUpdates.has(i)).length}
                     </span>
-                  </div>
-                ))}
+                  )}
+                </div>
+                {(updates || []).filter((_, i) => !dismissedUpdates.has(i)).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIdxs = (updates || []).map((_, i) => i);
+                      setDismissedUpdates(new Set(allIdxs));
+                    }}
+                    className="text-[8.5px] text-gray-500 hover:text-gray-300 transition-colors cursor-pointer capitalize font-normal px-1 py-0.5 rounded hover:bg-neutral-800/60"
+                    title="Clear status updates"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto p-1.5 sm:p-2 font-mono text-[9.5px] sm:text-[10px] md:text-xs space-y-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+                {(updates || []).filter((_, i) => !dismissedUpdates.has(i)).length === 0 && (
+                  <span className="text-gray-700 italic">No updates...</span>
+                )}
+                {(updates || []).map((u, i) => {
+                  if (dismissedUpdates.has(i)) return null;
+                  const isNeg = u.value < 0;
+                  const isPos = u.value > 0;
+                  return (
+                    <div
+                      key={i}
+                      className="group flex items-center justify-between gap-1 p-1 rounded bg-neutral-900/40 hover:bg-neutral-900/80 border border-neutral-800 transition-colors animate-in fade-in slide-in-from-left-2 duration-300"
+                    >
+                      <span className={`truncate ${isNeg ? 'text-red-400' : isPos ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {u.text}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDismissedUpdates(prev => new Set([...prev, i]))}
+                        className="text-gray-600 hover:text-gray-300 p-0.5 rounded hover:bg-neutral-800/80 transition-colors shrink-0 cursor-pointer"
+                        title="Dismiss update"
+                        aria-label="Dismiss update"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

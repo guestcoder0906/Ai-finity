@@ -75,11 +75,9 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
     return () => clearInterval(interval);
   }, [item.durationMs, triggerDismiss]);
 
-  // Unified Pointer Event Drag Handlers (supports both mobile touch and desktop mouse)
+  // Unified Drag & Touch Handlers (robust on mobile touch screens and desktop mice)
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Only handle primary button / touches
     if (e.button !== 0 || isExitingRef.current) return;
-
     startXRef.current = e.clientX;
     startYRef.current = e.clientY;
     startTimeRef.current = Date.now();
@@ -89,13 +87,12 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      // Ignored if not supported
+      // Ignored
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingRef.current || isExitingRef.current) return;
-
     const dx = e.clientX - startXRef.current;
     setOffsetX(dx);
   };
@@ -115,15 +112,52 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
 
     const dx = e.clientX - startXRef.current;
     const dt = Math.max(1, Date.now() - startTimeRef.current);
-    const velocityX = dx / dt; // px per ms
+    const velocityX = dx / dt;
 
-    // Threshold: dragged past 45px or flicked with speed > 0.35px/ms
-    if (dx > 45 || (dx > 15 && velocityX > 0.35)) {
+    if (dx > 35 || (dx > 12 && velocityX > 0.3)) {
       triggerDismiss('right');
-    } else if (dx < -45 || (dx < -15 && velocityX < -0.35)) {
+    } else if (dx < -35 || (dx < -12 && velocityX < -0.3)) {
       triggerDismiss('left');
     } else {
-      // Spring back to center
+      setOffsetX(0);
+    }
+  };
+
+  // Dedicated touch events for high-precision mobile sliding
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (isExitingRef.current || e.touches.length === 0) return;
+    const t = e.touches[0];
+    startXRef.current = t.clientX;
+    startYRef.current = t.clientY;
+    startTimeRef.current = Date.now();
+    isDraggingRef.current = true;
+    setIsDragging(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current || isExitingRef.current || e.touches.length === 0) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startXRef.current;
+    const dy = t.clientY - startYRef.current;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      setOffsetX(dx);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    const endX = e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0].clientX : startXRef.current + offsetX;
+    const dx = endX - startXRef.current;
+    const dt = Math.max(1, Date.now() - startTimeRef.current);
+    const velocityX = dx / dt;
+
+    if (dx > 35 || (dx > 12 && velocityX > 0.3)) {
+      triggerDismiss('right');
+    } else if (dx < -35 || (dx < -12 && velocityX < -0.3)) {
+      triggerDismiss('left');
+    } else {
       setOffsetX(0);
     }
   };
@@ -186,6 +220,10 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
       style={{
         transform: transformStyle,
         opacity: opacityStyle,
@@ -218,11 +256,16 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
           triggerDismiss('right');
         }}
         onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => {
+          e.stopPropagation();
+          triggerDismiss('right');
+        }}
         aria-label="Close update"
         title="Close"
-        className="ml-auto p-1 rounded-md text-neutral-500 hover:text-white hover:bg-neutral-800/80 transition-colors shrink-0 cursor-pointer"
+        className="ml-auto p-1.5 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800/90 active:bg-neutral-700 transition-colors shrink-0 cursor-pointer min-w-[26px] min-h-[26px] flex items-center justify-center"
       >
-        <X size={12} />
+        <X size={13} />
       </button>
 
       {/* Temporary Lifespan Countdown Bar */}
@@ -257,10 +300,19 @@ export const LiveStatusUpdates: React.FC<LiveStatusUpdatesProps> = ({
 
   // When new updates arrive, queue them as temporary live slidable cards
   useEffect(() => {
-    // Skip loading stale history on initial page mount/refresh
+    // Show initial updates if present on mount
     if (isFirstMountRef.current) {
       isFirstMountRef.current = false;
       prevUpdatesRef.current = updates || [];
+      if (updates && updates.length > 0) {
+        const initialToasts: LiveStatusItem[] = updates.slice(0, 2).map((u, i) => ({
+          id: `live_update_init_${Date.now()}_${i}`,
+          update: u,
+          createdAt: Date.now(),
+          durationMs: 6500
+        }));
+        setToasts(initialToasts);
+      }
       return;
     }
 

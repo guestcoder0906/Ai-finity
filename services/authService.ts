@@ -263,6 +263,33 @@ export async function clearGuestName(guestName: string | null, guestId: string):
 // In-memory cache for profiles currently being created or fetched to avoid race conditions
 let activeProfileCache: Record<string, UserProfile> = {};
 
+// Local email session support for seamless registration and login when Firebase Email Provider is disabled in Firebase Console
+let fallbackSessionUser: UserProfile | null = null;
+const authListeners = new Set<(user: UserProfile | null, loading: boolean) => void>();
+
+function notifyAuthListeners(user: UserProfile | null, loading: boolean) {
+  authListeners.forEach((cb) => {
+    try {
+      cb(user, loading);
+    } catch (e) {
+      console.error('Auth listener error:', e);
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  try {
+    const raw = localStorage.getItem('aifinity_fallback_session');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.uid) {
+        fallbackSessionUser = enrichUserProfileWithDefaults(parsed);
+        activeProfileCache[fallbackSessionUser.uid] = fallbackSessionUser;
+      }
+    }
+  } catch (e) {}
+}
+
 // Register user with email/password
 export async function registerWithEmail(
   email: string,
@@ -324,8 +351,28 @@ export async function registerWithEmail(
     let msg = err.message || 'Registration failed.';
     let operationNotAllowed = false;
     if (err.code === 'auth/operation-not-allowed') {
-      msg = 'Email/Password sign-in is not enabled in your Firebase Console. Please enable Email/Password provider in the Firebase Console.';
-      operationNotAllowed = true;
+      try {
+        const resp = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, pass, username })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.user) {
+          const profile = enrichUserProfileWithDefaults(data.user);
+          fallbackSessionUser = profile;
+          activeProfileCache[profile.uid] = profile;
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('aifinity_fallback_session', JSON.stringify(profile));
+          }
+          notifyAuthListeners(profile, false);
+          return { user: profile };
+        }
+        return { error: data.error || 'Registration failed.' };
+      } catch (fallbackErr: any) {
+        msg = fallbackErr.message || 'Registration failed.';
+        operationNotAllowed = true;
+      }
     } else if (err.code === 'auth/email-already-in-use') {
       msg = 'An account with this email already exists.';
     } else if (err.code === 'auth/weak-password') {
@@ -413,15 +460,38 @@ export async function loginWithEmail(
       if (authErr.code === 'auth/operation-not-allowed') {
         if (isGoogleAccount) {
           return {
-            error: `This email (${cleanEmail}) was registered using Google Sign-In, and Email/Password sign-in is disabled in Firebase. Please sign in with Google below.`,
+            error: `This email (${cleanEmail}) was registered using Google Sign-In. Please click Sign In With Google below.`,
             operationNotAllowed: true,
             isGoogleAccount: true
           };
         }
-        return {
-          error: 'Email/Password sign-in is disabled in the Firebase Console for this project.',
-          operationNotAllowed: true
-        };
+        try {
+          const resp = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: cleanEmail, pass })
+          });
+          const data = await resp.json();
+          if (resp.ok && data.user) {
+            const profile = enrichUserProfileWithDefaults(data.user);
+            fallbackSessionUser = profile;
+            activeProfileCache[profile.uid] = profile;
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('aifinity_fallback_session', JSON.stringify(profile));
+            }
+            notifyAuthListeners(profile, false);
+            return { user: profile };
+          }
+          if (data.accountNotFound) {
+            return {
+              error: 'No account found with this email. Please enter your desired username and password to create your account.',
+              accountNotFound: true
+            };
+          }
+          return { error: data.error || 'Invalid email or password. Please try again.' };
+        } catch (fallbackErr: any) {
+          return { error: fallbackErr.message || 'Login failed.' };
+        }
       }
       // If Firebase explicitly reports user-not-found, OR if our lookup showed account does not exist:
       if (
@@ -659,11 +729,35 @@ export async function completeGoogleSignUp(
 // Log out
 export async function logOut(): Promise<void> {
   activeProfileCache = {};
+  if (fallbackSessionUser) {
+    fallbackSessionUser = null;
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('aifinity_fallback_session');
+    }
+    notifyAuthListeners(null, false);
+  }
   await fbSignOut(auth);
 }
 
 // Fetch user profile from Firestore by UID
 export async function getUserProfile(uid: string, forceFresh: boolean = false): Promise<UserProfile | null> {
+  // Check if this is an active fallback email session
+  if (fallbackSessionUser && fallbackSessionUser.uid === uid) {
+    if (forceFresh) {
+      try {
+        const resp = await fetch(`/api/auth/user/${uid}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.user) {
+            fallbackSessionUser = enrichUserProfileWithDefaults(data.user);
+            activeProfileCache[uid] = fallbackSessionUser;
+          }
+        }
+      } catch (e) {}
+    }
+    return enrichUserProfileWithDefaults(fallbackSessionUser);
+  }
+
   // Helper to read any cached local purchase state
   const getLocalPurchaseOverrides = (targetUid: string) => {
     try {
@@ -773,8 +867,17 @@ export function updateCachedProfile(uid: string, updates: Partial<UserProfile>):
 
 // Listen to auth state changes
 export function subscribeToAuth(callback: (user: UserProfile | null, loading: boolean) => void) {
-  return onAuthStateChanged(auth, async (fbUser) => {
+  authListeners.add(callback);
+  if (fallbackSessionUser) {
+    callback(fallbackSessionUser, false);
+  }
+
+  const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
     if (fbUser) {
+      fallbackSessionUser = null;
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('aifinity_fallback_session');
+      }
       let profile = await getUserProfile(fbUser.uid);
       if (!profile) {
         // Retry with delays to allow Firestore writes to settle
@@ -799,10 +902,17 @@ export function subscribeToAuth(callback: (user: UserProfile | null, loading: bo
         callback(fallback, false);
       }
     } else {
-      activeProfileCache = {};
-      callback(null, false);
+      if (!fallbackSessionUser) {
+        activeProfileCache = {};
+        callback(null, false);
+      }
     }
   });
+
+  return () => {
+    authListeners.delete(callback);
+    unsubscribe();
+  };
 }
 
 // Generate unique Guest# between 1-9999 for multiplayer guests who haven't set their name
@@ -829,6 +939,20 @@ export function generateUniqueGuestMultiplayerName(existingPlayerNames: string[]
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
   try {
     updateCachedProfile(uid, updates);
+
+    if (fallbackSessionUser && fallbackSessionUser.uid === uid) {
+      fallbackSessionUser = { ...fallbackSessionUser, ...updates };
+      activeProfileCache[uid] = fallbackSessionUser;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('aifinity_fallback_session', JSON.stringify(fallbackSessionUser));
+      }
+      fetch('/api/auth/update-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid, updates })
+      }).catch(() => {});
+      notifyAuthListeners(fallbackSessionUser, false);
+    }
 
     // Sync to local storage state
     if (typeof window !== 'undefined') {

@@ -73,8 +73,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-neutral-900 border border-neutral-700 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden text-neutral-200 font-sans max-h-[90vh]">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+      <div className="bg-neutral-900 border border-neutral-700 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden text-neutral-200 font-sans max-h-[92dvh] sm:max-h-[90vh] my-auto">
         {/* Modal Top Controls (Hidden in Print) */}
         <div className="px-4 sm:px-5 py-3 sm:py-3.5 bg-neutral-950 border-b border-neutral-800 flex justify-between items-center shrink-0 print:hidden">
           <div className="flex items-center gap-2 min-w-0">

@@ -36,15 +36,18 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
 
   const bannerContent = (
     <div
-      className="fixed top-3 sm:top-6 inset-x-0 z-[999999] flex justify-center items-start pointer-events-none px-3 sm:px-4"
+      className="fixed inset-0 z-[999999] flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onDismiss();
+      }}
     >
       <div
         id="purchase-notification-toast"
         aria-label="Purchase Notification"
-        className="w-full max-w-lg pointer-events-auto transition-all duration-300 animate-in fade-in slide-in-from-top-2"
+        className="w-full max-w-md mx-auto my-auto max-h-[92dvh] flex flex-col transition-all duration-300 animate-in fade-in zoom-in-95"
       >
         <div
-          className={`p-3.5 sm:p-4 rounded-2xl border-2 shadow-[0_16px_50px_rgba(0,0,0,0.95)] backdrop-blur-2xl flex flex-col gap-2.5 sm:gap-3 ${
+          className={`p-4 sm:p-5 rounded-2xl border-2 shadow-[0_20px_60px_rgba(0,0,0,0.95)] backdrop-blur-2xl flex flex-col gap-3 overflow-y-auto max-h-[88dvh] ${
             isSuccess
               ? 'bg-neutral-950/98 border-emerald-500/90 text-emerald-100 ring-2 ring-emerald-400/40'
               : isError
@@ -54,9 +57,9 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
         >
           {/* Header Row */}
           <div className="flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div
-                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center shrink-0 ${
                   isSuccess
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                     : isError
@@ -65,16 +68,16 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
                 }`}
               >
                 {isSuccess ? (
-                  <CheckCircle2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+                  <CheckCircle2 className="w-5 h-5" />
                 ) : isError ? (
-                  <AlertCircle className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+                  <AlertCircle className="w-5 h-5" />
                 ) : (
-                  <Info className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+                  <Info className="w-5 h-5" />
                 )}
               </div>
-              <span className="text-xs sm:text-sm font-bold tracking-tight text-white flex items-center gap-1.5 truncate">
+              <span className="text-sm sm:text-base font-bold tracking-tight text-white flex items-center gap-1.5 truncate">
                 <span className="truncate">{isSuccess ? 'Payment Verified & Applied!' : isError ? 'Payment Issue' : 'Payment Notification'}</span>
-                {isSuccess && <Sparkles size={14} className="text-amber-400 inline shrink-0" />}
+                {isSuccess && <Sparkles size={15} className="text-amber-400 inline shrink-0" />}
               </span>
             </div>
 
@@ -82,7 +85,7 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
               id="dismiss-purchase-banner-btn"
               onClick={onDismiss}
               aria-label="Close notification"
-              className="text-neutral-400 hover:text-white p-1 sm:p-1.5 rounded-lg hover:bg-neutral-800/80 transition-colors shrink-0"
+              className="text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800/80 transition-colors shrink-0"
             >
               <X size={18} />
             </button>
@@ -94,14 +97,14 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
           </p>
 
           {/* Action Controls */}
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-neutral-800/80 mt-0.5">
+          <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-neutral-800/80 mt-1">
             {verifiedReceipt && onOpenReceipt && (
               <button
                 id="view-receipt-from-banner-btn"
                 onClick={onOpenReceipt}
-                className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-95 shrink-0"
+                className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold rounded-lg text-xs sm:text-sm flex items-center gap-1.5 transition-all shadow-md active:scale-95 shrink-0"
               >
-                <ReceiptIcon size={14} className="shrink-0" />
+                <ReceiptIcon size={15} className="shrink-0" />
                 <span>View Official Receipt</span>
               </button>
             )}
@@ -110,7 +113,7 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
               <button
                 id="view-order-history-from-banner-btn"
                 onClick={onOpenOrderHistory}
-                className="px-2.5 sm:px-3 py-1.5 text-xs text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700/80 rounded-lg transition-colors border border-neutral-700/60 shrink-0"
+                className="px-3 py-2 text-xs sm:text-sm text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700/80 rounded-lg transition-colors border border-neutral-700/60 shrink-0"
               >
                 Order History
               </button>
@@ -119,7 +122,7 @@ export const PurchaseNotificationBanner: React.FC<PurchaseNotificationBannerProp
             <button
               id="dismiss-btn"
               onClick={onDismiss}
-              className="px-2.5 sm:px-3 py-1.5 text-xs text-neutral-400 hover:text-white bg-neutral-800/60 hover:bg-neutral-800 rounded-lg transition-colors shrink-0 sm:ml-auto"
+              className="px-3 py-2 text-xs sm:text-sm text-neutral-400 hover:text-white bg-neutral-800/60 hover:bg-neutral-800 rounded-lg transition-colors shrink-0 sm:ml-auto"
             >
               Dismiss
             </button>
