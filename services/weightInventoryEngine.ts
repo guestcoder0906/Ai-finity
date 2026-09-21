@@ -28,6 +28,8 @@ export interface ItemInfo {
   dimensions: ParsedDimensions;
   category: 'equipped' | 'carried' | 'container' | 'stored';
   containerName?: string;
+  location?: string;
+  isHiddenLocation?: boolean;
   isFoldable?: boolean;
   isOverflow?: boolean;
   doesNotFit?: boolean;
@@ -73,6 +75,26 @@ export interface HoldingCapacityInfo {
   freeSlots: number;
 }
 
+export interface CurrencyEntry {
+  name: string; // e.g. "Gold Coin", "Silver Coin", "Copper Coin", "Credits", "Bottle Caps", "Dollars"
+  amount: number;
+  weight?: number; // lbs
+  container?: string; // e.g. "Coin Pouch", "Wallet", "Backpack"
+  location?: string; // Attached location e.g. "Player's Cottage, Riverwood", "Gringotts Vault 687"
+  isHiddenLocation?: boolean; // true if location is wrapped in hide[...]
+  rawText: string;
+}
+
+export interface CharacterCurrencyData {
+  currencyType: string; // e.g. "Gold, Silver, and Copper Coins" or "Credits"
+  carriedCurrencies: CurrencyEntry[];
+  carriedSummary: string; // e.g. "1 Gold Coin, 5 Silver Coins" or "250 Credits" or "0"
+  storedCurrencies: CurrencyEntry[];
+  storedSummary: string; // e.g. "150 Gold Coins [Player's Cottage]" or "None"
+  totalNetWorthSummary: string;
+  hasCurrency: boolean;
+}
+
 export interface CharacterPhysicalStats {
   characterName: string;
   username?: string;
@@ -96,6 +118,7 @@ export interface CharacterPhysicalStats {
   encumbranceImmunityReason?: string; // e.g. "Slime biology absorbs items internally without standard encumbrance/slowing"
   encumbranceEffectDescription: string; // Dynamic description of what carrying weight does to this specific entity
   totalCarriedWeight: number; // lbs
+  currency: CharacterCurrencyData;
   isMounted: boolean;
   mountedEntityName?: string;
   mountedStatusDescription?: string;
@@ -117,6 +140,167 @@ export interface CharacterPhysicalStats {
 }
 
 export class WeightInventoryEngine {
+  /**
+   * Parses currency entries from lines, item descriptions, and balance notes:
+   * e.g.:
+   * - "1 Gold Coin, 5 Silver Coins: 0.15 lbs. Container: [Coin Pouch]"
+   * - "150 Gold Coins: Location: [Iron Treasure Chest in Player's Cottage]"
+   * - "50 Silver Coins: Location: hide[Buried under tree at coords (120, 340)]"
+   * - "250 Credits"
+   * - "$500" / "500 Dollars"
+   * - "Contains: 1 Gold Coin, 5 Silver Coins"
+   */
+  public static parseCurrencyEntries(
+    line: string,
+    defaultLocation?: string,
+    defaultContainer?: string
+  ): CurrencyEntry[] {
+    const entries: CurrencyEntry[] = [];
+    if (!line || !line.trim()) return entries;
+
+    const trimmed = line.replace(/^[-*•>\s]+/, '').trim();
+    const lower = trimmed.toLowerCase();
+
+    // Skip headers or instructions
+    if (
+      lower.startsWith('currency type:') ||
+      lower.startsWith('- currency type:') ||
+      lower.startsWith('carried balance') ||
+      lower.startsWith('- carried balance') ||
+      lower.startsWith('stored / remote balance') ||
+      lower.startsWith('- stored / remote balance') ||
+      lower.startsWith('stored balance') ||
+      lower.startsWith('- stored balance') ||
+      lower.startsWith('total carried wealth:') ||
+      lower.startsWith('total stored wealth:') ||
+      lower.startsWith('total net worth:') ||
+      (lower.startsWith('(') && lower.endsWith(')') && !lower.includes('gold') && !lower.includes('coin') && !lower.includes('credit'))
+    ) {
+      return entries;
+    }
+
+    // Extract location if present
+    let location = defaultLocation;
+    let isHiddenLocation = false;
+    const locMatch = trimmed.match(/location[:=\s]+(hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i);
+    if (locMatch) {
+      location = locMatch[1].trim();
+      if (location.toLowerCase().includes('hide[')) {
+        isHiddenLocation = true;
+      }
+    } else if (trimmed.toLowerCase().includes('hide[')) {
+      const hideMatch = trimmed.match(/hide\[([^\]]+)\]/i);
+      if (hideMatch) {
+        location = `hide[${hideMatch[1].trim()}]`;
+        isHiddenLocation = true;
+      }
+    }
+
+    // Extract container if present
+    let container = defaultContainer;
+    const contMatch = trimmed.match(/container[:=\s]+\[?([a-zA-Z0-9_\s'-]+)\]?/i);
+    if (contMatch) {
+      container = contMatch[1].trim();
+    } else {
+      const bracketMatch = trimmed.match(/\[([a-zA-Z0-9_\s'-]+)\]/i);
+      if (bracketMatch && !locMatch) {
+        const inner = bracketMatch[1].trim();
+        if (/pouch|wallet|purse|backpack|chest|bag|sack/i.test(inner)) {
+          container = inner;
+        }
+      }
+    }
+
+    // Extract weight if specified
+    let entryWeight: number | undefined;
+    const weightMatch = trimmed.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i);
+    if (weightMatch) {
+      entryWeight = parseFloat(weightMatch[1]);
+    }
+
+    let contentToScan = trimmed;
+    const containsMatch = trimmed.match(/contains[:=\s]+([^)]+)/i);
+    if (containsMatch) {
+      contentToScan = containsMatch[1];
+    } else {
+      contentToScan = contentToScan
+        .replace(/location[:=\s]+(?:hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/gi, '')
+        .replace(/container[:=\s]+\[?[a-zA-Z0-9_\s'-]+\]?/gi, '')
+        .replace(/:?\s*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, '');
+    }
+
+    const currencyRegex = /(\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|shillings?|pence|penny)\b|[a-zA-Z]+)/gi;
+
+    let match;
+    while ((match = currencyRegex.exec(contentToScan)) !== null) {
+      const rawNum = match[1].replace(/[$,\s]/g, '');
+      const amt = parseFloat(rawNum);
+      const name = match[2].trim();
+      if (!isNaN(amt) && amt > 0 && name) {
+        const lowerName = name.toLowerCase();
+        if (
+          lowerName.includes('inch') ||
+          lowerName.includes('lbs') ||
+          lowerName.includes('pound') ||
+          lowerName.includes('weight') ||
+          lowerName.includes('tall') ||
+          lowerName.includes('wide') ||
+          lowerName.includes('depth') ||
+          lowerName.includes('m/s') ||
+          lowerName.includes('damage') ||
+          lowerName.includes('health') ||
+          lowerName.includes('mana') ||
+          lowerName.includes('stamina') ||
+          lowerName.includes('energy') ||
+          lowerName.includes('level') ||
+          lowerName.includes('slot') ||
+          lowerName.includes('round') ||
+          lowerName.includes('turn')
+        ) {
+          continue;
+        }
+
+        const cleanName = name.replace(/^of\s+/i, '').trim();
+
+        entries.push({
+          name: cleanName,
+          amount: amt,
+          weight: entryWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: match[0].trim()
+        });
+      }
+    }
+
+    return entries;
+  }
+
+  /**
+   * Formats a list of currency entries into a clean aggregated summary string:
+   * e.g. "1 Gold Coin, 5 Silver Coins" or "250 Credits" or "0"
+   */
+  public static formatCurrencySummary(entries: CurrencyEntry[]): string {
+    if (!entries || entries.length === 0) return '0';
+    const totals: { [name: string]: number } = {};
+    for (const e of entries) {
+      let norm = e.name;
+      if (e.amount === 1) {
+        norm = norm.replace(/\bCoins\b/i, 'Coin').replace(/\bCredits\b/i, 'Credit').replace(/\bDollars\b/i, 'Dollar');
+      } else {
+        if (!norm.toLowerCase().endsWith('s') && !norm.toLowerCase().endsWith('coin') && !norm.toLowerCase().endsWith('credit')) {
+          norm = `${norm}s`;
+        } else if (norm.toLowerCase().endsWith('coin')) {
+          norm = `${norm}s`;
+        }
+      }
+      totals[norm] = (totals[norm] || 0) + e.amount;
+    }
+    const parts = Object.entries(totals).map(([name, amt]) => `${amt.toLocaleString()} ${name}`);
+    return parts.length > 0 ? parts.join(', ') : '0';
+  }
+
   /**
    * Parses weights in diverse formats:
    * - "feather 0 weight 3x0 inch" -> 0
@@ -735,6 +919,23 @@ export class WeightInventoryEngine {
       }
     }
 
+    // Parse location (especially for stored items or remote caches)
+    let location: string | undefined;
+    let isHiddenLocation = false;
+    const locMatch = rest.match(/location[:=\s]+(hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i);
+    if (locMatch) {
+      location = locMatch[1].trim();
+      if (location.toLowerCase().includes('hide[')) {
+        isHiddenLocation = true;
+      }
+    } else if (rest.toLowerCase().includes('hide[')) {
+      const hideMatch = rest.match(/hide\[([^\]]+)\]/i);
+      if (hideMatch) {
+        location = `hide[${hideMatch[1].trim()}]`;
+        isHiddenLocation = true;
+      }
+    }
+
     // Check overflow & does not fit notes in text
     let doesNotFit = false;
     let isOverflow = false;
@@ -753,6 +954,8 @@ export class WeightInventoryEngine {
       dimensions,
       category: defaultContainer ? 'carried' : 'equipped',
       containerName,
+      location,
+      isHiddenLocation,
       isFoldable,
       isOverflow,
       doesNotFit,
@@ -802,6 +1005,12 @@ export class WeightInventoryEngine {
     let customHoldingMax: number | undefined;
     let customHoldingApplies: boolean | undefined;
     const activeWeightEffects: CharacterPhysicalStats['activeWeightEffects'] = [];
+
+    // Currency & balance data
+    let currencyType = 'Standard World Currency';
+    const carriedCurrencies: CurrencyEntry[] = [];
+    const storedCurrencies: CurrencyEntry[] = [];
+    let activeCurrencySub: 'carried' | 'stored' | 'general' = 'carried';
 
     let isMounted = false;
     let mountedEntityName: string | undefined;
@@ -877,6 +1086,16 @@ export class WeightInventoryEngine {
           'STORED ITEMS': 'OWNED / STORED ITEMS (NOT ON PERSON)',
           'OWNED ITEMS': 'OWNED / STORED ITEMS (NOT ON PERSON)',
           'STORAGE': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+
+          'CURRENCY & FINANCIAL BALANCE': 'CURRENCY & FINANCIAL BALANCE',
+          'CURRENCY AND FINANCIAL BALANCE': 'CURRENCY & FINANCIAL BALANCE',
+          'CURRENCY & BALANCE': 'CURRENCY & FINANCIAL BALANCE',
+          'CURRENCY': 'CURRENCY & FINANCIAL BALANCE',
+          'FINANCIAL BALANCE': 'CURRENCY & FINANCIAL BALANCE',
+          'FINANCES': 'CURRENCY & FINANCIAL BALANCE',
+          'WEALTH': 'CURRENCY & FINANCIAL BALANCE',
+          'MONEY': 'CURRENCY & FINANCIAL BALANCE',
+          'CURRENCY & WEALTH': 'CURRENCY & FINANCIAL BALANCE',
 
           'STATUS EFFECTS & LORE': 'STATUS EFFECTS & LORE',
           'STATUS EFFECTS AND LORE': 'STATUS EFFECTS & LORE',
@@ -1565,12 +1784,51 @@ export class WeightInventoryEngine {
         }
       }
 
+      // [CURRENCY & FINANCIAL BALANCE]
+      if (currentSection.includes('CURRENCY') || currentSection.includes('FINANCE') || currentSection.includes('WEALTH') || currentSection.includes('BALANCE')) {
+        if (lower.startsWith('- currency type:') || lower.startsWith('currency type:')) {
+          currencyType = line.split(/[:=]/)[1]?.trim() || currencyType;
+          continue;
+        }
+        if (lower.includes('carried balance') || lower.includes('carried currency') || lower.includes('on person') || lower.includes('pouch') || lower.includes('wallet')) {
+          activeCurrencySub = 'carried';
+        } else if (lower.includes('stored') || lower.includes('remote balance') || lower.includes('not on person') || lower.includes('vault') || lower.includes('cache') || lower.includes('chest') || lower.includes('bank')) {
+          activeCurrencySub = 'stored';
+        }
+
+        const entries = WeightInventoryEngine.parseCurrencyEntries(line);
+        if (entries.length > 0) {
+          if (activeCurrencySub === 'stored') {
+            storedCurrencies.push(...entries);
+          } else {
+            carriedCurrencies.push(...entries);
+          }
+          continue;
+        }
+      }
+
+      // Check for carried currency inside Inventory / Containers section
+      if (currentSection.includes('INVENTORY') || currentSection.includes('CONTAINER') || currentSection.includes('CARRIED')) {
+        const cEntries = WeightInventoryEngine.parseCurrencyEntries(line, undefined, activeContainerName);
+        if (cEntries.length > 0) {
+          for (const ce of cEntries) {
+            if (!carriedCurrencies.some(existing => existing.name.toLowerCase() === ce.name.toLowerCase() && existing.amount === ce.amount)) {
+              carriedCurrencies.push(ce);
+            }
+          }
+        }
+      }
+
       // 4. [OWNED / STORED ITEMS (NOT ON PERSON)]
       if (currentSection.includes('OWNED') || currentSection.includes('STORED') || currentSection.includes('NOT ON PERSON')) {
         const item = this.parseItemLine(line);
         if (item) {
           item.category = 'stored';
           storedItems.push(item);
+        }
+        const sCurr = WeightInventoryEngine.parseCurrencyEntries(line, item?.location);
+        if (sCurr.length > 0) {
+          storedCurrencies.push(...sCurr);
         }
       }
 
@@ -1674,6 +1932,16 @@ export class WeightInventoryEngine {
         totalCarriedWeight += hItem.weight;
       }
     }
+    // Add carried currency physical weight (if coins or physical money)
+    for (const c of carriedCurrencies) {
+      if (c.weight !== undefined && c.weight > 0) {
+        totalCarriedWeight += c.weight;
+      } else if (/coins?|gold|silver|copper/i.test(c.name)) {
+        // Standard realistic physical coin weight: ~0.02 lbs (approx 50 coins per pound)
+        totalCarriedWeight += Math.round(c.amount * 0.02 * 100) / 100;
+      }
+    }
+
     // Add passenger/rider weight if this entity is carrying riders or passengers (e.g. mount, carriage, wagon)
     totalCarriedWeight += passengerWeight;
     // Stored items are EXCLUDED (user mandate: "not owned, owned items they don't have on them are put in another category but it's theirs still")
@@ -1703,6 +1971,21 @@ export class WeightInventoryEngine {
       }
     }
 
+    const carriedSummary = WeightInventoryEngine.formatCurrencySummary(carriedCurrencies);
+    const storedSummary = WeightInventoryEngine.formatCurrencySummary(storedCurrencies);
+    const totalNetWorthSummary = WeightInventoryEngine.formatCurrencySummary([...carriedCurrencies, ...storedCurrencies]);
+    const hasCurrency = carriedCurrencies.length > 0 || storedCurrencies.length > 0;
+
+    const currency: CharacterCurrencyData = {
+      currencyType,
+      carriedCurrencies,
+      carriedSummary,
+      storedCurrencies,
+      storedSummary,
+      totalNetWorthSummary,
+      hasCurrency
+    };
+
     return {
       characterName,
       characterType,
@@ -1725,6 +2008,7 @@ export class WeightInventoryEngine {
       encumbranceImmunityReason,
       encumbranceEffectDescription,
       totalCarriedWeight: Math.round(totalCarriedWeight * 10) / 10,
+      currency,
       isMounted,
       mountedEntityName,
       mountedStatusDescription,
@@ -1886,6 +2170,51 @@ export class WeightInventoryEngine {
         }
       }
       changes.push('Synchronized Currently Holding section');
+    }
+
+    // 6. Ensure [CURRENCY & FINANCIAL BALANCE] section is present and accurate if currency exists or section was present
+    if (stats.currency.hasCurrency || updated.includes('[CURRENCY & FINANCIAL BALANCE]') || updated.includes('[CURRENCY')) {
+      const currencyLines: string[] = [];
+      currencyLines.push(`- Currency Type: ${stats.currency.currencyType}`);
+      currencyLines.push(`- Carried Balance (On Person):`);
+      if (stats.currency.carriedCurrencies.length === 0) {
+        currencyLines.push(`  * None (0)`);
+      } else {
+        for (const c of stats.currency.carriedCurrencies) {
+          const contSuffix = c.container ? ` [Container: ${c.container}]` : '';
+          const wSuffix = c.weight !== undefined ? ` (Weight: ${c.weight} lbs)` : '';
+          currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}${contSuffix}${wSuffix}`);
+        }
+      }
+      currencyLines.push(`- Stored / Remote Balance (Not on Person):`);
+      if (stats.currency.storedCurrencies.length === 0) {
+        currencyLines.push(`  * None (0)`);
+      } else {
+        for (const c of stats.currency.storedCurrencies) {
+          const locStr = c.location ? ` [Location: ${c.location}]` : '';
+          currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}${locStr}`);
+        }
+      }
+      currencyLines.push(`- Total Net Worth: ${stats.currency.totalNetWorthSummary}`);
+
+      const currencyBlock = `[CURRENCY & FINANCIAL BALANCE]\n${currencyLines.join('\n')}\n\n`;
+
+      if (updated.includes('[CURRENCY & FINANCIAL BALANCE]')) {
+        const currIdx = updated.indexOf('[CURRENCY & FINANCIAL BALANCE]');
+        const nextH = updated.indexOf('[', currIdx + 28);
+        const replaceEnd = nextH > 0 ? nextH : updated.length;
+        updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
+      } else if (updated.includes('[CURRENCY')) {
+        const currIdx = updated.indexOf('[CURRENCY');
+        const nextH = updated.indexOf('[', currIdx + 10);
+        const replaceEnd = nextH > 0 ? nextH : updated.length;
+        updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
+      } else {
+        const loreIdx = updated.indexOf('[STATUS EFFECTS & LORE]');
+        const insertPos = loreIdx >= 0 ? loreIdx : updated.length;
+        updated = updated.substring(0, insertPos) + currencyBlock + updated.substring(insertPos);
+      }
+      changes.push('Synchronized Currency & Financial Balance section');
     }
 
     return {

@@ -219,7 +219,19 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 - Total Carried Weight on Person: (The code automatically sums all weight of equipped gear, armor, containers, and items inside containers, e.g. "24 lbs / 165 lbs (14.5% body weight - Good: Unencumbered)")
 
 [OWNED / STORED ITEMS (NOT ON PERSON)]
-- (List of items owned by character that are NOT on their person - stored at home, bank vault, campsite chest, stash, wagon, or mount. Their weight is strictly NOT added to the character's carried weight)
+- (List of items owned by character that are NOT on their person right now — stored at home, vault, camp, stash, wagon, mount, or lost/buried. Every single owned item not on their person MUST have a specific location attached! Secret, buried, or lost items use hide[...] syntax for location so they remain hidden from others until discovered. Their weight is strictly NOT added to the character's carried weight)
+  * Example: "- Heavy Iron Chest: Weight: 25 lbs. [Location: Player's Cottage, Riverwood]"
+  * Example: "- Ancient Spellbook: Weight: 4 lbs. [Location: hide[Secret locked compartment behind bookshelf in Old Study]]"
+  * Example: "- Lost Golden Signet Ring: Weight: 0.1 lbs. [Location: hide[Dropped in muck near Whispering Bog ruins]]"
+
+[CURRENCY & FINANCIAL BALANCE]
+- Currency Type: (Dynamically determined by AI based on setting/world, e.g. "Gold, Silver, and Copper Coins", "Galactic Credits", "US Dollars & Cents", "Bottle Caps")
+- Carried Balance (On Person): (Exact amount carried on their person in coin pouch, wallet, or pockets with physical weight, e.g. "1 Gold Coin, 5 Silver Coins [Container: Coin Pouch] (Weight: 0.12 lbs)")
+- Stored / Remote Balance (Not on Person): (List of funds owned by character that are NOT on their person right now, with a specific location attached to each! For secret, buried, or lost caches, use hide[...] syntax! E.g.
+  * 150 Gold Coins [Location: Iron Strongbox in Player's Cottage, Riverwood]
+  * 50 Silver Coins [Location: hide[Buried inside hollow oak tree at map coords (140, 280)]]
+  * 1,200 Credits [Location: Galactic Reserve Bank Account #4819])
+- Total Net Worth: (Accurate sum of carried + stored wealth dynamically determined)
 
 [ATTACKS & COMBAT ACTIONS]
 - List every physical attack or standard action this entity can perform.
@@ -531,6 +543,16 @@ INSTRUCTIONS:
    - If dismounting/exiting:
      * Add BOTH files to "filesToUpdate" to clear mounting status, remove rider weight from the mount, restore the rider's unmounted speed, and allow separate map movement.
 9. PLAYER ACTION INTEGRITY: Accurately capture what the player is attempting in 'intent' without changing, softening, or rationalizing it. The player is free to attempt ANY action within their context that is not physically/magically impossible, even if it does not make sense. Only audit for actual physical/magical impossibility, never common sense.
+10. AUDIT FOR CURRENCY, BALANCES, TRANSACTIONS & COMMERCE (CRITICAL):
+    - Check if the action involves shopping, buying, selling, trading, receiving currency (e.g. NPC giving 1 Gold Coin and 5 Silver Coins, quest pay, wages, loot), finding treasure, or accessing stored wealth.
+    - DYNAMIC PRICING: Calculate realistic prices dynamically based on world context and setting.
+    - CODE MATH & AFFORDABILITY CHECK:
+      * Check the buyer's Carried Balance against the total price.
+      * If they CAN afford it: deduct total price from carried balance (and add to seller if NPC). Add item to buyer's carried inventory/containers (or equip under [Equipped Gear & Armor] if wearable gear/armor).
+      * If they CANNOT afford it (code math doesn't add up / insufficient carried balance): DO NOT give the item for free or allow negative balance! The player can do anything they want if they want it (e.g. bargain/haggle for a lower price, buy fewer items, offer to barter other items from inventory, ask for credit/loan, beg or plead, offer service, or walk away). The AI dynamically and accurately resolves their chosen approach!
+      * If receiving currency: add exact amounts to carried balance in their file and include in 'updates' array.
+      * If accessing or moving stored/remote currency or stashes: verify specific location attached to each item or cache (using hide[...] for secret/hidden stashes).
+      * Add both buyer and seller entity files to "filesToUpdate".
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -546,6 +568,16 @@ OUTPUT FORMAT (Strict JSON only):
       ]
     }
   ],
+  "commerceAudit": {
+    "isCommerceAction": true,
+    "buyer": "PlayerName",
+    "seller": "NPCName",
+    "items": ["ItemName"],
+    "totalPrice": "5 Silver Coins",
+    "canAfford": true,
+    "shortfallHandling": "none|bargain|beg|barter|walk_away",
+    "currencyTransferred": "-5 Silver Coins"
+  },
   "mountingAudit": {
     "isMountingAction": true,
     "rider": "RiderName",
@@ -651,11 +683,25 @@ export class AIEngine {
               const transportMatch = charContent.match(/(?:-\s*(?:Status\s*\/\s*Transport|Status\s*\/\s*Mounting|Mounting\s*\/\s*Riding|Mounted|Riding|Inside|Transport):\s*([^\n\r]+))/i);
               const holdingMatch = charContent.match(/-\s*Items Currently Held:[\s\S]*?(?=\n-\s*Dynamic|\n\[|$)/i);
 
+              let currencyLine = '';
+              let storedItemsLine = '';
+              try {
+                const pStats = WeightInventoryEngine.parseCharacterStatsAndInventory(charContent);
+                if (pStats.currency.hasCurrency) {
+                  currencyLine = `- Carried Balance (On Person): ${pStats.currency.carriedSummary || '0'} | Stored Wealth: ${pStats.currency.storedSummary || '0'} | Total Net Worth: ${pStats.currency.totalNetWorthSummary || '0'}\n`;
+                }
+                if (pStats.storedItems.length > 0) {
+                  storedItemsLine = `- Owned / Stored Items (Off-Person): ${pStats.storedItems.map(s => `${s.name} [Loc: ${s.location || 'Unknown'}]`).join(', ')}\n`;
+                }
+              } catch (e) {
+                // non-fatal
+              }
+
               playerCharacterContext = `\n[ACTIVE PLAYER CHARACTER CONTEXT]
 - Controlling User: "${username}"
 - Character File: "${playerFile}"
 - Character Name: "${playerCharacterName}"
-${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Health: ${hpMatch[1].trim()}\n` : ''}${energyMatch ? `- Energy: ${energyMatch[1].trim()}\n` : ''}${speedMatch ? `- Speed: ${speedMatch[1].trim()}\n` : ''}${transportMatch ? `- Mobility/Mount Status: ${transportMatch[1].trim()}\n` : '- Mobility/Mount: On Foot (Unmounted)\n'}${holdingMatch ? `- Currently Holding: ${holdingMatch[0].replace(/-\s*Items Currently Held:\s*/i, '').trim()}\n` : ''}`;
+${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Health: ${hpMatch[1].trim()}\n` : ''}${energyMatch ? `- Energy: ${energyMatch[1].trim()}\n` : ''}${speedMatch ? `- Speed: ${speedMatch[1].trim()}\n` : ''}${currencyLine}${storedItemsLine}${transportMatch ? `- Mobility/Mount Status: ${transportMatch[1].trim()}\n` : '- Mobility/Mount: On Foot (Unmounted)\n'}${holdingMatch ? `- Currently Holding: ${holdingMatch[0].replace(/-\s*Items Currently Held:\s*/i, '').trim()}\n` : ''}`;
             }
           }
 
@@ -799,12 +845,23 @@ CRITICAL REMINDERS:
      * Mount's file: Record rider (e.g. "- Rider / Driver: [${playerCharacterName || 'Rider'}] (Weight: X lbs body + Y lbs gear = Z lbs)") and add rider's total weight to the mount's carried weight and encumbrance!
      * Map: On CurrentMap.json, while mounted they share identical coordinates and move together.
      * Dismounting: When dismounting or exiting, update BOTH files to clear the riding status and restore the rider's unmounted speed and independent map position.
-7. AUTO ACTION RECOMMENDATIONS (CRITICAL):
+7. CURRENCY, BALANCES, TRANSACTIONS & COMMERCE (CRITICAL):
+   - Every character who can hold/use currency has their balance tracked under [CURRENCY & FINANCIAL BALANCE].
+   - If an action involves shopping, buying, selling, trading, receiving money (e.g. an NPC giving 1 Gold Coin and 5 Silver Coins, wages, tips, quest pay, looting coins), or accessing remote wealth:
+     * DYNAMIC PRICING: The AI dynamically and realistically determines prices and item values based on the setting and world context.
+     * CODE MATH & AFFORDABILITY CHECK:
+       - If buying, check total price against buyer's Carried Balance.
+       - If they can afford it: deduct total price from carried balance (and add to seller if NPC). Add item to buyer's file (or equip under [Equipped Gear & Armor] if wearable gear/armor). Add stat update to 'updates' array (e.g. {"type": "stat", "text": "-5 Silver Coins", "value": -5}).
+       - If they CANNOT afford it (code math doesn't add up / insufficient carried funds): DO NOT give the item for free or allow negative balance! The player can do anything they want if they want it (e.g. bargain or haggle for a discount, buy fewer items, offer other items from inventory to barter/trade, ask for credit/loan, beg or plead, offer labor/service, or walk away). The AI dynamically and authentically resolves their chosen approach and consequences!
+     * RECEIVING CURRENCY: When an NPC gives currency (e.g. 1 Gold Coin and 5 Silver Coins) or coins are found/earned, update the character's carried balance in their file and include in 'updates' array (e.g. {"type": "stat", "text": "+1 Gold Coin, +5 Silver Coins", "value": 1}).
+     * STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
+     * Both buyer and seller entity files MUST be updated in 'files'.
+8. AUTO ACTION RECOMMENDATIONS (CRITICAL):
    - The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
    - DO NOT generate suggestions for other NPCs or adversaries.
-   - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, or mounting nearby rides).
-8. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
-9. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
+   - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, carried/stored wealth, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, shopping/bargaining if near a vendor, or mounting nearby rides).
+9. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
+10. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
 
           const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite');
           
@@ -1994,6 +2051,96 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
+  private syncPlayerCurrency(data: AIResponse, username?: string) {
+    if (!data.updates || !Array.isArray(data.updates)) return;
+
+    // Detect currency updates in data.updates
+    const currencyUpdates = data.updates.filter(u => {
+      if (!u.text) return false;
+      const t = u.text.toLowerCase();
+      return (
+        t.includes('coin') ||
+        t.includes('gold') ||
+        t.includes('silver') ||
+        t.includes('copper') ||
+        t.includes('credit') ||
+        t.includes('dollar') ||
+        t.includes('currency') ||
+        t.includes('balance') ||
+        t.includes('price')
+      );
+    });
+
+    if (currencyUpdates.length === 0) return;
+
+    const targetFile = this.findPlayerCharacterFile(username) ||
+      (username ? `${username}.txt` : null) ||
+      Object.keys(data.files || {}).find(f => f.endsWith('.txt') && (f.includes('-') || f.includes('_')));
+
+    if (!targetFile) return;
+
+    let content: string | null = null;
+    if (data.files && data.files[targetFile]) {
+      const fd = data.files[targetFile];
+      content = typeof fd === 'string' ? fd : (fd as any)?.content;
+    }
+    if (!content) {
+      content = this.fs.read(targetFile);
+    }
+    if (!content) return;
+
+    let updatedContent = content;
+
+    for (const update of currencyUpdates) {
+      const parsed = WeightInventoryEngine.parseCurrencyEntries(update.text);
+      if (parsed.length === 0) continue;
+
+      const pStats = WeightInventoryEngine.parseCharacterStatsAndInventory(updatedContent);
+      let changed = false;
+
+      for (const entry of parsed) {
+        const isDeduction = update.text.includes('-') || (update.value !== undefined && update.value < 0);
+        const signedAmount = isDeduction ? -Math.abs(entry.amount) : Math.abs(entry.amount);
+
+        const existingIdx = pStats.currency.carriedCurrencies.findIndex(
+          c => c.name.toLowerCase() === entry.name.toLowerCase()
+        );
+
+        if (existingIdx >= 0) {
+          pStats.currency.carriedCurrencies[existingIdx].amount = Math.max(
+            0,
+            pStats.currency.carriedCurrencies[existingIdx].amount + signedAmount
+          );
+          changed = true;
+        } else if (!isDeduction) {
+          pStats.currency.carriedCurrencies.push({
+            name: entry.name,
+            amount: entry.amount,
+            container: entry.container || (pStats.containers.length > 0 ? pStats.containers[0].name : 'Coin Pouch')
+          });
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        try {
+          const activeTime = this.fs.read('WorldTime.txt') || undefined;
+          const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime);
+          updatedContent = res.updatedContent;
+        } catch (e) {
+          console.warn("Currency sync error", e);
+        }
+      }
+    }
+
+    if (!data.files || typeof data.files !== 'object') data.files = {};
+    if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+      (data.files[targetFile] as any).content = updatedContent;
+    } else {
+      data.files[targetFile] = updatedContent;
+    }
+  }
+
   private processResponseData(data: AIResponse, username?: string) {
     if (!data) return;
 
@@ -2002,6 +2149,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
     // Ensure items added or placed in containers are properly reflected
     this.syncPlayerInventory(data, username);
+
+    // Ensure currency transactions and balance changes are synchronized
+    this.syncPlayerCurrency(data, username);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username

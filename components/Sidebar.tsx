@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -847,6 +847,48 @@ const Sidebar: React.FC<SidebarProps> = ({
                                 </div>
                               )}
 
+                              {/* Currency & Financial Balance */}
+                              {pStats.currency && (pStats.currency.hasCurrency || pStats.currency.carriedCurrencies.length > 0 || pStats.currency.storedCurrencies.length > 0) && (
+                                <div className="pt-1.5 border-t border-neutral-800/80">
+                                  <div className="bg-gradient-to-r from-amber-950/30 to-neutral-900/50 p-2 rounded border border-amber-800/40 text-[10px] space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
+                                        <Coins size={12} className="text-amber-400" />
+                                        <span>Currency & Balance</span>
+                                      </div>
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-200 border border-amber-700/50 font-mono font-medium">
+                                        Net: {pStats.currency.totalNetWorthSummary || '0'}
+                                      </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-1 text-[9.5px]">
+                                      <div className="flex items-start justify-between gap-1 text-gray-300 bg-neutral-950/60 p-1 rounded border border-neutral-800/40">
+                                        <span className="text-gray-400 shrink-0 font-medium">💰 Carried (On Person):</span>
+                                        <span className="text-amber-200 font-mono text-right font-medium">
+                                          {pStats.currency.carriedSummary || 'None (0)'}
+                                        </span>
+                                      </div>
+
+                                      {pStats.currency.storedCurrencies.length > 0 && (
+                                        <div className="flex items-start justify-between gap-1 text-gray-300 bg-neutral-950/60 p-1 rounded border border-neutral-800/40">
+                                          <span className="text-gray-400 shrink-0 font-medium">🏦 Stored / Remote:</span>
+                                          <div className="text-right space-y-0.5">
+                                            <span className="text-gray-300 font-mono font-medium">
+                                              {pStats.currency.storedSummary}
+                                            </span>
+                                            {pStats.currency.storedCurrencies.map((sc, sci) => sc.location ? (
+                                              <div key={sci} className="text-[8px] text-amber-400/90 italic truncate">
+                                                📍 {sc.location}
+                                              </div>
+                                            ) : null)}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
                               {/* Stored Items (Not on Person) */}
                               {pStats.storedItems.length > 0 && (
                                 <div className="pt-1 border-t border-neutral-800/60">
@@ -868,12 +910,19 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   {expandedStoredItems[filename] && (
                                     <div className="mt-1 pl-1.5 border-l border-neutral-800 space-y-1 bg-neutral-950/70 p-1.5 rounded text-[9px]">
                                       {pStats.storedItems.map((it, si) => (
-                                        <div key={si} className="flex justify-between items-center text-gray-300 hover:text-white">
-                                          <span className="truncate pr-1">• {it.name}</span>
-                                          <span className="font-mono text-gray-500 text-[8px] shrink-0">
-                                            {it.weight > 0 ? `${it.weight} lbs` : '0 lbs'}
-                                            {it.dimensions?.raw && it.dimensions.raw !== 'None' && it.dimensions.raw !== '0 lbs' ? ` (${it.dimensions.raw})` : ''}
-                                          </span>
+                                        <div key={si} className="text-gray-300 hover:text-white py-0.5 border-b border-neutral-900/60 last:border-0">
+                                          <div className="flex justify-between items-center">
+                                            <span className="truncate pr-1 font-medium">• {it.name}</span>
+                                            <span className="font-mono text-gray-500 text-[8px] shrink-0">
+                                              {it.weight > 0 ? `${it.weight} lbs` : '0 lbs'}
+                                              {it.dimensions?.raw && it.dimensions.raw !== 'None' && it.dimensions.raw !== '0 lbs' ? ` (${it.dimensions.raw})` : ''}
+                                            </span>
+                                          </div>
+                                          {it.location && (
+                                            <div className="text-[8px] text-amber-300/80 italic pl-2 flex items-center gap-1 mt-0.5">
+                                              <span>📍 {it.isHiddenLocation ? `Secret: ${it.location}` : it.location}</span>
+                                            </div>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
