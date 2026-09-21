@@ -530,9 +530,11 @@ COMPLETE CHARACTER FILES & ZERO MISSING SECTIONS RULE (CRITICAL):
 - It MUST contain every section completely—never omit, shorten, or forget any section.
 
 COMPREHENSIVE STORY & STAT UPDATE RESOLUTION RULE (CRITICAL):
-- Make sure the AI does not forget anything needed to update—such as updating health and energy/stamina/mana—instead of cutting the story short and not updating it or not finishing that part of the story after that action(s).
+- Make sure the AI does not forget anything needed to update whenever an action genuinely alters game state (such as combat damage, genuine physical exhaustion from heavy exertion or spellcasting, healing, or inventory changes)—instead of cutting the story short and not finishing that part of the story.
 - NEVER cut the story short. The narrative must fully resolve and finish that part of the story following the player's action(s), describing the full outcomes, impacts, and reactions.
-- Whenever an action results in damage, healing, exhaustion, energy/stamina expenditure, recovery, or inventory changes, you MUST update the stats immediately (updating health and energy/stamina/mana) both in the 'updates' array AND in the updated file content in 'files' (such as updating the player's energy and health in their character file). Never leave stats un-updated or cut narrative short before concluding the action's aftermath.`;
+- DYNAMIC CONTEXTUAL STAT UPDATES: Only update health and energy/stamina/mana when there is an authentic reason in context (e.g. taking damage, healing, high physical exertion in combat or athletics, spellcasting, or resting/recovering).
+- MENIAL TASKS ZERO ENERGY RULE: Menial, low-exertion, casual, social, or observational tasks (such as talking, conversing, standing, looking around, examining things, listening, waiting, casual walking, sitting, minor gestures, eating/drinking, or light mental reasoning) do NOT use any noticeable energy. NEVER deduct energy or stamina for menial tasks that do not realistically consume noticeable energy!
+- Whenever an action DOES legitimately cause damage, healing, genuine strenuous energy expenditure, or rest recovery, update the stats immediately both in the 'updates' array AND in the character file. If the task is menial or non-strenuous, preserve energy unchanged.`;
 
 const ACTION_AUDIT_PROMPT = `TASK: Technical Requirement Audit.
 You are the High-Efficiency Logic Auditor for the Aifinity system.
@@ -551,9 +553,17 @@ INSTRUCTIONS:
      * isInventoryAffected: true if any inventory/equipment change occurs, false otherwise.
      * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop"), item name, container name (if inside a backpack, pouch, satchel, etc.), and target character.
    - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
-7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC AI REASONING):
-   - Dynamically detect if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana.
-   - Specify isEnergyAffected: true/false, character name, expectedChange (negative for spent, positive for recovered), and reason. If energy/stamina changes, add character's file to "filesToUpdate".
+7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC CONTEXTUAL AI REASONING):
+   - Dynamically analyze the character's physical and magical exertion based on the full scene context, character capabilities, and physical/magical requirements:
+   - MENIAL & LOW-EXERTION ACTIONS: Menial, low-effort, casual, social, or everyday tasks (such as talking, speaking, conversing, standing, looking, observing, inspecting, reading, listening, waiting, idle moments, casual walking, sitting, eating, drinking, or light non-strenuous interactions) do NOT use any noticeable amount of energy or stamina.
+     * For any menial, casual, or non-strenuous action:
+       - "isEnergyAffected": MUST be false
+       - "isMenialOrNonExertive": MUST be true
+       - "expectedChange": MUST be 0
+       - "reason": Dynamically explain why no noticeable energy was expended (e.g. "Menial conversational/observational task; negligible metabolic exertion").
+       - Do NOT flag energy as affected or deduct points for menial tasks!
+   - NOTICEABLE EXERTION & SPELLS: Only evaluate "isEnergyAffected": true with negative "expectedChange" when the character engages in genuine, noticeable physical exertion (e.g. melee/ranged combat, dodging, sprinting at top speed, climbing steep cliffs, lifting heavy weights, strenuous athletics) or casting spells/channeling magical abilities that have defined resource costs.
+   - RECOVERY & REST: When resting, sleeping, or meditating, dynamically determine realistic positive energy recovery ("expectedChange" > 0, "isEnergyAffected": true).
 8. AUDIT FOR RIDING, MOUNTING, VEHICLES & ENTERABLE ENTITIES (DYNAMIC AI REASONING):
    - Dynamically detect if the player or an NPC mounts, rides, boards, pilots, enters, dismounts, or exits a mount, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g., horse, skateboard, bicycle, carriage).
    - If mounting/entering:
@@ -687,10 +697,11 @@ OUTPUT FORMAT (Strict JSON only):
     "spatialNotes": "Player_B entered dungeon; must create new page while preserving surface page for Player_A."
   },
   "energyAudit": {
-    "isEnergyAffected": true,
+    "isEnergyAffected": false,
+    "isMenialOrNonExertive": true,
     "character": "CharacterName",
-    "expectedChange": -10,
-    "reason": "Attack / spell / physical exertion / rest"
+    "expectedChange": 0,
+    "reason": "Menial task (e.g. talking / standing / observing) uses no noticeable energy; OR genuine exertion/spell/rest"
   },
   "filesToCreate": ["List of filenames to immediately generate"],
   "filesToUpdate": ["List of filenames that must be modified (Player, NPCs, etc)"],
@@ -806,6 +817,7 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
           const audit = this.extractJSON(auditRaw);
 
           if (!audit) throw new Error("Audit failed");
+          audit.action = action;
 
           // STAGE 2: RESOLUTION (BACKEND CALCULATION)
           let resolvedCheckReport = "";
@@ -858,8 +870,9 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
               (audit.healthAudit?.damageAndHealing && audit.healthAudit.damageAndHealing.length > 0)
             );
             const isEnergyAffected = Boolean(
-              audit.energyAudit?.isEnergyAffected ||
-              (audit.energyAudit && typeof audit.energyAudit.expectedChange === 'number' && audit.energyAudit.expectedChange !== 0)
+              !audit.energyAudit?.isMenialOrNonExertive &&
+              (audit.energyAudit?.isEnergyAffected ||
+              (audit.energyAudit && typeof audit.energyAudit.expectedChange === 'number' && audit.energyAudit.expectedChange !== 0))
             );
             const isInventoryAffected = Boolean(
               audit.inventoryAudit?.isInventoryAffected ||
@@ -911,6 +924,7 @@ TECHNICAL PLAN (Follow strictly):
 3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}
 4. Temporal Shift: ${timeShiftNotice}
 5. Map Update Required: ${mapReq}
+6. Energy & Stamina: ${audit.energyAudit ? (audit.energyAudit.isEnergyAffected ? `Energy affected (${audit.energyAudit.expectedChange} for ${audit.energyAudit.character || 'character'} - ${audit.energyAudit.reason || ''})` : `No energy change (0 cost) - ${audit.energyAudit.reason || 'Menial task uses no noticeable energy'}`) : "No energy change"}
 
 Process this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
 
@@ -926,7 +940,11 @@ CRITICAL REMINDERS:
    - CONTAINER INTEGRITY (CRITICAL): If the player picks up, finds, loots, or places an item in a container (e.g. backpack, satchel, pouch), you MUST update the player's character file ("CharacterName-USERNAME.txt").
    - Under [CONTAINERS & CARRIED GEAR], under "- Carried Inventory (Inside Containers):", add the item formatted with detectable weight, dimensions, and container name: e.g. "- Iron Dagger: 2 lbs, 10x2 inches. Container: [Backpack]". Ensure the container exists under "- Containers Equipped/Carried:".
    - If an item would overflow or exceeds container capacity, or is wearable and contextually sensible, equip under [Equipped Gear & Armor].
-5. STATS & ENERGY: Whenever energy, stamina, or mana is expended or restored (from attacks, abilities, spells, sprinting, physical exertion, or resting), you MUST update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the change in the "updates" array (e.g. {"type": "stat", "text": "Energy -10", "value": -10}). NEVER forget to update the character's energy when it changes.
+5. STATS & ENERGY (DYNAMIC CONTEXTUAL REASONING):
+   - Dynamically evaluate whether the action realistically requires noticeable physical or magical exertion.
+   - ZERO ENERGY DEDUCTION FOR MENIAL TASKS: Everyday, social, or menial tasks (such as talking, conversing, standing, looking around, examining an item, casual observation, listening, waiting, sitting, casual walking, or light non-combat interactions) do NOT consume any noticeable amount of energy. NEVER deduct energy, stamina, or mana for menial tasks! The character's energy remains unchanged.
+   - EXERTIVE ACTIONS & SPELLS ONLY: Only deduct energy/stamina/mana when the character genuinely engages in noticeable physical exertion (e.g. combat swings, martial strikes, dodging attacks, sprinting at full speed, climbing, heavy physical lifting) or casts spells/abilities with resource costs.
+   - When energy is genuinely expended (strenuous action) or restored (resting/sleeping), update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the stat change in the 'updates' array. If the action is menial or non-strenuous, do NOT deduct any energy.
 6. MOUNTING, RIDING, VEHICLES & ENTERABLE ENTITIES (CRITICAL):
    - If this action involves mounting, riding, boarding, piloting, entering, dismounting, or exiting a horse, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g. skateboard):
      * UPDATE BOTH ENTITY FILES: You MUST update both the rider's file ("${playerFile || 'Rider'}") and the mount/vehicle/item's file.
@@ -1522,7 +1540,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       CRITICAL: You MUST include the exact text "${fullDetailsHtml}" at the very beginning or end of your narrative so the player can click to see the full mathematical details. Do not alter the formatting of that string. Include the Check Name and Result (e.g. "[Jump: Failure]") natively in the narrative text as well.
       DYNAMIC STAT & HEALTH UPDATES (WHEN APPLICABLE):
       - If this action results in damage, injury, or healing, dynamically update the affected character/entity file(s) in 'files' with their new Health calculated in [STATS & MODIFIERS] and include the stat change in the 'updates' array.
-      - If this action consumes or restores stamina, mana, or energy, dynamically update the character's file with their new Energy/Mana/Stamina value in [STATS & MODIFIERS] and include the stat change in the 'updates' array.`;
+      - If this action genuinely consumes stamina, mana, or energy (from noticeable physical exertion, combat, or spellcasting), or restores energy (from resting/sleeping), dynamically update the character's file with their new Energy/Mana/Stamina value in [STATS & MODIFIERS] and include the stat change in the 'updates' array. Do NOT deduct energy for menial, low-effort tasks like talking, standing, observing, or casual interactions.`;
 
       // We make a fresh call with the context combined, as we don't maintain a full chat history object here 
       // (The FS is the history source of truth).
@@ -2047,17 +2065,28 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         totalDelta += u.value;
         found = true;
       } else {
-        const numMatch = u.text.match(/([+-]?\s*\d+(?:\.\d+)?)/);
-        if (numMatch) {
-          let val = parseFloat(numMatch[1].replace(/\s+/g, ''));
-          if (!isNaN(val)) {
-            if (textLower.includes('spent') || textLower.includes('cost') || textLower.includes('lost') || textLower.includes('drain') || textLower.includes('exhaust')) {
-              val = -Math.abs(val);
-            } else if (textLower.includes('restor') || textLower.includes('recov') || textLower.includes('gain') || textLower.includes('heal')) {
-              val = Math.abs(val);
-            }
+        // Skip current/max fraction notation like "Energy: 95/100" (not a delta)
+        if (/\d+\s*\/\s*\d+/.test(u.text)) continue;
+
+        const signedMatch = u.text.match(/([+-]\s*\d+(?:\.\d+)?)/);
+        if (signedMatch) {
+          const val = parseFloat(signedMatch[1].replace(/\s+/g, ''));
+          if (!isNaN(val) && val !== 0) {
             totalDelta += val;
             found = true;
+          }
+        } else {
+          const isSpent = textLower.includes('spent') || textLower.includes('cost') || textLower.includes('lost') || textLower.includes('drain') || textLower.includes('exhaust');
+          const isGained = textLower.includes('restor') || textLower.includes('recov') || textLower.includes('gain') || textLower.includes('heal');
+          if (isSpent || isGained) {
+            const numMatch = u.text.match(/(\d+(?:\.\d+)?)/);
+            if (numMatch) {
+              let val = parseFloat(numMatch[1]);
+              if (!isNaN(val) && val !== 0) {
+                totalDelta += isSpent ? -Math.abs(val) : Math.abs(val);
+                found = true;
+              }
+            }
           }
         }
       }
@@ -2071,7 +2100,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
    */
   private extractEnergyDeltaFromText(text: string): number | null {
     if (!text) return null;
-    const bracketMatch = text.match(/[\[\(](?:Energy|Stamina|Mana)[:\s]*([+-]?\s*\d+(?:\.\d+)?)[\]\)]/i);
+
+    // Skip current/max fraction notations like [Energy: 95/100]
+    const bracketMatch = text.match(/[\[\(](?:Energy|Stamina|Mana)[:\s]*([+-]\s*\d+(?:\.\d+)?)[\]\)]/i);
     if (bracketMatch) {
       const val = parseFloat(bracketMatch[1].replace(/\s+/g, ''));
       if (!isNaN(val) && val !== 0) return val;
@@ -2094,7 +2125,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
   /**
    * Automatically verifies and synchronizes character energy between updates,
-   * narrative, and the character file. Guarantees that character energy is never forgotten.
+   * narrative, and the character file. Guarantees that character energy is never forgotten
+   * while dynamically protecting against accidental energy loss on menial/non-exertive tasks.
    */
   private syncPlayerEnergy(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
@@ -2121,6 +2153,12 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     const existingEnergy = this.parseCharacterEnergy(baselineContent);
     if (!existingEnergy) return;
 
+    // Dynamic AI contextual evaluation: Check if the AI logic auditor determined this is a menial or non-exertive task
+    const isMenialOrNonExertive = Boolean(
+      auditContext?.energyAudit?.isMenialOrNonExertive === true ||
+      (auditContext?.energyAudit && !auditContext.energyAudit.isEnergyAffected && (auditContext.energyAudit.expectedChange === 0 || auditContext.energyAudit.expectedChange === undefined))
+    );
+
     // 2. Extract energy delta from updates, narrative, or auditContext
     const deltaFromUpdates = this.extractEnergyDeltaFromUpdates(data.updates || []);
     const deltaFromNarrative = this.extractEnergyDeltaFromText(data.narrative || '');
@@ -2144,10 +2182,40 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
+    // Dynamic Contextual Protection: If the dynamic AI audit context evaluated that this is a menial/non-exertive task,
+    // protect against negative energy drain (accidental deduction in narrative, updates, or character file)
+    if (isMenialOrNonExertive) {
+      if (detectedDelta !== null && detectedDelta < 0) {
+        detectedDelta = null;
+      }
+      if (data.updates && Array.isArray(data.updates)) {
+        data.updates = data.updates.filter(u => {
+          if (!u || !u.text) return true;
+          const t = u.text.toLowerCase();
+          const isEnergy = t.includes('energy') || t.includes('stamina') || t.includes('mana');
+          if (isEnergy && (u.value !== undefined ? u.value < 0 : (t.includes('-') || t.includes('spent') || t.includes('cost') || t.includes('lost') || t.includes('drain')))) {
+            return false;
+          }
+          return true;
+        });
+      }
+    }
+
     // 3. Check if the AI already updated the energy in incomingContent
     if (incomingContent && existingContent) {
       const incomingEnergy = this.parseCharacterEnergy(incomingContent);
       if (incomingEnergy && incomingEnergy.current !== existingEnergy.current) {
+        // If dynamic contextual audit determined the action is menial/non-exertive, but incoming content decreased energy:
+        if (isMenialOrNonExertive && incomingEnergy.current < existingEnergy.current) {
+          const restoredContent = this.updateCharacterEnergyInContent(incomingContent, existingEnergy.current);
+          if (typeof data.files![targetFile] === 'object' && (data.files![targetFile] as any).content !== undefined) {
+            (data.files![targetFile] as any).content = restoredContent;
+          } else {
+            data.files![targetFile] = restoredContent;
+          }
+          return;
+        }
+
         // AI already properly updated energy in the character file
         const actualDelta = incomingEnergy.current - existingEnergy.current;
         if (data.updates && Array.isArray(data.updates)) {
