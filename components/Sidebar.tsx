@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -45,6 +45,8 @@ interface SidebarProps {
   onCloseMobile?: () => void;
   mobileTab?: 'files' | 'map';
   onSetMobileTab?: (tab: 'files' | 'map') => void;
+  isMinimized?: boolean;
+  onToggleMinimize?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -83,10 +85,23 @@ const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
   mobileTab,
-  onSetMobileTab
+  onSetMobileTab,
+  isMinimized: propIsMinimized,
+  onToggleMinimize
 }) => {
 
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
+  const [internalMinimized, setInternalMinimized] = useState<boolean>(true); // Minimized by default!
+  const isMinimized = propIsMinimized !== undefined ? propIsMinimized : internalMinimized;
+
+  const handleToggleMinimize = () => {
+    if (onToggleMinimize) {
+      onToggleMinimize();
+    } else {
+      setInternalMinimized(prev => !prev);
+    }
+  };
+
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
   const [expandedStoredItems, setExpandedStoredItems] = useState<{ [filename: string]: boolean }>({});
   const [expandedContainers, setExpandedContainers] = useState<{ [containerKey: string]: boolean }>({});
@@ -113,6 +128,10 @@ const Sidebar: React.FC<SidebarProps> = ({
       setActiveTab('files');
       if (onSetMobileTab) onSetMobileTab('files');
       setIsMobileExpanded(true);
+      if (isMinimized) {
+        if (onToggleMinimize) onToggleMinimize();
+        setInternalMinimized(false);
+      }
       // Scroll container directly to avoid displacing the mobile window/body
       setTimeout(() => {
         if (expandedRef.current && filesListRef.current) {
@@ -162,134 +181,271 @@ const Sidebar: React.FC<SidebarProps> = ({
           ? 'fixed inset-0 z-50 bg-neutral-950 flex flex-col'
           : 'hidden md:flex'
         }
-        md:relative md:inset-auto md:z-auto md:w-80 md:h-full md:bg-neutral-900 md:border-r md:border-neutral-800 md:flex-col
-        text-[11px] md:text-xs font-mono overflow-hidden shrink-0
+        md:relative md:inset-auto md:z-auto ${isMinimized && !effectiveMobileOpen ? 'md:w-12' : 'md:w-80'} md:h-full md:bg-neutral-900 md:border-r md:border-neutral-800 md:flex-col
+        text-[11px] md:text-xs font-mono overflow-hidden shrink-0 transition-[width] duration-200 ease-in-out
       `}
       style={{
         WebkitOverflowScrolling: 'touch',
         ...(effectiveMobileOpen ? { height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' } : {})
       }}
     >
-      {/* Mobile Drawer Header Bar (Visible on mobile when drawer is opened) */}
-      <div className="md:hidden flex items-center justify-between px-3 py-2 bg-neutral-900 border-b border-neutral-800 shrink-0">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setActiveTab('files');
-              if (onSetMobileTab) onSetMobileTab('files');
-            }}
-            className={`px-3 py-1 rounded text-xs flex items-center gap-1.5 border transition-colors ${
-              activeTab === 'files'
-                ? 'bg-blue-950 border-blue-700 text-blue-300 font-semibold shadow'
-                : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-            }`}
-          >
-            <FileText size={12} className={activeTab === 'files' ? 'text-blue-400' : 'text-neutral-500'} />
-            <span>Files ({visibleFiles.length})</span>
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('map');
-              if (onSetMobileTab) onSetMobileTab('map');
-            }}
-            className={`px-3 py-1 rounded text-xs flex items-center gap-1.5 border transition-colors ${
-              activeTab === 'map'
-                ? 'bg-emerald-950 border-emerald-700 text-emerald-300 font-semibold shadow'
-                : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-            }`}
-          >
-            <MapIcon size={12} className={activeTab === 'map' ? 'text-emerald-400' : 'text-neutral-500'} />
-            <span>Map</span>
-          </button>
-        </div>
-
-        <button
-          onClick={handleClose}
-          className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600 text-gray-200 px-3 py-1 rounded border border-neutral-700 text-xs font-mono transition-colors active:scale-95"
-          title="Return to adventure narrative"
-        >
-          <X size={14} className="text-red-400" />
-          <span>Back to Story</span>
-        </button>
-      </div>
-
-      {/* Main Sidebar Body */}
-      <div className="flex-1 flex flex-col min-h-0">
-
-        {/* Account / Guest Status Header */}
-        <div className="p-2 sm:p-2.5 bg-neutral-950 border-b border-neutral-800 flex flex-col gap-1.5 sm:gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${currentUser ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <div className="truncate flex items-center gap-1">
-              {currentUser ? (
-                <GoldenName
-                  name={currentUser.username}
-                  role={currentUser.role}
-                  showGlowingName={currentUser.showGlowingName}
-                  isGolden={currentUser.tier === 'legendary'}
-                  className="font-bold text-gray-200 truncate"
-                />
-              ) : (
-                <span className="font-bold text-gray-200 truncate">
-                  {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
-                </span>
-              )}
-              <span className={`text-[9px] px-1.5 py-0.2 rounded uppercase ml-1 ${
-                currentUser?.tier === 'legendary'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : currentUser?.tier === 'adventurer'
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-neutral-500'
-              }`}>
-                {currentUser ? (currentUser.tier || 'Account') : 'Guest'}
-              </span>
-            </div>
-          </div>
-          {onNavigateWelcome && (
+      {/* Minimized Vertical Rail on Desktop (when collapsed and not mobile drawer) */}
+      {isMinimized && !effectiveMobileOpen ? (
+        <div className="hidden md:flex flex-col items-center justify-between h-full w-full py-2.5 bg-neutral-950 select-none">
+          <div className="flex flex-col items-center gap-2 w-full">
+            {/* Expand Sidebar Toggle Button */}
             <button
-              onClick={onNavigateWelcome}
-              className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/60 bg-blue-950/40 px-2 py-0.5 rounded transition-colors shrink-0"
-              title="View Welcome Page"
+              id="sidebar-expand-rail-btn"
+              onClick={handleToggleMinimize}
+              className="w-8 h-8 rounded-lg bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-700 text-blue-400 hover:text-blue-300 border border-neutral-800 flex items-center justify-center transition-colors shadow cursor-pointer"
+              title="Expand Sidebar (World Files, Map, Inventory)"
             >
-              <Compass size={11} />
-              <span>Welcome</span>
+              <PanelLeftOpen size={16} />
             </button>
-          )}
-        </div>
 
-        {/* Action Status Bar */}
-        {actionStatus && (
-          <div className="p-1.5 bg-neutral-900/90 border border-neutral-800 rounded flex items-center justify-between text-[10px]">
-            <div className="flex items-center gap-1.5 text-neutral-300 truncate">
-              <Zap size={11} className={actionStatus.isUnlimited ? "text-amber-400" : "text-emerald-400"} />
-              {actionStatus.isUnlimited ? (
-                <span className="font-bold text-amber-300">Unlimited Actions</span>
-              ) : actionStatus.isGuest ? (
-                <span>
-                  <strong className="text-amber-400">{(actionStatus.guestActionsRemaining ?? actionStatus.dailyFreeRemaining ?? 0)}/{actionStatus.guestActionsTotal ?? 3}</strong> Guest Actions
-                </span>
-              ) : (
-                <span>
-                  <strong className="text-emerald-400">{(actionStatus.dailyFreeRemaining ?? 0)}/{(actionStatus.dailyFreeTotal ?? 20)}</strong> Free
-                  {(actionStatus.purchasedCredits ?? 0) > 0 && (
-                    <span className="text-amber-400 font-bold ml-1">+{actionStatus.purchasedCredits} Cr</span>
-                  )}
-                </span>
-              )}
-            </div>
+            <div className="w-5 h-px bg-neutral-800 my-0.5" />
+
+            {/* Quick Files Tab */}
+            <button
+              id="sidebar-rail-files-btn"
+              onClick={() => {
+                setActiveTab('files');
+                handleToggleMinimize();
+              }}
+              className={`w-8 h-9 rounded-lg flex flex-col items-center justify-center transition-colors cursor-pointer relative group ${
+                activeTab === 'files'
+                  ? 'bg-blue-950/80 text-blue-300 border border-blue-800/80 shadow'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+              }`}
+              title={`World Files (${visibleFiles.length}) - Click to expand`}
+            >
+              <FileText size={14} />
+              <span className="text-[8px] font-bold leading-none mt-0.5">{visibleFiles.length}</span>
+            </button>
+
+            {/* Quick Map Tab */}
+            <button
+              id="sidebar-rail-map-btn"
+              onClick={() => {
+                setActiveTab('map');
+                handleToggleMinimize();
+              }}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer group ${
+                activeTab === 'map'
+                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 shadow'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+              }`}
+              title="World Map - Click to expand"
+            >
+              <MapIcon size={14} />
+            </button>
+
+            <div className="w-5 h-px bg-neutral-800 my-0.5" />
+
+            {/* Quick Link: Adventures */}
+            {onOpenAdventures && (
+              <button
+                onClick={onOpenAdventures}
+                className="w-8 h-8 rounded-lg text-neutral-400 hover:text-blue-300 hover:bg-neutral-900 flex items-center justify-center transition-colors cursor-pointer"
+                title="Saved Adventures"
+              >
+                <Bookmark size={14} />
+              </button>
+            )}
+
+            {/* Quick Link: Community */}
+            {onOpenCommunity && (
+              <button
+                onClick={onOpenCommunity}
+                className="w-8 h-8 rounded-lg text-neutral-400 hover:text-emerald-300 hover:bg-neutral-900 flex items-center justify-center transition-colors cursor-pointer"
+                title="Community Adventures"
+              >
+                <Globe size={14} />
+              </button>
+            )}
+
+            {/* Quick Link: Market */}
             {onOpenMarket && (
               <button
                 onClick={() => onOpenMarket('packs')}
-                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-sans font-semibold text-[10px] transition-colors flex items-center gap-1 shrink-0"
-                title="Open Market"
+                className="w-8 h-8 rounded-lg text-neutral-400 hover:text-amber-300 hover:bg-neutral-900 flex items-center justify-center transition-colors cursor-pointer"
+                title="Aifinity Market"
               >
-                <span>Market</span>
-                <span className="text-[9px] font-bold">+</span>
+                <ShoppingCart size={14} />
+              </button>
+            )}
+
+            {/* Alpha Phase Indicator */}
+            <div
+              className="w-7 h-7 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 cursor-help"
+              title="Alpha Phase Active: Unlimited Actions!"
+            >
+              <Zap size={13} />
+            </div>
+          </div>
+
+          {/* Bottom Account Icon */}
+          <div className="flex flex-col items-center gap-1.5">
+            {currentUser ? (
+              <button
+                onClick={onOpenAccount}
+                className="w-8 h-8 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-blue-300 border border-neutral-800 flex items-center justify-center transition-colors cursor-pointer"
+                title={`Account: ${currentUser.username} (${currentUser.role || 'user'})`}
+              >
+                <User size={14} />
+              </button>
+            ) : (
+              <button
+                onClick={onOpenAuth}
+                className="w-8 h-8 rounded-lg bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 flex items-center justify-center transition-colors cursor-pointer"
+                title="Log In / Sign Up"
+              >
+                <User size={14} />
               </button>
             )}
           </div>
-        )}
+        </div>
+      ) : (
+        <>
+          {/* Mobile Drawer Header Bar (Visible on mobile when drawer is opened) */}
+          <div className="md:hidden flex items-center justify-between px-3 py-2 bg-neutral-900 border-b border-neutral-800 shrink-0">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setActiveTab('files');
+                  if (onSetMobileTab) onSetMobileTab('files');
+                }}
+                className={`px-3 py-1 rounded text-xs flex items-center gap-1.5 border transition-colors ${
+                  activeTab === 'files'
+                    ? 'bg-blue-950 border-blue-700 text-blue-300 font-semibold shadow'
+                    : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                }`}
+              >
+                <FileText size={12} className={activeTab === 'files' ? 'text-blue-400' : 'text-neutral-500'} />
+                <span>Files ({visibleFiles.length})</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('map');
+                  if (onSetMobileTab) onSetMobileTab('map');
+                }}
+                className={`px-3 py-1 rounded text-xs flex items-center gap-1.5 border transition-colors ${
+                  activeTab === 'map'
+                    ? 'bg-emerald-950 border-emerald-700 text-emerald-300 font-semibold shadow'
+                    : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                }`}
+              >
+                <MapIcon size={12} className={activeTab === 'map' ? 'text-emerald-400' : 'text-neutral-500'} />
+                <span>Map</span>
+              </button>
+            </div>
+
+            <button
+              onClick={handleClose}
+              className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600 text-gray-200 px-3 py-1 rounded border border-neutral-700 text-xs font-mono transition-colors active:scale-95"
+              title="Return to adventure narrative"
+            >
+              <X size={14} className="text-red-400" />
+              <span>Back to Story</span>
+            </button>
+          </div>
+
+          {/* Main Sidebar Body */}
+          <div className="flex-1 flex flex-col min-h-0">
+
+            {/* Account / Guest Status Header */}
+            <div className="p-2 sm:p-2.5 bg-neutral-950 border-b border-neutral-800 flex flex-col gap-1.5 sm:gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${currentUser ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <div className="truncate flex items-center gap-1">
+                  {currentUser ? (
+                    <GoldenName
+                      name={currentUser.username}
+                      role={currentUser.role}
+                      showGlowingName={currentUser.showGlowingName}
+                      isGolden={currentUser.tier === 'legendary'}
+                      className="font-bold text-gray-200 truncate"
+                    />
+                  ) : (
+                    <span className="font-bold text-gray-200 truncate">
+                      {guestName ? `${guestName} (Guest)` : 'Player (Guest)'}
+                    </span>
+                  )}
+                  <span className={`text-[9px] px-1.5 py-0.2 rounded uppercase ml-1 ${
+                    currentUser?.tier === 'legendary'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : currentUser?.tier === 'adventurer'
+                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                        : 'text-neutral-500'
+                  }`}>
+                    {currentUser ? (currentUser.tier || 'Account') : 'Guest'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onNavigateWelcome && (
+                  <button
+                    onClick={onNavigateWelcome}
+                    className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/60 bg-blue-950/40 px-2 py-0.5 rounded transition-colors shrink-0"
+                    title="View Welcome Page"
+                  >
+                    <Compass size={11} />
+                    <span>Welcome</span>
+                  </button>
+                )}
+                {/* Desktop Minimize Button */}
+                <button
+                  id="sidebar-minimize-btn"
+                  onClick={handleToggleMinimize}
+                  className="hidden md:flex items-center gap-1 text-[10px] text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 px-2 py-0.5 rounded border border-neutral-800 transition-colors cursor-pointer"
+                  title="Minimize Sidebar"
+                >
+                  <PanelLeftClose size={12} className="text-neutral-400" />
+                  <span>Minimize</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Action Status Bar */}
+            {actionStatus && (
+              <div className="p-1.5 bg-neutral-900/90 border border-neutral-800 rounded flex items-center justify-between text-[10px]">
+                <div className="flex items-center gap-1.5 text-neutral-300 truncate">
+                  <Zap size={11} className={actionStatus.isUnlimited ? "text-amber-400" : "text-emerald-400"} />
+                  {actionStatus.isAlphaPhase ? (
+                    <span className="font-bold text-amber-300 flex items-center gap-1">
+                      <span>Alpha: Unlimited Actions</span>
+                      <span className="text-[8px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase font-semibold">
+                        Alpha
+                      </span>
+                    </span>
+                  ) : actionStatus.isUnlimited ? (
+                    <span className="font-bold text-amber-300">Unlimited Actions</span>
+                  ) : actionStatus.isGuest ? (
+                    <span>
+                      <strong className="text-amber-400">{(actionStatus.guestActionsRemaining ?? actionStatus.dailyFreeRemaining ?? 0)}/{actionStatus.guestActionsTotal ?? 3}</strong> Guest Actions
+                    </span>
+                  ) : (
+                    <span>
+                      <strong className="text-emerald-400">{(actionStatus.dailyFreeRemaining ?? 0)}/{(actionStatus.dailyFreeTotal ?? 20)}</strong> Free
+                      {(actionStatus.purchasedCredits ?? 0) > 0 && (
+                        <span className="text-amber-400 font-bold ml-1">+{actionStatus.purchasedCredits} Cr</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {onOpenMarket && (
+                  <button
+                    onClick={() => onOpenMarket('packs')}
+                    className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-sans font-semibold text-[10px] transition-colors flex items-center gap-1 shrink-0"
+                    title="Open Market"
+                  >
+                    <span>Market</span>
+                    <span className="text-[9px] font-bold">+</span>
+                  </button>
+                )}
+              </div>
+            )}
 
         {/* Action Quick Links: Adventures, Community, Market */}
         <div className="grid grid-cols-3 gap-1 text-[10px]">
@@ -1000,8 +1156,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
-
       </div>
+      </>
+      )}
     </div>
   );
 };

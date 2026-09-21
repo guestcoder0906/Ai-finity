@@ -59,7 +59,9 @@ import {
   Map as MapIcon,
   Receipt as ReceiptIcon,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  PanelLeftOpen,
+  PanelLeftClose
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -171,6 +173,8 @@ function App() {
   const [isMobileTopMenuOpen, setIsMobileTopMenuOpen] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [mobilePanelTab, setMobilePanelTab] = useState<'files' | 'map'>('files');
+  // Sidebar minimizable & expandable (minimized by default)
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(true);
 
   const [stripeReturnMessage, setStripeReturnMessage] = useState<{
     type: 'success' | 'info' | 'error';
@@ -1384,6 +1388,8 @@ function App() {
         onCloseMobile={() => setIsMobilePanelOpen(false)}
         mobileTab={mobilePanelTab}
         onSetMobileTab={setMobilePanelTab}
+        isMinimized={isSidebarMinimized}
+        onToggleMinimize={() => setIsSidebarMinimized(prev => !prev)}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
@@ -1392,6 +1398,26 @@ function App() {
           {/* Desktop Top Bar (hidden on small mobile, visible md+) */}
           <div className="hidden md:flex px-3 py-2 justify-between items-center gap-2 flex-wrap text-[11px] md:text-xs">
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Desktop Sidebar Expand/Collapse Toggle Button */}
+              <button
+                id="desktop-sidebar-toggle-btn"
+                onClick={() => setIsSidebarMinimized(prev => !prev)}
+                className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title={isSidebarMinimized ? "Expand Sidebar (World Files & Map)" : "Minimize Sidebar"}
+              >
+                {isSidebarMinimized ? (
+                  <>
+                    <PanelLeftOpen size={13} className="text-blue-400" />
+                    <span className="text-neutral-300">Sidebar</span>
+                  </>
+                ) : (
+                  <>
+                    <PanelLeftClose size={13} className="text-neutral-400" />
+                    <span className="text-neutral-400">Minimize</span>
+                  </>
+                )}
+              </button>
+
               {/* Welcome Page Button on Main Game Page */}
               <button
                 id="welcome-page-top-btn"
@@ -1438,7 +1464,11 @@ function App() {
               >
                 <ShoppingCart size={13} className="text-amber-400" />
                 <span className="font-bold">Market</span>
-                {actionStatus?.isUnlimited ? (
+                {actionStatus?.isAlphaPhase ? (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-200 border border-amber-500/40 px-1.5 py-0.2 rounded font-sans flex items-center gap-1 font-bold">
+                    <Zap size={9} className="text-amber-400" /> Alpha: Unlimited
+                  </span>
+                ) : actionStatus?.isUnlimited ? (
                   <span className="text-[10px] bg-amber-500/20 text-amber-200 px-1.5 py-0.2 rounded font-sans flex items-center gap-0.5">
                     <Zap size={9} /> Unlimited
                   </span>

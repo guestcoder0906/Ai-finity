@@ -118,7 +118,12 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
   }
 ];
 
+export type GamePhase = 'alpha' | 'beta' | 'release';
+
 export interface ActionStatus {
+  phase: GamePhase;
+  isAlphaPhase: boolean;
+  isBetaPhase: boolean;
   tier: UserTier;
   role?: UserRole;
   hasCustomApiKey: boolean;
@@ -130,7 +135,6 @@ export interface ActionStatus {
   dailyFreeRemaining: number;
   purchasedCredits: number;
   totalAvailableActions: number;
-  isBetaPhase: boolean;
   canSaveMultipleAdventures: boolean;
   canPostCommunityAdventures: boolean;
   isGuest: boolean;
@@ -140,10 +144,27 @@ export interface ActionStatus {
 }
 
 export class ActionLimitService {
-  // Guests receive a strictly permanent initial trial limit of 3 actions total
+  /**
+   * Current Game Phase:
+   * Currently 'alpha' (unlimited actions while in Alpha phase until beta phase begins).
+   * When switching to beta phase in the future, set CURRENT_PHASE = 'beta'.
+   */
+  public static readonly CURRENT_PHASE: GamePhase = 'alpha';
+
+  public static getPhase(): GamePhase {
+    try {
+      const override = localStorage.getItem('aifinity_game_phase');
+      if (override === 'alpha' || override === 'beta' || override === 'release') {
+        return override;
+      }
+    } catch (e) {}
+    return this.CURRENT_PHASE;
+  }
+
+  // Guests receive a strictly permanent initial trial limit of 3 actions total (in Beta/Release)
   public static readonly GUEST_ACTION_LIMIT = 3;
 
-  // Registered players receive 10 base + 10 beta bonus = 20 free actions every day
+  // Registered players receive 10 base + 10 beta bonus = 20 free actions every day (in Beta/Release)
   public static readonly BASE_DAILY_FREE = 10;
   public static readonly BETA_DAILY_BONUS = 10;
   public static readonly TOTAL_DAILY_FREE = ActionLimitService.BASE_DAILY_FREE + ActionLimitService.BETA_DAILY_BONUS; // 20
@@ -256,27 +277,34 @@ export class ActionLimitService {
     const today = this.getTodayDateString();
     const hasCustomKey = this.hasCustomApiKey();
     const local = this.getLocalState(user, guestId);
+    const phase = this.getPhase();
+    const isAlpha = phase === 'alpha';
+    const isBeta = phase === 'beta';
 
-    // If user is a guest: strict permanent 3 action trial
+    // If user is a guest:
+    // In Alpha phase: unlimited actions!
+    // In Beta/Release phase: strict permanent 3 action trial
     if (!user) {
       const guestUsed = typeof local.dailyActionsUsed === 'number' ? local.dailyActionsUsed : 0;
-      const guestLimit = this.GUEST_ACTION_LIMIT; // 3
-      const guestRemaining = Math.max(0, guestLimit - guestUsed);
-      const isUnlimited = hasCustomKey;
+      const guestLimit = this.GUEST_ACTION_LIMIT; // 3 in beta/release
+      const isUnlimited = isAlpha || hasCustomKey;
+      const guestRemaining = isAlpha ? 999999 : Math.max(0, guestLimit - guestUsed);
       const totalAvailable = isUnlimited ? 999999 : guestRemaining;
       const canPerformAction = isUnlimited || totalAvailable > 0;
 
       return {
+        phase,
+        isAlphaPhase: isAlpha,
+        isBetaPhase: isBeta,
         tier: 'free',
         hasCustomApiKey: hasCustomKey,
         isUnlimited,
         canPerformAction,
-        dailyFreeTotal: guestLimit,
+        dailyFreeTotal: isAlpha ? 999999 : guestLimit,
         dailyFreeUsed: guestUsed,
         dailyFreeRemaining: guestRemaining,
         purchasedCredits: 0,
         totalAvailableActions: totalAvailable,
-        isBetaPhase: true,
         canSaveMultipleAdventures: false,
         canPostCommunityAdventures: false,
         isGuest: true,
@@ -319,9 +347,9 @@ export class ActionLimitService {
     const isMod = user.role === 'mod';
     const hasInfinite = Boolean(user.hasInfiniteActions || isAdmin);
 
-    const dailyFreeTotal = this.TOTAL_DAILY_FREE; // 20 actions in beta phase
-    const dailyFreeRemaining = Math.max(0, dailyFreeTotal - dailyUsed);
-    const isUnlimited = hasCustomKey || hasInfinite || tier === 'celestial';
+    const dailyFreeTotal = isBeta ? this.TOTAL_DAILY_FREE : (isAlpha ? 999999 : this.BASE_DAILY_FREE);
+    const dailyFreeRemaining = isAlpha ? 999999 : Math.max(0, dailyFreeTotal - dailyUsed);
+    const isUnlimited = isAlpha || hasCustomKey || hasInfinite || tier === 'celestial';
     const totalAvailable = isUnlimited ? 999999 : (dailyFreeRemaining + purchasedCredits);
     const canPerformAction = isUnlimited || totalAvailable > 0;
 
@@ -329,6 +357,9 @@ export class ActionLimitService {
     const canPostCommunity = Boolean(user.canPostCommunityAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary' || tier === 'celestial');
 
     return {
+      phase,
+      isAlphaPhase: isAlpha,
+      isBetaPhase: isBeta,
       tier,
       role: isAdmin ? 'admin' : isMod ? 'mod' : (user.role || 'user'),
       hasCustomApiKey: hasCustomKey,
@@ -340,7 +371,6 @@ export class ActionLimitService {
       dailyFreeRemaining,
       purchasedCredits,
       totalAvailableActions: totalAvailable,
-      isBetaPhase: true,
       canSaveMultipleAdventures: canSaveMultiple,
       canPostCommunityAdventures: canPostCommunity,
       isGuest: false,
@@ -359,9 +389,11 @@ export class ActionLimitService {
     usedCredit: boolean;
     reason?: 'limit_reached';
   }> {
+    const phase = this.getPhase();
     const status = this.getActionStatus(user, guestId);
 
-    if (status.isUnlimited) {
+    // During Alpha phase or if player has unlimited actions: grant unlimited free play without consuming limits
+    if (phase === 'alpha' || status.isUnlimited) {
       return { allowed: true, remaining: Infinity, usedCredit: false };
     }
 

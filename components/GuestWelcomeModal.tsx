@@ -79,7 +79,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                   Welcome to Aifinity!
                 </h2>
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
-                  Beta Phase
+                  Alpha Phase
                 </span>
               </div>
               <p className="text-xs text-neutral-400 mt-0.5">
@@ -91,9 +91,9 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
           {/* Guest Comparison Callout */}
           <div className="p-3.5 bg-neutral-950 border border-neutral-800 rounded-xl space-y-3">
             <div className="flex items-center justify-between text-xs pb-2 border-b border-neutral-800/80">
-              <span className="text-neutral-400">Current Guest Trial:</span>
-              <span className="font-mono font-bold text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-900/60">
-                3 Free Actions Total
+              <span className="text-neutral-400">Alpha Phase Active:</span>
+              <span className="font-mono font-bold text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-900/60 flex items-center gap-1">
+                <Zap size={12} className="text-amber-400" /> Unlimited Actions
               </span>
             </div>
 
@@ -103,9 +103,9 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                   <Zap size={13} />
                 </div>
                 <div>
-                  <strong className="text-white">20 Free Actions Daily:</strong>{' '}
+                  <strong className="text-white">Unlimited Free Actions in Alpha:</strong>{' '}
                   <span className="text-neutral-300">
-                    Sign up free to receive 20 actions every single day (10 base + 10 Beta bonus)!
+                    Play without limits during the Alpha phase! When Beta begins, registered accounts receive 20 free daily actions.
                   </span>
                 </div>
               </div>

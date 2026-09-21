@@ -797,9 +797,16 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             <div>
               <h2 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
                 Aifinity Market
-                <span className="text-[10px] sm:text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-300 border border-blue-800/60">
-                  Beta Phase Active (+10 Daily Bonus)
-                </span>
+                {effectiveStatus.isAlphaPhase ? (
+                  <span className="text-[10px] sm:text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                    <Zap size={10} className="text-amber-400" />
+                    Alpha Phase Active (Unlimited Actions)
+                  </span>
+                ) : (
+                  <span className="text-[10px] sm:text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-300 border border-blue-800/60">
+                    Beta Phase Active (+10 Daily Bonus)
+                  </span>
+                )}
                 {isAdmin && (
                   <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
                     Owner
@@ -845,15 +852,25 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         {/* Current Balance Bar - Compact */}
         <div className="px-4 py-2 bg-neutral-950/80 border-b border-neutral-800/80 flex flex-wrap items-center justify-between gap-2.5 text-xs shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div>
-              <span className="text-neutral-400">{isGuest ? "Guest: " : "Daily Free: "}</span>
-              <span className={`font-bold ${isGuest ? "text-amber-400" : "text-emerald-400"}`}>
-                {effectiveStatus.dailyFreeRemaining} / {effectiveStatus.dailyFreeTotal}
-              </span>
-              <span className="text-[10px] text-neutral-400 ml-1">
-                {isGuest ? "(3 trial actions)" : "(+10 beta bonus)"}
-              </span>
-            </div>
+            {effectiveStatus.isAlphaPhase ? (
+              <div>
+                <span className="text-neutral-400">Phase: </span>
+                <span className="font-bold text-amber-400">Alpha (Unlimited Actions)</span>
+                <span className="text-[10px] text-neutral-400 ml-1">
+                  (Free actions during Alpha phase)
+                </span>
+              </div>
+            ) : (
+              <div>
+                <span className="text-neutral-400">{isGuest ? "Guest: " : "Daily Free: "}</span>
+                <span className={`font-bold ${isGuest ? "text-amber-400" : "text-emerald-400"}`}>
+                  {effectiveStatus.dailyFreeRemaining} / {effectiveStatus.dailyFreeTotal}
+                </span>
+                <span className="text-[10px] text-neutral-400 ml-1">
+                  {isGuest ? "(3 trial actions)" : "(+10 beta bonus)"}
+                </span>
+              </div>
+            )}
             <div>
               <span className="text-neutral-400">Purchased Credits: </span>
               <span className="font-bold text-amber-400">+{effectiveStatus.purchasedCredits}</span>
