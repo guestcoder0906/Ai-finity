@@ -154,6 +154,25 @@ DYNAMIC SETUP MANDATE (NO RIGID HARDCODED TEMPLATES):
 The AI MUST set up characters, physical dimensions, body weight, holding limbs, anatomy, containers, and inventory dynamically, flexibly, and accurately for each specific character, race, creature, animal, or entity.
 NEVER use rigid hardcoded templates (e.g., do NOT assume all characters are 5'11", 165 lbs, 2-armed humanoids with a leather backpack). A wolf has four legs and jaws; a goblin might be 3'2" and 45 lbs with a belt pouch; a giant might be 15 ft and 1,800 lbs carrying a stone urn; a bird has talons and beak; a fairy is 8 inches and 0.5 lbs; a slime has amorphous gelatinous dimensions. Set up everything dynamically, authentically, and accurately!
 
+MOUNTS, VEHICLES, RIDING & ENTERABLE ENTITIES MANDATE (CRITICAL):
+- Non-Hardcoded, Flexible Dynamic Relationships:
+  * Entities (characters, players, NPCs, animals, creatures, vehicles, rideable items) can ride, mount, board, pilot, or be inside another entity (e.g. a knight riding a warhorse, an adventurer driving a carriage, a rogue riding a skateboard, a traveler sitting inside a wagon, a pilot inside a mech or starship).
+  * Bidirectional Synchronization:
+    1. The Rider / Occupant's file MUST reference the mount/vehicle/item and its current status (e.g. under [MOUNT, VEHICLE & TRANSPORT STATUS]: "- Status / Transport: Mounted on [Chestnut Warhorse] (Riding)" or "Riding [Custom Skateboard]" or "Inside [Ironclad Carriage] (Passenger)").
+    2. Speed Synchronization: The rider/occupant's active speed adopts the mount/vehicle's speed dynamically! E.g.
+       "- Speed: Walking: 3.5 m/s, Running/Galloping: 12.0 m/s (Mounted on [Chestnut Warhorse]; Unmounted base: 1.5 m/s / 4.5 m/s)"
+       or for a skateboard:
+       "- Speed: Walking/Pushing: 3.0 m/s, Coasting/Sprinting: 8.5 m/s (Riding [Maple Skateboard]; Unmounted base: 1.5 m/s / 4.5 m/s)".
+       When unmounted or on foot, their independent base speed applies.
+    3. The Mount / Vehicle / Creature's file MUST reference its riders/passengers and their weights! E.g.:
+       "- Rider / Driver: [Sir Roderick-Player] (Weight: 180 lbs body + 45 lbs carried gear = 225 lbs)"
+       "- Passengers / Occupants: [Lady Gwendolyn] (Weight: 130 lbs)"
+       "- Total Occupant Weight: 355 lbs"
+    4. Weight & Encumbrance on Mount: The total weight of all riders, passengers, and their carried items is counted as carried weight on the mount/vehicle! The mount's encumbrance and speed adjust dynamically based on its own body weight and strength.
+    5. Map Synchronization: On "CurrentMap.json", a rider and their mount/vehicle occupy the same coordinates and move together while mounted.
+    6. Portable rideable items (like a skateboard, scooter, or folding bike): can be stored or held in inventory when not in use; when placed down and ridden, update status to riding, adopt its speed, and dynamically reflect it in the narrative!
+    7. Dismounting/Exiting: Update both files to clear the riding status and restore the character's unmounted speed and separate map positioning.
+
 ENTITY FILE SCHEMA:
 All character/NPC/Entity files MUST follow this structured format for consistency:
 [NAME & DESCRIPTION]
@@ -165,7 +184,7 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 [STATS & MODIFIERS]
 - Health: (Current / Max)
 - Energy/Mana/Stamina: (Current / Max)
-- Speed: (Walking: Xm/s, Running: Ym/s - dynamically updated or reverted based on context, terrain, injuries, and encumbrance)
+- Speed: (Walking: Xm/s, Running: Ym/s - dynamically updated or reverted based on context, terrain, injuries, and encumbrance. If mounted or riding: "Walking: X m/s, Running/Gallop: Y m/s (Mounted on [MountName]; Unmounted base: A m/s / B m/s)")
 - Primary Attributes: (Use the probability engine modifier format: "stat: base probability engine + X%(1000) + effects")
   * Strength: (e.g. "strength: base probability engine + 0%(1000) + effects; Lift Multiplier: 1.0x")
 - Max Lift Strength: (Exact max weight this character can lift based on body weight and strength multiplier, e.g. "165 lbs (100% of body weight for average human with 1.0x strength modifier; anything heavier is impossible to lift without machinery or magic)")
@@ -219,6 +238,14 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
   * Example of temporary weight/stat alteration: [Status:Lightweight_Boulder(Expires: 3:15:00 PM - Oct 12, 2026; TempWeight: 1 lb; BaseWeight: 500 lbs)] - Automatically reverts to BaseWeight upon expiration unless modified by another effect.
   * Example of encumbrance penalty: [Status:Encumbered_Speed_Penalty(Expires: When weight < 21%; SpeedPenalty: -30%)]
 - Background/Biometrics: (Deep lore, unique physical traits)
+
+[MOUNT, VEHICLE & TRANSPORT STATUS]
+- Mounting / Riding Status: (Determined dynamically by AI. E.g. "Mounted on [Chestnut Warhorse] (Riding)", "Inside [Ironclad Carriage] (Passenger)", "Riding [Custom Skateboard]", or "None (On Foot / Independent)")
+- Mount / Vehicle Link: (Exact clickable reference to the mount, creature, vehicle, or item file: e.g. [Chestnut Warhorse] or [Ironclad Carriage])
+- If this entity IS a Mount or Vehicle carrying others:
+  * Rider / Driver: (e.g. "[Sir Roderick-Player] (Weight: 225 lbs)")
+  * Passengers / Occupants: (e.g. "[Lady Gwendolyn] (Weight: 130 lbs)" or "(None)")
+  * Total Occupant Weight: (Sum of rider & passenger weights counted into this mount/vehicle's carried weight and encumbrance)
 ---
 
 ITEM & WEAPON TECHNICAL SCHEMA:
@@ -440,8 +467,27 @@ Respond with JSON only:
 
 If probability checks are required, return empty narrative and fill the "checks" array.
 Set gameOver to true ONLY when player health/critical stat reaches 0.
-Always include 1-3 dynamic auto ai action recommendations for the player based on context so far in the "recommendations" array.
+Always include 2-4 dynamic auto action recommendations for the player based on context so far in the "recommendations" array.
 For starting prompt, create initial world files with appropriate time/year and set the scene.
+
+LIVELY, INHABITED WORLDS & INITIAL NPC POPULATION (CRITICAL):
+- Worlds must NEVER be desolate or devoid of characters! In almost any genre (fantasy, sci-fi, modern, cyberpunk, historical), scenes, locations, settlements, taverns, spaceports, wilderness, roads, markets, or outposts naturally have living inhabitants, NPCs, companions, creatures, mounts, shopkeepers, travelers, guards, or local fauna.
+- INITIAL POPULATION MANDATE: When initializing a new world (and whenever the player travels to or enters an area), the AI MUST actively populate the scene with 2 to 4 distinct, engaging NPCs, creatures, mounts, or characters appropriate to the setting.
+- Never start a game with only the player character and an empty map! Create the local inhabitants immediately:
+  * Give each NPC a distinct name, personality, role, motivations, and gear.
+  * Create their individual character/entity files (e.g., "Garrick_Blacksmith.txt", "TavernKeep_Maeve.txt", "ChestnutWarhorse.txt", "Watchman_Corin.txt") with complete stats, dimensions, body weight, speed, and inventory.
+  * Plot every NPC, creature, and mount directly on "CurrentMap.json" with their exact coordinates, distinct icon/type, and facing.
+  * Integrate them vividly into the narrative with exact clickable references (e.g. [Maeve], [Garrick], [ChestnutWarhorse]).
+
+CONTEXT-AWARE AUTO ACTION RECOMMENDATIONS (CRITICAL):
+- The "recommendations" array MUST contain 2 to 4 dynamic, immersive, highly relevant action options SPECIFICALLY FOR THE ACTIVE PLAYER CHARACTER (the character controlled by the player submitting the action).
+- CONTEXT CLARITY: The AI must never confuse NPCs, allies, companions, monsters, or adversaries with the player! All recommendations must be actions the player character can take.
+- Recommendations must account for:
+  1. The active player character's current status, health, stamina/energy, and abilities.
+  2. Currently held weapons, shields, tools, or items (e.g. recommend using their specific equipped weapon or examining an item in hand).
+  3. Mount/Vehicle/Transport state: If the player character is mounted on a horse, riding a skateboard, or inside a vehicle, recommend mounted maneuvers, equestrian commands, scouting from horseback, trick/coasting actions, or dismounting! If unmounted, recommend on-foot tactics or mounting nearby rides.
+  4. Immediate surrounding environment, observable landmarks, and present NPCs or threats (e.g. initiating dialogue with a specific NPC, examining a clue, taking cover, casting a prepared spell).
+- Phrased as direct, crisp, natural player actions ready to click and execute (e.g., "Draw your steel broadsword and confront the stranger", "Spur your warhorse into a trot down the eastern path", "Ask the merchant about the rumors of bandits", "Dismount and inspect the strange altar").
 
 FILE REFERENCE WORKING & EXACT MATCHING RULE (CRITICAL):
 - Make sure file references texts are always the exact text within the file or the file's name (besides the file extension such as .txt) so references always work seamlessly. For example, if a file is named "IronSword.txt" or its internal title/displayName is "Iron Sword", use [Iron Sword] or [IronSword]. Every single reference [RefName] in your narrative MUST correspond exactly to an existing or newly generated file or exact text within the file, ensuring references never fail to open.
@@ -475,7 +521,17 @@ INSTRUCTIONS:
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
 6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
 7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY: Check if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana. If energy/stamina changes, you MUST add the character's file ("CharacterName-USERNAME.txt") to "filesToUpdate" and specify the expected energy change.
-8. PLAYER ACTION INTEGRITY: Accurately capture what the player is attempting in 'intent' without changing, softening, or rationalizing it. The player is free to attempt ANY action within their context that is not physically/magically impossible, even if it does not make sense. Only audit for actual physical/magical impossibility, never common sense.
+8. AUDIT FOR RIDING, MOUNTING, VEHICLES & ENTERABLE ENTITIES (CRITICAL):
+   - Check if the player or an NPC mounts, rides, boards, pilots, enters, dismounts, or exits a mount, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g., horse, skateboard, bicycle, carriage).
+   - If mounting/entering:
+     * BOTH files (the rider/occupant and the mount/vehicle/item) MUST be added to "filesToUpdate".
+     * Rider's file must record their mounted status and adopt the mount's speed (e.g. "- Speed: Walking: 3.5 m/s, Running: 12.0 m/s (Mounted on [MountName]; Unmounted base: 1.5 m/s / 4.5 m/s)").
+     * Mount/Vehicle's file must record the rider/driver and include the rider's weight (body weight + carried gear) in the mount's carried weight and encumbrance!
+     * If the mount or vehicle does NOT have a file yet, add it to "filesToCreate" with complete physical stats, body weight, max lift/pull strength, and speed.
+     * On CurrentMap.json, verify they move together at the same coordinates while mounted.
+   - If dismounting/exiting:
+     * Add BOTH files to "filesToUpdate" to clear mounting status, remove rider weight from the mount, restore the rider's unmounted speed, and allow separate map movement.
+9. PLAYER ACTION INTEGRITY: Accurately capture what the player is attempting in 'intent' without changing, softening, or rationalizing it. The player is free to attempt ANY action within their context that is not physically/magically impossible, even if it does not make sense. Only audit for actual physical/magical impossibility, never common sense.
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -491,6 +547,13 @@ OUTPUT FORMAT (Strict JSON only):
       ]
     }
   ],
+  "mountingAudit": {
+    "isMountingAction": true,
+    "rider": "RiderName",
+    "mountOrVehicle": "MountName",
+    "actionType": "mount|dismount|enter|exit",
+    "notes": "Rider mounts horse; horse speed applies to rider, rider weight counts towards horse."
+  },
   "temporalShift": {
     "isTimeTravel": true,
     "destinationEpoch": "Era / Year",
@@ -550,7 +613,7 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and any initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nLIVELY, INHABITED WORLDS & INITIAL NPC POPULATION (CRITICAL): The world must NEVER be empty, lonely, or devoid of characters! In almost any genre (fantasy, sci-fi, modern, cyberpunk, historical), settlements, taverns, spaceports, wilderness roads, outposts, and cities naturally teem with life. You MUST actively populate this initial starting scene with 2 to 4 distinct, engaging NPCs, companions, shopkeepers, travelers, guards, creatures, or mounts (e.g. a loyal warhorse, tavernkeeper, blacksmith, or traveling merchant). Create their full individual character files with complete physical dimensions, body weight, speed, and inventory, plot every single one on CurrentMap.json, and integrate them with clickable bracket references [Name] in the narrative.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
           const res = await this.handleRequest(prompt, undefined, username);
           resolve(res);
         } catch (e) {
@@ -571,10 +634,38 @@ export class AIEngine {
 
           const worldContext = formatFileSet(Object.entries(files));
           const spatialContext = this.buildSpatialContext(username);
-          const userHeader = username ? `[Player: ${username}]\n` : '';
+
+          // Extract active player character details for sharp, accurate context-aware recommendations & audit
+          const playerFile = this.findPlayerCharacterFile(username);
+          let playerCharacterName = '';
+          let playerCharacterContext = '';
+          if (playerFile) {
+            const charContent = this.fs.read(playerFile);
+            if (charContent) {
+              const nameMatch = charContent.match(/-\s*Full Name:\s*([^\n\r]+)/i) || charContent.match(/^#+\s*([^\n\r]+)/m);
+              playerCharacterName = nameMatch ? nameMatch[1].trim() : playerFile.replace(/\.txt$/, '').replace(new RegExp(`[-_\\s]${username}$`, 'i'), '').trim();
+
+              const descMatch = charContent.match(/-\s*Description:\s*([^\n\r]+)/i);
+              const hpMatch = charContent.match(/-\s*Health:\s*([^\n\r]+)/i);
+              const energyMatch = charContent.match(/-\s*Energy\/Mana\/Stamina:\s*([^\n\r]+)/i);
+              const speedMatch = charContent.match(/-\s*Speed:\s*([^\n\r]+)/i);
+              const transportMatch = charContent.match(/(?:-\s*(?:Status\s*\/\s*Transport|Status\s*\/\s*Mounting|Mounting\s*\/\s*Riding|Mounted|Riding|Inside|Transport):\s*([^\n\r]+))/i);
+              const holdingMatch = charContent.match(/-\s*Items Currently Held:[\s\S]*?(?=\n-\s*Dynamic|\n\[|$)/i);
+
+              playerCharacterContext = `\n[ACTIVE PLAYER CHARACTER CONTEXT]
+- Controlling User: "${username}"
+- Character File: "${playerFile}"
+- Character Name: "${playerCharacterName}"
+${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Health: ${hpMatch[1].trim()}\n` : ''}${energyMatch ? `- Energy: ${energyMatch[1].trim()}\n` : ''}${speedMatch ? `- Speed: ${speedMatch[1].trim()}\n` : ''}${transportMatch ? `- Mobility/Mount Status: ${transportMatch[1].trim()}\n` : '- Mobility/Mount: On Foot (Unmounted)\n'}${holdingMatch ? `- Currently Holding: ${holdingMatch[0].replace(/-\s*Items Currently Held:\s*/i, '').trim()}\n` : ''}`;
+            }
+          }
+
+          const userHeader = username 
+            ? `[Active Turn - User: ${username}${playerCharacterName ? ` | Character: "${playerCharacterName}" (File: ${playerFile})` : ''}]\n` 
+            : '';
 
           // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
-          const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n\n${userHeader}Player action: ${action}`;
+          const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}`;
           const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.5-flash-lite');
           const audit = this.extractJSON(auditRaw);
 
@@ -624,8 +715,7 @@ export class AIEngine {
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
-          // Auto-include player character file in filesToUpdate if energy, stats, or inventory/containers are affected
-          const playerFile = this.findPlayerCharacterFile(username);
+          // Auto-include player character file in filesToUpdate if energy, stats, inventory/containers, or mounting/riding are affected
           if (playerFile) {
             const isEnergyAffected = audit.energyAudit && audit.energyAudit.expectedChange !== 0;
             const actionLower = (action || '').toLowerCase();
@@ -657,8 +747,29 @@ export class AIEngine {
               intentLower.includes('pick up') ||
               intentLower.includes('store')
             );
+            const isMountingAffected = (
+              actionLower.includes('mount') ||
+              actionLower.includes('ride') ||
+              actionLower.includes('riding') ||
+              actionLower.includes('dismount') ||
+              actionLower.includes('board') ||
+              actionLower.includes('enter') ||
+              actionLower.includes('exit') ||
+              actionLower.includes('horse') ||
+              actionLower.includes('carriage') ||
+              actionLower.includes('wagon') ||
+              actionLower.includes('skateboard') ||
+              actionLower.includes('vehicle') ||
+              actionLower.includes('drive') ||
+              actionLower.includes('pilot') ||
+              intentLower.includes('mount') ||
+              intentLower.includes('ride') ||
+              intentLower.includes('dismount') ||
+              intentLower.includes('vehicle') ||
+              (audit.mountingAudit && audit.mountingAudit.isMountingAction)
+            );
 
-            if (isEnergyAffected || isInventoryAffected) {
+            if (isEnergyAffected || isInventoryAffected || isMountingAffected) {
               if (!audit.filesToUpdate) audit.filesToUpdate = [];
               if (!audit.filesToUpdate.includes(playerFile)) {
                 audit.filesToUpdate.push(playerFile);
@@ -666,7 +777,7 @@ export class AIEngine {
             }
           }
 
-          const executionPrompt = `Current Files Context:\n${worldContext}\n\n${spatialContext}\n\n${userHeader}Player action: ${action}\n\nTECHNICAL PLAN (Follow strictly):\n1. Resolve these checks: ${resolvedCheckReport || "None"}\n2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}\n3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}\n4. Temporal Shift: ${timeShiftNotice}\n5. Map Update Required: ${mapReq}\n\nProcess this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
+          const executionPrompt = `Current Files Context:\n${worldContext}\n\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}\n\nTECHNICAL PLAN (Follow strictly):\n1. Resolve these checks: ${resolvedCheckReport || "None"}\n2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}\n3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}\n4. Temporal Shift: ${timeShiftNotice}\n5. Map Update Required: ${mapReq}\n\nProcess this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
 
 CRITICAL REMINDERS:
 1. You MUST fulfill Every file creation/update listed in the plan above.
@@ -681,8 +792,20 @@ CRITICAL REMINDERS:
    - Under [CONTAINERS & CARRIED GEAR], under "- Carried Inventory (Inside Containers):", add the item formatted with detectable weight, dimensions, and container name: e.g. "- Iron Dagger: 2 lbs, 10x2 inches. Container: [Backpack]". Ensure the container exists under "- Containers Equipped/Carried:".
    - If an item would overflow or exceeds container capacity, or is wearable and contextually sensible, equip under [Equipped Gear & Armor].
 5. STATS & ENERGY: Whenever energy, stamina, or mana is expended or restored (from attacks, abilities, spells, sprinting, physical exertion, or resting), you MUST update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the change in the "updates" array (e.g. {"type": "stat", "text": "Energy -10", "value": -10}). NEVER forget to update the character's energy when it changes.
-6. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
-7. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
+6. MOUNTING, RIDING, VEHICLES & ENTERABLE ENTITIES (CRITICAL):
+   - If this action involves mounting, riding, boarding, piloting, entering, dismounting, or exiting a horse, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g. skateboard):
+     * UPDATE BOTH ENTITY FILES: You MUST update both the rider's file ("${playerFile || 'Rider'}") and the mount/vehicle/item's file.
+     * Clickable references: Cross-link both files using exact clickable bracket references (e.g. [Chestnut Warhorse] in rider file, [${playerCharacterName || 'Rider'}] in mount file).
+     * Rider's file: Update mounting status (e.g. under [MOUNT, VEHICLE & TRANSPORT STATUS]: "- Status / Transport: Mounted on [Chestnut Warhorse] (Riding)" or "Riding [Custom Skateboard]") and adopt the mount/vehicle's speed (e.g. "- Speed: Walking: 3.5 m/s, Running: 12.0 m/s (Mounted on [Chestnut Warhorse]; Unmounted base: 1.5 m/s / 4.5 m/s)").
+     * Mount's file: Record rider (e.g. "- Rider / Driver: [${playerCharacterName || 'Rider'}] (Weight: X lbs body + Y lbs gear = Z lbs)") and add rider's total weight to the mount's carried weight and encumbrance!
+     * Map: On CurrentMap.json, while mounted they share identical coordinates and move together.
+     * Dismounting: When dismounting or exiting, update BOTH files to clear the riding status and restore the rider's unmounted speed and independent map position.
+7. AUTO ACTION RECOMMENDATIONS (CRITICAL):
+   - The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
+   - DO NOT generate suggestions for other NPCs or adversaries.
+   - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, or mounting nearby rides).
+8. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
+9. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
 
           const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite');
           
@@ -694,6 +817,11 @@ CRITICAL REMINDERS:
              this.enforceSpatialConsistency(referenceMap, username);
           }
 
+          // Ensure recommendations are context-aware for the specific active player character
+          if (finalResponse && (!finalResponse.recommendations || finalResponse.recommendations.length === 0)) {
+            finalResponse.recommendations = this.generateFallbackRecommendations(username, playerFile, playerCharacterName);
+          }
+
           resolve(finalResponse);
         } catch (e) {
           console.error("Processing failed", e);
@@ -701,6 +829,32 @@ CRITICAL REMINDERS:
         }
       });
     });
+  }
+
+  private generateFallbackRecommendations(username?: string, playerFile?: string, playerCharacterName?: string): string[] {
+    const charContent = playerFile ? this.fs.read(playerFile) : null;
+    const isMounted = charContent && (charContent.includes('Mounted on') || charContent.includes('Riding [') || charContent.includes('Inside ['));
+    const mountMatch = charContent ? (charContent.match(/Mounted on \[([^\]]+)\]/i) || charContent.match(/Riding \[([^\]]+)\]/i) || charContent.match(/Inside \[([^\]]+)\]/i)) : null;
+    const mountName = mountMatch ? mountMatch[1] : 'your mount';
+
+    const weaponMatch = charContent ? charContent.match(/-\s*Items Currently Held:\s*[\r\n]+(?:\s*-\s*[^:\n]+:\s*([^:\n(]+))/i) : null;
+    const heldItem = weaponMatch ? weaponMatch[1].trim() : null;
+
+    const recommendations: string[] = [];
+    if (isMounted) {
+      recommendations.push(`Spur ${mountName} forward along the primary path`);
+      recommendations.push(`Rein in ${mountName} and scan the surrounding terrain from the saddle`);
+      recommendations.push(`Dismount and continue on foot to investigate nearby`);
+    } else {
+      if (heldItem && !heldItem.toLowerCase().includes('none')) {
+        recommendations.push(`Ready your ${heldItem} and proceed cautiously`);
+      } else {
+        recommendations.push(`Survey the area and look for immediate points of interest`);
+      }
+      recommendations.push(`Approach and speak with nearby characters or inhabitants`);
+      recommendations.push(`Inspect the surrounding landmarks and check your bearings`);
+    }
+    return recommendations;
   }
 
   /**

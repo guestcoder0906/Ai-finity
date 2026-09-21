@@ -96,6 +96,11 @@ export interface CharacterPhysicalStats {
   encumbranceImmunityReason?: string; // e.g. "Slime biology absorbs items internally without standard encumbrance/slowing"
   encumbranceEffectDescription: string; // Dynamic description of what carrying weight does to this specific entity
   totalCarriedWeight: number; // lbs
+  isMounted: boolean;
+  mountedEntityName?: string;
+  mountedStatusDescription?: string;
+  passengersOrRiders: Array<{ name: string; weight?: number }>;
+  passengerWeight: number;
   currentlyHolding: HeldItemInfo[];
   holdingCapacity: HoldingCapacityInfo;
   containers: ContainerInfo[];
@@ -798,6 +803,12 @@ export class WeightInventoryEngine {
     let customHoldingApplies: boolean | undefined;
     const activeWeightEffects: CharacterPhysicalStats['activeWeightEffects'] = [];
 
+    let isMounted = false;
+    let mountedEntityName: string | undefined;
+    let mountedStatusDescription: string | undefined;
+    const passengersOrRiders: Array<{ name: string; weight?: number }> = [];
+    let passengerWeight = 0;
+
     let currentSection = '';
     let activeContainerName = '';
     let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'holding' | 'general' = 'general';
@@ -871,7 +882,14 @@ export class WeightInventoryEngine {
           'STATUS EFFECTS AND LORE': 'STATUS EFFECTS & LORE',
           'STATUS EFFECTS': 'STATUS EFFECTS & LORE',
           'EFFECTS & LORE': 'STATUS EFFECTS & LORE',
-          'LORE': 'STATUS EFFECTS & LORE'
+          'LORE': 'STATUS EFFECTS & LORE',
+
+          'MOUNT, VEHICLE & TRANSPORT STATUS': 'TRANSPORT',
+          'MOUNT, VEHICLE & TRANSPORT': 'TRANSPORT',
+          'MOUNT & VEHICLE STATUS': 'TRANSPORT',
+          'TRANSPORT & MOUNTS': 'TRANSPORT',
+          'MOUNT & VEHICLE': 'TRANSPORT',
+          'TRANSPORT': 'TRANSPORT'
         };
 
         if (canonicalSections[cleanHeader]) {
@@ -970,19 +988,120 @@ export class WeightInventoryEngine {
         }
       }
 
+      // Mount / Vehicle / Riding / Enterable Status Check (can appear in any section e.g. [MOUNT, VEHICLE & TRANSPORT], [STATUS EFFECTS & LORE], or [STATS & MODIFIERS])
+      if (
+        lower.includes('mounted on') ||
+        lower.startsWith('- mounting / riding status:') ||
+        lower.startsWith('- mounting/riding status:') ||
+        lower.startsWith('mounting / riding status:') ||
+        lower.startsWith('- riding status:') ||
+        lower.startsWith('riding status:') ||
+        lower.startsWith('- mounted:') ||
+        lower.startsWith('mounted:') ||
+        lower.startsWith('- riding:') ||
+        lower.startsWith('riding:') ||
+        lower.startsWith('- status / transport:') ||
+        lower.startsWith('- status / mounting:') ||
+        lower.startsWith('- transport / mount:') ||
+        lower.startsWith('- transport:') ||
+        lower.startsWith('- inside vehicle:') ||
+        lower.startsWith('- inside:') ||
+        lower.startsWith('inside:') ||
+        lower.startsWith('piloting:') ||
+        lower.startsWith('- pilot:')
+      ) {
+        const val = line.split(/[:=]/).slice(1).join(':').trim();
+        if (
+          val &&
+          !val.toLowerCase().includes('none') &&
+          !val.toLowerCase().includes('unmounted') &&
+          !val.toLowerCase().includes('on foot') &&
+          !val.toLowerCase().includes('independent')
+        ) {
+          isMounted = true;
+          mountedStatusDescription = val;
+          const entityMatch = val.match(/\[([^\]]+)\]/);
+          if (entityMatch) {
+            mountedEntityName = entityMatch[1].trim();
+          } else {
+            const cleaned = val
+              .replace(/^(?:mounted\s+on|riding|inside\s+of|inside|piloting)\s+/i, '')
+              .replace(/\(.*?\)/g, '')
+              .trim();
+            if (cleaned) mountedEntityName = cleaned;
+          }
+        }
+      }
+
+      // Mount / Vehicle Passenger / Rider Check (for horses, carriages, wagons, boats, etc.)
+      if (
+        lower.startsWith('- rider') ||
+        lower.startsWith('rider:') ||
+        lower.startsWith('- passenger') ||
+        lower.startsWith('passengers:') ||
+        lower.startsWith('- occupants:') ||
+        lower.startsWith('occupants:') ||
+        lower.startsWith('- total occupant weight:')
+      ) {
+        const val = line.split(/[:=]/).slice(1).join(':').trim();
+        if (
+          val &&
+          !val.toLowerCase().includes('none') &&
+          !val.toLowerCase().includes('empty') &&
+          !val.toLowerCase().includes('0 riders')
+        ) {
+          const totalWeightMatch = val.match(/total(?:\s+occupant)?\s+weight[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
+          if (totalWeightMatch) {
+            passengerWeight = Math.max(passengerWeight, parseFloat(totalWeightMatch[1]));
+          } else {
+            const bracketMatches = Array.from(val.matchAll(/\[([^\]]+)\](?:\s*\([^)]*?([0-9]+(?:\.[0-9]+)?)\s*lbs?[^)]*?\))?/g));
+            let foundBracket = false;
+            for (const bm of bracketMatches) {
+              foundBracket = true;
+              const pName = bm[1].trim();
+              const pWeight = bm[2] ? parseFloat(bm[2]) : 0;
+              passengersOrRiders.push({ name: pName, weight: pWeight || undefined });
+              if (pWeight > 0) passengerWeight += pWeight;
+            }
+            if (!foundBracket) {
+              const weightMatch = val.match(/([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
+              if (weightMatch) {
+                passengerWeight += parseFloat(weightMatch[1]);
+              }
+            }
+          }
+        }
+      }
+
       // 2. [STATS & MODIFIERS] Section
       if (currentSection.includes('STAT') || currentSection.includes('MODIFIER')) {
         // Speed
         if (lower.includes('speed:')) {
-          const walkMatch = line.match(/walking[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i);
-          if (walkMatch) {
-            baseWalkingSpeed = parseFloat(walkMatch[1]);
-            currentWalkingSpeed = baseWalkingSpeed;
+          // Check for unmounted base speed if present e.g. "Unmounted base: 1.5 m/s / 4.5 m/s" or "(Unmounted: 1.5 m/s, 4.5 m/s)"
+          const unmountedMatch = line.match(/unmounted(?:\s+base)?[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?[,\s/]+([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i);
+          if (unmountedMatch) {
+            baseWalkingSpeed = parseFloat(unmountedMatch[1]);
+            baseRunningSpeed = parseFloat(unmountedMatch[2]);
           }
-          const runMatch = line.match(/running[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i);
+
+          if (lower.includes('mounted on') || lower.includes('riding')) {
+            isMounted = true;
+            const mountMatch = line.match(/\[([^\]]+)\]/);
+            if (mountMatch) {
+              mountedEntityName = mountMatch[1].trim();
+            }
+          }
+
+          const walkMatch = line.match(/walking[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i) ||
+                            line.match(/pushing[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i);
+          if (walkMatch) {
+            currentWalkingSpeed = parseFloat(walkMatch[1]);
+            if (!unmountedMatch && !isMounted) baseWalkingSpeed = currentWalkingSpeed;
+          }
+          const runMatch = line.match(/(?:running|galloping|gallop|coasting)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:m\/s)?/i);
           if (runMatch) {
-            baseRunningSpeed = parseFloat(runMatch[1]);
-            currentRunningSpeed = baseRunningSpeed;
+            currentRunningSpeed = parseFloat(runMatch[1]);
+            if (!unmountedMatch && !isMounted) baseRunningSpeed = currentRunningSpeed;
           }
         }
 
@@ -1555,6 +1674,8 @@ export class WeightInventoryEngine {
         totalCarriedWeight += hItem.weight;
       }
     }
+    // Add passenger/rider weight if this entity is carrying riders or passengers (e.g. mount, carriage, wagon)
+    totalCarriedWeight += passengerWeight;
     // Stored items are EXCLUDED (user mandate: "not owned, owned items they don't have on them are put in another category but it's theirs still")
 
     // Dynamic Encumbrance calculation:
@@ -1604,6 +1725,11 @@ export class WeightInventoryEngine {
       encumbranceImmunityReason,
       encumbranceEffectDescription,
       totalCarriedWeight: Math.round(totalCarriedWeight * 10) / 10,
+      isMounted,
+      mountedEntityName,
+      mountedStatusDescription,
+      passengersOrRiders,
+      passengerWeight: Math.round(passengerWeight * 10) / 10,
       currentlyHolding,
       holdingCapacity,
       containers,
@@ -1659,7 +1785,10 @@ export class WeightInventoryEngine {
       encumbranceNote = `(Unencumbered: Carried ${stats.totalCarriedWeight} lbs is ${stats.encumbranceRatio}% of body weight, within <= ${stats.encumbranceThreshold}% good threshold)`;
     }
 
-    const speedLine = `- Speed: Walking: ${stats.currentWalkingSpeed} m/s, Running: ${stats.currentRunningSpeed} m/s ${encumbranceNote}`;
+    let speedLine = `- Speed: Walking: ${stats.currentWalkingSpeed} m/s, Running: ${stats.currentRunningSpeed} m/s ${encumbranceNote}`;
+    if (stats.isMounted && stats.mountedEntityName) {
+      speedLine = `- Speed: Walking: ${stats.currentWalkingSpeed} m/s, Running: ${stats.currentRunningSpeed} m/s (Mounted on [${stats.mountedEntityName}]; Unmounted base: ${stats.baseWalkingSpeed} m/s / ${stats.baseRunningSpeed} m/s)`;
+    }
     if (updated.match(/^[-\s]*Speed:.*$/im)) {
       updated = updated.replace(/^[-\s]*Speed:.*$/im, speedLine);
     }
@@ -1695,9 +1824,16 @@ export class WeightInventoryEngine {
         ? 'ENCUMBERED: Slower Speed'
         : 'GOOD: Unencumbered';
 
-    const weightSummaryLine = `- Total Carried Weight on Person: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${weightStatusText}) | Max Lift: ${stats.maxLiftStrength} lbs`;
+    const riderSummary = (stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0
+      ? ` (Includes ${stats.passengerWeight} lbs rider/passenger load)`
+      : '';
+    const weightSummaryLine = ((stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0)
+      ? `- Total Carried Weight on Mount/Vehicle: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${weightStatusText}${riderSummary}) | Max Lift/Draw: ${stats.maxLiftStrength} lbs`
+      : `- Total Carried Weight on Person: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${weightStatusText}) | Max Lift: ${stats.maxLiftStrength} lbs`;
 
-    if (updated.match(/^[-\s]*Total Carried Weight on Person:.*$/im)) {
+    if (updated.match(/^[-\s]*Total Carried Weight on Mount\/Vehicle:.*$/im)) {
+      updated = updated.replace(/^[-\s]*Total Carried Weight on Mount\/Vehicle:.*$/im, weightSummaryLine);
+    } else if (updated.match(/^[-\s]*Total Carried Weight on Person:.*$/im)) {
       updated = updated.replace(/^[-\s]*Total Carried Weight on Person:.*$/im, weightSummaryLine);
     } else if (updated.match(/^[-\s]*Total Weight:.*$/im)) {
       updated = updated.replace(/^[-\s]*Total Weight:.*$/im, weightSummaryLine);
