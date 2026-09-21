@@ -432,6 +432,10 @@ SPATIAL CONSISTENCY RULE (CRITICAL):
 - A map screenshot is provided for visual grounding—verify coordinate updates against the visual state.
 
 MANDATORY MOVEMENT & MAP UPDATE RULE (CRITICAL):
+- SINGLE-LOCATION & TRANSITION REMOVAL (CRITICAL):
+  * Every player character MUST exist in EXACTLY ONE location and on EXACTLY ONE map page at any time. NEVER create duplicate entries for any player.
+  * When moving within the same map page: UPDATE the player's existing (x, y, facing) coordinates — DO NOT append a second player entry leaving the old coordinates intact.
+  * When transitioning to a new map page, room, interior, or scene: You MUST place the player on the new map page AND IMMEDIATELY REMOVE THEM from their previous map page. Leaving the player's last position on the previous map creates an invalid duplicate player!
 - CurrentMap.json MUST be updated in EVERY response. Any player action implies a physical state change — at minimum, update the player's facing direction.
 - Physical proximity is required for interaction. Before resolving any action (attack, talk, pick up, open, use, examine, etc.), verify the player is within interaction range of the target using the SPATIAL CONTEXT distances provided.
 - AUTO-APPROACH: If a player is out of range for their intended action:
@@ -706,12 +710,15 @@ export class AIEngine {
     this.fs = fileSystem;
     const storedKey = typeof window !== 'undefined' ? localStorage.getItem('aimud_apikey') : null;
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || storedKey || '' });
-    // Initialize the last valid map from current storage
+    // Initialize the last valid map from current storage and clean any initial duplicates
     const existingMap = this.fs.read('CurrentMap.json');
     if (existingMap) {
       try {
-        JSON.parse(existingMap);
-        this.lastValidMap = existingMap;
+        const parsed = JSON.parse(existingMap);
+        const cleaned = this.mergeAndNormalizeMap(parsed, null);
+        const normalized = JSON.stringify(cleaned, null, 2);
+        this.fs.write('CurrentMap.json', normalized);
+        this.lastValidMap = normalized;
       } catch (e) {
         // Existing map is already corrupt, nothing we can do
       }
@@ -1340,8 +1347,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
       if (modified) {
         const correctedJson = JSON.stringify(newMap.pages ? newMap : { pages: newPages }, null, 2);
-        this.fs.write('CurrentMap.json', correctedJson);
-        this.lastValidMap = correctedJson;
+        this.writeMapSafe(correctedJson, username);
       }
     } catch (e) {
       console.error('Spatial consistency enforcement failed', e);
@@ -2861,7 +2867,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           const rawIncoming = (data.files['CurrentMap.json'] as any)?.content ?? data.files['CurrentMap.json'];
           const incomingStr = typeof rawIncoming === 'object' ? JSON.stringify(rawIncoming) : String(rawIncoming);
           const incomingParsed = JSON.parse(incomingStr);
-          const mergedMap = this.mergeAndNormalizeMap(incomingParsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+          const mergedMap = this.mergeAndNormalizeMap(incomingParsed, this.lastValidMap || this.fs.read('CurrentMap.json'), username);
           const mergedJson = JSON.stringify(mergedMap, null, 2);
 
           if (typeof data.files['CurrentMap.json'] === 'object' && (data.files['CurrentMap.json'] as any).content !== undefined) {
@@ -2929,7 +2935,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           const existing = this.fs.read(filename);
           if (existing === contentStr) continue;
           if (filename === 'CurrentMap.json') {
-            this.writeMapSafe(contentStr);
+            this.writeMapSafe(contentStr, username);
           } else {
             this.fs.write(filename, contentStr, displayName);
           }
@@ -2967,17 +2973,131 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   }
 
   /**
-   * Deeply merges incoming AI map with previous valid map and file system character states.
-   * Ensures players, landmarks, NPCs, items, and areas are not inadvertently omitted or deleted.
+   * Cleans any duplicate player occurrences across or within pages.
+   * If the AI forgot to remove a player's last position in their previous map or left a duplicate entry,
+   * this identifies the stale previous position and removes it so each player exists strictly ONCE.
    */
-  private mergeAndNormalizeMap(incomingParsed: any, oldMapStr: string | null): any {
+  private cleanDuplicatePlayerPositions(
+    normalized: { pages: any[] },
+    oldPlayerLocations: Map<string, { pageIndex: number; pageName: string; x: number; y: number; facing: number; raw: any }>,
+    username?: string
+  ): void {
+    if (!normalized.pages || normalized.pages.length === 0) return;
+
+    // Collect all unique player keys present across all pages
+    const playerKeys = new Set<string>();
+    for (const page of normalized.pages) {
+      if (Array.isArray(page.players)) {
+        for (const pl of page.players) {
+          const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+          if (key) playerKeys.add(key);
+        }
+      }
+    }
+
+    for (const pKey of playerKeys) {
+      // Find all occurrences of this player across all pages
+      const occurrences: {
+        pageIndex: number;
+        pageName: string;
+        playerIndex: number;
+        playerObj: any;
+        score: number;
+      }[] = [];
+
+      const oldLoc = oldPlayerLocations.get(pKey);
+
+      for (let pIdx = 0; pIdx < normalized.pages.length; pIdx++) {
+        const page = normalized.pages[pIdx];
+        const pageName = (page.name || '').trim().toLowerCase();
+        if (Array.isArray(page.players)) {
+          for (let plIdx = 0; plIdx < page.players.length; plIdx++) {
+            const pl = page.players[plIdx];
+            const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+            if (key === pKey) {
+              const px = Number(pl.x) || 0;
+              const py = Number(pl.y) || 0;
+
+              let score = 0;
+
+              if (oldLoc) {
+                const samePage = pageName === oldLoc.pageName || pIdx === oldLoc.pageIndex;
+                const sameCoords = Math.abs(px - oldLoc.x) < 0.2 && Math.abs(py - oldLoc.y) < 0.2;
+
+                if (samePage && sameCoords) {
+                  // This matches the exact last position on the last map! Mark as stale.
+                  score -= 100;
+                } else if (!samePage) {
+                  // This is on a different/new map page (the player transitioned here)
+                  score += 100;
+                } else {
+                  // Same page but updated coordinates
+                  score += 50;
+                }
+              }
+
+              // Favor higher page index (newer scene) and later position in array (latest write)
+              score += pIdx * 10 + plIdx;
+
+              occurrences.push({
+                pageIndex: pIdx,
+                pageName,
+                playerIndex: plIdx,
+                playerObj: pl,
+                score
+              });
+            }
+          }
+        }
+      }
+
+      // If there's more than one occurrence, purge duplicates
+      if (occurrences.length > 1) {
+        // Sort occurrences by score descending (highest score = the intended current position)
+        occurrences.sort((a, b) => b.score - a.score);
+
+        const winner = occurrences[0];
+        console.log(`[cleanDuplicatePlayerPositions] Player "${pKey}" had ${occurrences.length} duplicate positions. Keeping active position on page "${winner.pageName}" at (${winner.playerObj.x}, ${winner.playerObj.y}), removing stale duplicate from previous map.`);
+
+        // All occurrences after index 0 are duplicates to remove
+        const toRemove = occurrences.slice(1);
+
+        // Group removals by page and remove from back to front to preserve array indices
+        const removalsByPage = new Map<number, number[]>();
+        for (const rem of toRemove) {
+          if (!removalsByPage.has(rem.pageIndex)) {
+            removalsByPage.set(rem.pageIndex, []);
+          }
+          removalsByPage.get(rem.pageIndex)!.push(rem.playerIndex);
+        }
+
+        for (const [pageIdx, indices] of removalsByPage.entries()) {
+          indices.sort((a, b) => b - a);
+          const targetPage = normalized.pages[pageIdx];
+          if (targetPage && Array.isArray(targetPage.players)) {
+            for (const idx of indices) {
+              targetPage.players.splice(idx, 1);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Deeply merges incoming AI map with previous valid map and file system character states.
+   * Ensures players, landmarks, NPCs, items, and areas are not inadvertently omitted or deleted,
+   * while strictly preventing duplicate player records when transitioning between maps.
+   */
+  private mergeAndNormalizeMap(incomingParsed: any, oldMapStr: string | null, username?: string): any {
     const normalized = this.normalizeMapStructure(incomingParsed);
     if (!normalized.pages || normalized.pages.length === 0) {
       normalized.pages = [{ name: 'World Map', areas: [], players: [], items: [], landmarks: [] }];
     }
 
-    // Distribute root-level entities to page 0 if present
-    if (Array.isArray((incomingParsed as any)?.players) && (incomingParsed as any).players.length > 0) {
+    // Distribute root-level entities to page 0 if present (only if pages don't already have players)
+    const hasAnyPagePlayers = normalized.pages.some((p: any) => Array.isArray(p.players) && p.players.length > 0);
+    if (!hasAnyPagePlayers && Array.isArray((incomingParsed as any)?.players) && (incomingParsed as any).players.length > 0) {
       if (!Array.isArray(normalized.pages[0].players) || normalized.pages[0].players.length === 0) {
         normalized.pages[0].players = (incomingParsed as any).players;
       }
@@ -3008,13 +3128,38 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
+    // Map each player's previous position from the old map
+    const oldPlayerLocations = new Map<string, { pageIndex: number; pageName: string; x: number; y: number; facing: number; raw: any }>();
+    if (oldMap && Array.isArray(oldMap.pages)) {
+      for (let pIdx = 0; pIdx < oldMap.pages.length; pIdx++) {
+        const oPage = oldMap.pages[pIdx];
+        const oPageName = (oPage.name || '').trim().toLowerCase();
+        if (Array.isArray(oPage.players)) {
+          for (const pl of oPage.players) {
+            const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+            if (key && !oldPlayerLocations.has(key)) {
+              oldPlayerLocations.set(key, {
+                pageIndex: pIdx,
+                pageName: oPageName,
+                x: Number(pl.x) || 0,
+                y: Number(pl.y) || 0,
+                facing: Number(pl.facing) || 0,
+                raw: pl
+              });
+            }
+          }
+        }
+      }
+    }
+
     if (oldMap && Array.isArray(oldMap.pages)) {
       // 1. Preserve pages that were present in oldMap but missing in newMap
       const returnedNames = new Set(normalized.pages.map((p: any) => (p.name || '').trim().toLowerCase()));
       for (const oldPage of oldMap.pages) {
         const oldName = (oldPage.name || '').trim().toLowerCase();
         if (oldName && !returnedNames.has(oldName)) {
-          normalized.pages.push(oldPage);
+          const clonedPage = JSON.parse(JSON.stringify(oldPage));
+          normalized.pages.push(clonedPage);
           returnedNames.add(oldName);
         }
       }
@@ -3023,20 +3168,29 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       for (let i = 0; i < normalized.pages.length; i++) {
         const newPage = normalized.pages[i];
         const pageName = (newPage.name || '').trim().toLowerCase();
-        const matchingOldPage = oldMap.pages.find((p: any) => (p.name || '').trim().toLowerCase() === pageName) || (i === 0 ? oldMap.pages[0] : null);
+        const matchingOldPage = oldMap.pages.find((p: any) => (p.name || '').trim().toLowerCase() === pageName) ||
+          (oldMap.pages.length === 1 && normalized.pages.length === 1 ? oldMap.pages[0] : null);
 
         if (matchingOldPage) {
-          // Merge Players: ensure no player from oldPage is dropped
+          // Merge Players: ONLY if player is not present on ANY page in normalized.pages!
+          // If the player moved to another page, NEVER copy them back into their previous map page!
           if (Array.isArray(matchingOldPage.players) && matchingOldPage.players.length > 0) {
             if (!Array.isArray(newPage.players)) {
               newPage.players = [];
             }
-            const newPlayerNames = new Set(newPage.players.map((p: any) => (p.username || p.name || '').trim().toLowerCase()));
             for (const oldPlayer of matchingOldPage.players) {
-              const oldUName = (oldPlayer.username || oldPlayer.name || '').trim().toLowerCase();
-              if (oldUName && !newPlayerNames.has(oldUName)) {
+              const oldUName = (oldPlayer.username || oldPlayer.name || oldPlayer.characterName || '').trim().toLowerCase();
+              if (!oldUName) continue;
+
+              const alreadyExistsAnywhere = normalized.pages.some((p: any) =>
+                Array.isArray(p.players) && p.players.some((existing: any) => {
+                  const eKey = (existing.username || existing.name || existing.characterName || '').trim().toLowerCase();
+                  return eKey === oldUName;
+                })
+              );
+
+              if (!alreadyExistsAnywhere) {
                 newPage.players.push(oldPlayer);
-                newPlayerNames.add(oldUName);
               }
             }
           }
@@ -3105,6 +3259,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
+    // Clean any duplicates across or within pages (removes player's stale last position)
+    this.cleanDuplicatePlayerPositions(normalized, oldPlayerLocations, username);
+
     // 3. File-System Player Verification:
     // Ensure every player with a character file is on AT LEAST ONE map page
     try {
@@ -3115,7 +3272,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       for (const p of normalized.pages) {
         if (Array.isArray(p.players)) {
           for (const pl of p.players) {
-            const u = (pl.username || pl.name || '').trim().toLowerCase();
+            const u = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
             if (u) allMapUsernames.add(u);
           }
         }
@@ -3126,7 +3283,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         const charUsername = parts[parts.length - 1].trim();
         const charName = parts.slice(0, -1).join('-').trim();
         
-        if (charUsername && !allMapUsernames.has(charUsername.toLowerCase())) {
+        if (charUsername && !allMapUsernames.has(charUsername.toLowerCase()) && !allMapUsernames.has((charName || '').toLowerCase())) {
           if (!Array.isArray(normalized.pages[0].players)) {
             normalized.pages[0].players = [];
           }
@@ -3145,6 +3302,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       console.warn('Player verification guard encountered non-fatal issue', err);
     }
 
+    // Final deduplication pass
+    this.cleanDuplicatePlayerPositions(normalized, oldPlayerLocations, username);
+
     return normalized;
   }
 
@@ -3153,11 +3313,11 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
    * Enforces structural schema normalization to prevent nested or corrupt arrays.
    * Attempts sequential fallback: direct parse -> repairJSON -> lastValidMap -> sanitizeJSON.
    */
-  private writeMapSafe(content: string): void {
+  private writeMapSafe(content: string, username?: string): void {
     // 1. Direct parse attempt with normalization and merging
     try {
       const parsed = JSON.parse(content);
-      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'), username);
       const normalized = JSON.stringify(mergedObj, null, 2);
       this.fs.write('CurrentMap.json', normalized);
       this.lastValidMap = normalized;
@@ -3171,7 +3331,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     if (repaired) {
       try {
         const parsed = JSON.parse(repaired);
-        const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+        const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'), username);
         const normalized = JSON.stringify(mergedObj, null, 2);
         this.fs.write('CurrentMap.json', normalized);
         this.lastValidMap = normalized;
@@ -3193,7 +3353,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     try {
       const sanitized = this.sanitizeJSON(content);
       const parsed = JSON.parse(sanitized);
-      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'), username);
       const normalized = JSON.stringify(mergedObj, null, 2);
       this.fs.write('CurrentMap.json', normalized);
       this.lastValidMap = normalized;

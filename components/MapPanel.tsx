@@ -119,12 +119,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             ? parsed
             : (parsed?.areas ? [parsed] : []);
 
-        // Auto-switch to the page containing this active player if available
+        // Auto-switch to the page containing this active player if available (prefer latest page where player moved)
         if (username && currentPages.length > 0) {
           const userLower = username.toLowerCase();
-          const targetIndex = currentPages.findIndex((p: any) =>
-            p.players?.some((pl: any) => pl.username?.toLowerCase() === userLower)
-          );
+          let targetIndex = -1;
+          for (let i = currentPages.length - 1; i >= 0; i--) {
+            if (currentPages[i].players?.some((pl: any) => (pl.username || pl.name || pl.characterName || '').toLowerCase() === userLower)) {
+              targetIndex = i;
+              break;
+            }
+          }
           if (targetIndex !== -1) {
             setCurrentPageIndex(targetIndex);
           }
@@ -147,13 +151,51 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     pages = [{ name: 'World Map', ...mapData }];
   }
 
+  // Cross-page deduplication guard: Ensure each player is only on ONE map page
+  // If the AI or stale state forgot to remove the player's last position on the previous map,
+  // scanning from latest page (highest index) to earliest page preserves the active new position
+  // and purges the duplicate from earlier map pages.
+  if (pages.length > 1) {
+    const seenPlayerKeys = new Set<string>();
+    for (let pIdx = pages.length - 1; pIdx >= 0; pIdx--) {
+      const p = pages[pIdx];
+      if (Array.isArray(p.players)) {
+        p.players = p.players.filter((pl: any) => {
+          const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+          if (!key) return true;
+          if (seenPlayerKeys.has(key)) {
+            return false; // Drop duplicate player from older map page
+          }
+          seenPlayerKeys.add(key);
+          return true;
+        });
+      }
+    }
+  }
+
+  // Intra-page deduplication guard: Ensure no player has multiple entries on the same page
+  for (const p of pages) {
+    if (Array.isArray(p.players) && p.players.length > 1) {
+      const pageSeen = new Set<string>();
+      const deduped: any[] = [];
+      for (let i = p.players.length - 1; i >= 0; i--) {
+        const pl = p.players[i];
+        const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+        if (key && pageSeen.has(key)) continue;
+        if (key) pageSeen.add(key);
+        deduped.unshift(pl);
+      }
+      p.players = deduped;
+    }
+  }
+
   // Ensure every player with a character file is represented on at least one map page
   if (pages.length > 0) {
     const characterFiles = (files || []).filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
     const allUsernamesOnMap = new Set<string>();
     pages.forEach(p => {
       (p.players || []).forEach((pl: any) => {
-        const u = (pl.username || pl.name || '').trim().toLowerCase();
+        const u = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
         if (u) allUsernamesOnMap.add(u);
       });
     });
@@ -162,7 +204,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       const parts = cf.replace(/\.txt$/, '').split('-');
       const charUsername = parts[parts.length - 1].trim();
       const charName = parts.slice(0, -1).join('-').trim();
-      if (charUsername && !allUsernamesOnMap.has(charUsername.toLowerCase())) {
+      if (charUsername && !allUsernamesOnMap.has(charUsername.toLowerCase()) && !allUsernamesOnMap.has((charName || '').toLowerCase())) {
         if (!pages[0].players) pages[0].players = [];
         const offset = pages[0].players.length;
         pages[0].players.push({
@@ -212,14 +254,17 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   const currentPage = pages[safePageIndex];
   if (currentPage) {
-    if ((!currentPage.players || currentPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
-      currentPage.players = mapData.players;
-    }
-    if ((!currentPage.items || currentPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
-      currentPage.items = mapData.items;
-    }
-    if ((!currentPage.landmarks || currentPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
-      currentPage.landmarks = mapData.landmarks;
+    // Only inherit root-level entities to page 0 if it is a single-page map
+    if (pages.length === 1 && safePageIndex === 0) {
+      if ((!currentPage.players || currentPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
+        currentPage.players = mapData.players;
+      }
+      if ((!currentPage.items || currentPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
+        currentPage.items = mapData.items;
+      }
+      if ((!currentPage.landmarks || currentPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
+        currentPage.landmarks = mapData.landmarks;
+      }
     }
   }
   const activeNpcs = (currentPage?.npcs || currentPage?.creatures || currentPage?.entities || mapData?.npcs || mapData?.creatures || []) as any[];
