@@ -413,10 +413,10 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
                 <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-900">
                   <div className="text-left sm:text-right">
                     <div className="text-sm font-black text-white font-mono">
-                      ${tx.amount.toFixed(2)}
+                      ${(Number(tx.amount) || 0).toFixed(2)}
                     </div>
                     <div className="text-[10px] text-neutral-500 font-mono">
-                      ID: {tx.id.slice(0, 10)}...
+                      ID: {(tx.id || 'N/A').slice(0, 10)}...
                     </div>
                   </div>
 

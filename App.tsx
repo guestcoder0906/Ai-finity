@@ -677,7 +677,7 @@ function App() {
             setIsReceiptModalOpen(true);
             setStripeReturnMessage({
               type: 'success',
-              text: `🎉 Stripe Payment Verified! Purchase of ${itemName} ($${amount.toFixed(2)}) has been credited to your account.`
+              text: `🎉 Stripe Payment Verified! Purchase of ${itemName} ($${(Number(amount) || 0).toFixed(2)}) has been credited to your account.`
             });
 
             try {

@@ -175,6 +175,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         currentUser.uid,
         currentUser.email || undefined,
         currentUser.username || undefined,
+        currentUser.stripeSubscriptionId || undefined,
         typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
       );
       if (portalUrl) {
@@ -1133,6 +1134,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               <ReceiptsList
                 currentUser={currentUser}
                 onViewReceipt={(tx) => setSelectedReceiptForInvoice(tx)}
+                onProfileUpdated={onProfileUpdated}
+                onStatusUpdated={onStatusUpdated}
               />
             </div>
           ) : null}

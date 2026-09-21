@@ -224,6 +224,7 @@ export async function createStripeCustomerPortalSession(
   userId: string,
   userEmail?: string,
   username?: string,
+  stripeSubscriptionId?: string,
   origin?: string
 ): Promise<string> {
   const clientOrigin =
@@ -240,6 +241,7 @@ export async function createStripeCustomerPortalSession(
       userId,
       userEmail: userEmail || undefined,
       username: username || undefined,
+      stripeSubscriptionId: stripeSubscriptionId || undefined,
       origin: clientOrigin
     })
   });

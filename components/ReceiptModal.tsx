@@ -51,7 +51,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
       `Date & Time:     ${formattedDate}`,
       `Customer:        ${currentUser?.username || transaction.recipient || 'Player'} (${currentUser?.email || 'N/A'})`,
       `Item Purchased:  ${transaction.itemName}`,
-      `Amount Paid:     $${transaction.amount.toFixed(2)} USD`,
+      `Amount Paid:     $${(Number(transaction.amount) || 0).toFixed(2)} USD`,
       `Payment Method:  ${transaction.paymentMethod}`,
       `Status:          ${transaction.status.toUpperCase()} (DELIVERED)`,
       transaction.actionDelta ? `Action Credits:  +${transaction.actionDelta} Actions Added` : '',
@@ -205,7 +205,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                   </div>
                 </div>
                 <div className="text-sm font-bold font-mono text-white print:text-black">
-                  ${transaction.amount.toFixed(2)}
+                  ${(Number(transaction.amount) || 0).toFixed(2)}
                 </div>
               </div>
             </div>
@@ -214,7 +214,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             <div className="border-t border-neutral-800 print:border-gray-300 bg-black/40 print:bg-gray-50 p-3.5 space-y-1.5 text-xs font-mono">
               <div className="flex justify-between text-neutral-400 print:text-gray-600">
                 <span>Subtotal</span>
-                <span>${transaction.amount.toFixed(2)} USD</span>
+                <span>${(Number(transaction.amount) || 0).toFixed(2)} USD</span>
               </div>
               <div className="flex justify-between text-neutral-400 print:text-gray-600">
                 <span>Tax (0.00%)</span>
@@ -223,7 +223,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <div className="flex justify-between pt-2 border-t border-neutral-800 print:border-gray-300 text-sm font-bold text-white print:text-black">
                 <span>Total Paid</span>
                 <span className="text-emerald-400 print:text-black font-black">
-                  ${transaction.amount.toFixed(2)} USD
+                  ${(Number(transaction.amount) || 0).toFixed(2)} USD
                 </span>
               </div>
             </div>

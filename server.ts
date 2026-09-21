@@ -551,7 +551,7 @@ async function startServer() {
   // Create Stripe Customer Portal session for subscription/billing management
   app.post('/api/stripe/create-portal-session', async (req, res) => {
     try {
-      const { userId, userEmail, username, origin: clientOrigin } = req.body || {};
+      const { userId, userEmail, username, stripeSubscriptionId, origin: clientOrigin } = req.body || {};
       let origin = String(clientOrigin || req.headers?.referer || req.headers?.origin || '').trim();
       if (origin.endsWith('/')) origin = origin.slice(0, -1);
       if (!origin || origin === 'null') {
@@ -571,15 +571,49 @@ async function startServer() {
 
       let customerId: string | undefined;
 
-      // 1. Search customers by email
-      if (userEmail && userEmail.includes('@')) {
+      // 1. Direct subscription ID lookup
+      if (stripeSubscriptionId) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+          if (sub && sub.customer) {
+            customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+          }
+        } catch (err) {
+          // Subscription ID might be stale or not found directly
+        }
+      }
+
+      // 2. Search customers by email
+      if (!customerId && userEmail && userEmail.includes('@')) {
         const customers = await stripe.customers.list({ email: userEmail, limit: 10 }).catch(() => ({ data: [] }));
         if (customers.data.length > 0) {
           customerId = customers.data[0].id;
         }
       }
 
-      // 2. Search checkout sessions for customer ID if not found yet
+      // 3. Search subscriptions list for customer ID
+      if (!customerId) {
+        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }));
+        for (const sub of subs.data) {
+          const subUid = (sub.metadata?.userId || '').trim();
+          const subEmail = (sub.metadata?.userEmail || '').toLowerCase().trim();
+          const subUsername = (sub.metadata?.username || '').toLowerCase().trim();
+
+          if (
+            (stripeSubscriptionId && sub.id === stripeSubscriptionId) ||
+            (userId && subUid === userId) ||
+            (userEmail && subEmail === userEmail.toLowerCase().trim()) ||
+            (username && subUsername === username.toLowerCase().trim())
+          ) {
+            if (sub.customer) {
+              customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+              break;
+            }
+          }
+        }
+      }
+
+      // 4. Search checkout sessions for customer ID if not found yet
       if (!customerId) {
         const sessions = await stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] }));
         for (const s of sessions.data) {
@@ -600,14 +634,20 @@ async function startServer() {
         }
       }
 
-      // 3. Search subscriptions
+      // 5. Broad customer list scan
       if (!customerId) {
-        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }));
-        for (const sub of subs.data) {
-          const subUid = (sub.metadata?.userId || '').trim();
-          const subUsername = (sub.metadata?.username || '').toLowerCase().trim();
-          if ((userId && subUid === userId) || (username && subUsername === username.toLowerCase())) {
-            customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+        const allCustomers = await stripe.customers.list({ limit: 100 }).catch(() => ({ data: [] }));
+        for (const c of allCustomers.data) {
+          const cEmail = (c.email || c.metadata?.userEmail || '').toLowerCase().trim();
+          const cUid = (c.metadata?.userId || '').trim();
+          const cUsername = (c.metadata?.username || '').toLowerCase().trim();
+
+          if (
+            (userEmail && cEmail === userEmail.toLowerCase().trim()) ||
+            (userId && cUid === userId) ||
+            (username && cUsername === username.toLowerCase().trim())
+          ) {
+            customerId = c.id;
             break;
           }
         }
@@ -616,7 +656,7 @@ async function startServer() {
       if (!customerId) {
         return res.status(404).json({
           error: 'CUSTOMER_NOT_FOUND',
-          message: 'No Stripe customer account was found for your user profile.'
+          message: 'No Stripe customer account was found for your user profile. If you subscribed using a different email or guest checkout, you can click "Cancel Subscription" below to reset your plan to Free.'
         });
       }
 

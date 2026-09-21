@@ -162,6 +162,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         currentUser.uid,
         currentUser.email || undefined,
         currentUser.username || undefined,
+        currentUser.stripeSubscriptionId || undefined,
         typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
       );
       if (portalUrl) {
@@ -171,7 +172,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
     } catch (err: any) {
       setCancelErrorMessage(
-        err.message || 'Could not open Stripe Customer Portal. You can click "Yes, Cancel" to reset your plan to Free.'
+        err.message || 'Could not open Stripe Customer Portal. You can click "Yes, Cancel" below to reset your plan to Free.'
       );
     } finally {
       setIsOpeningPortal(false);
@@ -1013,7 +1014,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-neutral-400">Amount:</span>
-                      <span className="text-emerald-400 font-bold">${transactionReceipt.amount.toFixed(2)} USD</span>
+                      <span className="text-emerald-400 font-bold">${(Number(transactionReceipt.amount) || 0).toFixed(2)} USD</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-neutral-400">Payment Method:</span>
@@ -1296,9 +1297,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       {isProcessingPayment ? (
                         <span>{processingMessage || 'Processing Order...'}</span>
                       ) : paymentMethod === 'stripe_checkout' ? (
-                        <>Checkout with <span className="font-extrabold text-neutral-900">Stripe</span> (${selectedItem.data.price.toFixed(2)})</>
+                        <>Checkout with <span className="font-extrabold text-neutral-900">Stripe</span> (${(Number(selectedItem.data.price) || 0).toFixed(2)})</>
                       ) : (
-                        <>Pay with Card (${selectedItem.data.price.toFixed(2)})</>
+                        <>Pay with Card (${(Number(selectedItem.data.price) || 0).toFixed(2)})</>
                       )}
                     </button>
                   </div>
