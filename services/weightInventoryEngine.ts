@@ -442,7 +442,7 @@ export class WeightInventoryEngine {
       height = parseFloat(tallByMatch[1]);
       width = parseFloat(tallByMatch[2]);
       if (tallByMatch[3]) depth = parseFloat(tallByMatch[3]);
-      return { height, width, depth, raw: text, applies: true, unit: 'inches' };
+      return { height, width, depth, raw: tallByMatch[0].trim(), applies: true, unit: 'inches' };
     }
 
     // Pattern B: "3x5x8" or "3x5" or "3 x 5 inches" or "3x0 inch"
@@ -451,7 +451,8 @@ export class WeightInventoryEngine {
       const dim1 = parseFloat(xPattern[1]);
       const dim2 = parseFloat(xPattern[2]);
       const dim3 = xPattern[3] ? parseFloat(xPattern[3]) : undefined;
-      return { height: dim1, width: dim2, depth: dim3, raw: text, applies: true, unit: 'inches' };
+      const cleanRaw = dim3 !== undefined ? `${dim1}x${dim2}x${dim3} inches` : `${dim1}x${dim2} inches`;
+      return { height: dim1, width: dim2, depth: dim3, raw: cleanRaw, applies: true, unit: 'inches' };
     }
 
     // Pattern C: "Height: 5'11", Width: 20", Depth: 12"" or "Height: 6ft, Width: 2ft"
@@ -481,13 +482,146 @@ export class WeightInventoryEngine {
       if (lower.includes('cm')) depth /= 2.54;
     }
 
+    let cleanRaw = 'None';
+    if (height !== undefined || width !== undefined || depth !== undefined) {
+      const parts: string[] = [];
+      if (height !== undefined) parts.push(`${height}"H`);
+      if (width !== undefined) parts.push(`${width}"W`);
+      if (depth !== undefined) parts.push(`${depth}"D`);
+      cleanRaw = parts.join(' x ');
+    } else {
+      const dimMatch = text.match(/dimensions?[:=\s]+([^,;()\n]+)/i);
+      if (dimMatch) {
+        cleanRaw = dimMatch[1].trim();
+      } else if (text.length <= 25 && !text.includes(':') && !text.toLowerCase().includes('overflow')) {
+        cleanRaw = text.trim();
+      } else {
+        cleanRaw = 'Standard size';
+      }
+    }
+
     return {
       height,
       width,
       depth,
-      raw: text,
+      raw: cleanRaw,
       applies: height !== undefined || width !== undefined || depth !== undefined || !lower.includes('none'),
       unit: 'inches'
+    };
+  }
+
+  /**
+   * Unwraps recursively nested held item strings and detects the true holding limb and item description.
+   * Cleans chains like "Hands: Weight: 0.2 lbs. Dimensions: Hands: Weight: ... Held in Jaws: ... Red Rubber Ball..."
+   * Also filters out rule lines, mandates, status headers, and repeated overflow warnings.
+   */
+  public static unwrapHeldItem(rawText: string, defaultLimb: string = 'Hands'): { cleanText: string; holdingLimb: string; isOverflow: boolean } | null {
+    let text = rawText.trim().replace(/^[-*•>\s]+/, '').trim();
+    const lower = text.toLowerCase();
+
+    // 1. Immediately reject rule / mandate / guideline / capacity / header lines
+    if (
+      lower.startsWith('holding anatomy') ||
+      lower.startsWith('holding capacity') ||
+      lower.startsWith('capacity & status') ||
+      lower.startsWith('capacity status') ||
+      lower.startsWith('holding status') ||
+      lower.startsWith('- capacity') ||
+      lower.startsWith('capacity:') ||
+      lower.startsWith('items currently held') ||
+      lower.startsWith('held items') ||
+      lower.startsWith('currently holding') ||
+      lower.includes('overflow rule') ||
+      lower.includes('dynamic overflow') ||
+      lower.includes('weight mandate') ||
+      lower.includes('capacity mandate') ||
+      lower.includes('holding mandate') ||
+      lower.includes('weight & capacity') ||
+      lower.includes('cannot hold additional') ||
+      lower.includes('occupied by') ||
+      lower.includes('without dropping') ||
+      lower.includes('(none') ||
+      lower.includes('appendages free') ||
+      lower.includes('hands free') ||
+      lower === 'none' ||
+      lower === '(none)'
+    ) {
+      return null;
+    }
+
+    let detectedLimb = defaultLimb;
+    let explicitOverflow = false;
+
+    // Detect if "Held in Jaws", "Jaws", "Mouth", "Right Hand", "Left Hand", etc. is mentioned in the line
+    const limbSearch = text.match(/\b(held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+teeth|held\s+in\s+beak|held\s+in\s+talons?|held\s+in\s+hands?|in\s+jaws?|in\s+mouth|both\s+hands\s*(?:\(two-handed\))?|two[- ]handed|right\s+hand|left\s+hand|main\s+hand|off\s+hand|jaws?|mouth|teeth|beak|talons?|tentacles?\s*\d*|claws?\s*\d*|under\s+arm(?:\s*\(overflow\))?|overflow\s+hold|hands?)\b/i);
+    if (limbSearch) {
+      const matchLower = limbSearch[1].toLowerCase();
+      if (matchLower.includes('jaw') || matchLower.includes('mouth') || matchLower.includes('teeth')) {
+        detectedLimb = 'Held in Jaws';
+      } else if (matchLower.includes('both hands') || matchLower.includes('two-handed')) {
+        detectedLimb = 'Both Hands (Two-Handed)';
+      } else if (matchLower.includes('right hand')) {
+        detectedLimb = 'Right Hand';
+      } else if (matchLower.includes('left hand')) {
+        detectedLimb = 'Left Hand';
+      } else if (matchLower.includes('main hand')) {
+        detectedLimb = 'Main Hand';
+      } else if (matchLower.includes('off hand')) {
+        detectedLimb = 'Off Hand';
+      } else if (matchLower.includes('beak')) {
+        detectedLimb = 'Beak';
+      } else if (matchLower.includes('talon')) {
+        detectedLimb = 'Talons';
+      } else if (matchLower.includes('tentacle')) {
+        detectedLimb = 'Tentacles';
+      } else if (matchLower.includes('claws')) {
+        detectedLimb = 'Claws';
+      } else if (matchLower.includes('overflow') || matchLower.includes('under arm')) {
+        detectedLimb = 'Overflow Hold';
+        explicitOverflow = true;
+      } else if (matchLower.includes('hand')) {
+        detectedLimb = defaultLimb.toLowerCase().includes('jaw') || defaultLimb.toLowerCase().includes('mouth') ? defaultLimb : 'Hands';
+      }
+    }
+
+    // 2. Iteratively strip leading limb and weight/dimensions wrapper prefixes
+    let prevText = '';
+    while (text !== prevText) {
+      prevText = text;
+      text = text
+        .replace(/^(?:[-*•>\s]*)(?:\[)?(?:right\s*hand|left\s*hand|main\s*hand|off\s*hand|both\s*hands|two[- ]handed|hands?|jaws?|mouth|teeth|talons?|beak|tentacles?\s*\d*|claws?\s*\d*|trunk|held\s*in\s*jaws?|held\s*in\s*mouth|held\s*in\s*teeth|held\s*in\s*hands?|held\s*in\s*beak|held\s*in\s*talons?|in\s*jaws?|in\s*mouth|overflow\s*hold|under\s*arm)(?:\])?\s*[:=-]\s*/i, '')
+        .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
+        .replace(/^dimensions?\s*[:=]\s*/i, '')
+        .trim();
+    }
+
+    // 3. Strip trailing repeated overflow warnings
+    text = text.replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '').trim();
+    // Clean multiple trailing periods
+    text = text.replace(/\.{2,}$/, '.').trim();
+
+    // 4. Check if the remaining core text is a rule, mandate, or empty
+    const cleanLower = text.toLowerCase();
+    if (
+      cleanLower.startsWith('dynamic overflow rule') ||
+      cleanLower.startsWith('weight & capacity mandate') ||
+      cleanLower.startsWith('overflow rule') ||
+      cleanLower.startsWith('weight mandate') ||
+      cleanLower.startsWith('capacity mandate') ||
+      cleanLower.includes('jaws are occupied') ||
+      cleanLower.includes('held in jaws..') ||
+      cleanLower.includes('held in mouth without dropping') ||
+      cleanLower === 'hands' ||
+      cleanLower === 'hand' ||
+      cleanLower === ''
+    ) {
+      return null;
+    }
+
+    return {
+      cleanText: text,
+      holdingLimb: detectedLimb,
+      isOverflow: explicitOverflow
     };
   }
 
@@ -880,7 +1014,16 @@ export class WeightInventoryEngine {
       lower.startsWith('holding anatomy') ||
       lower.startsWith('holding capacity') ||
       lower.startsWith('items currently held') ||
-      lower.startsWith('currently holding')
+      lower.startsWith('currently holding') ||
+      lower.includes('overflow rule') ||
+      lower.includes('dynamic overflow') ||
+      lower.includes('weight mandate') ||
+      lower.includes('capacity mandate') ||
+      lower.includes('holding mandate') ||
+      lower.includes('weight & capacity') ||
+      lower.includes('cannot hold additional') ||
+      lower.includes('occupied by') ||
+      lower.includes('without dropping')
     ) {
       return null;
     }
@@ -903,7 +1046,41 @@ export class WeightInventoryEngine {
       }
     }
 
-    if (!name || name.toLowerCase() === 'none' || name.toLowerCase() === '0 lbs') return null;
+    // If the extracted "name" is actually a limb prefix (e.g. "Hands", "Held in Jaws"), strip it and continue extracting the real item name from rest
+    const isLimbPrefix = /^(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?|tentacles?|trunk|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+teeth|held\s+in\s+hands?|in\s+jaws?|in\s+mouth|overflow\s+hold)$/i.test(name);
+    if (isLimbPrefix) {
+      while (/^(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+hands?|overflow\s+hold|weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*dimensions?\s*[:=]?)\s*[:=-]?\s*/i.test(rest)) {
+        rest = rest.replace(/^(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+hands?|overflow\s+hold|weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*dimensions?\s*[:=]?)\s*[:=-]?\s*/i, '').trim();
+      }
+      const nextColon = rest.indexOf(':');
+      if (nextColon > 0 && nextColon < 40) {
+        name = rest.substring(0, nextColon).trim();
+        rest = rest.substring(nextColon + 1).trim();
+      } else {
+        const nextWeight = rest.search(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:weight|pound|lbs?|kg|oz)/i);
+        if (nextWeight > 0) {
+          name = rest.substring(0, nextWeight).trim();
+          rest = rest.substring(nextWeight).trim();
+        } else {
+          name = rest.split(/[(,]/)[0].trim();
+        }
+      }
+    }
+
+    if (
+      !name ||
+      name.toLowerCase() === 'none' ||
+      name.toLowerCase() === '0 lbs' ||
+      name.toLowerCase() === 'hands' ||
+      name.toLowerCase() === 'hand' ||
+      name.toLowerCase().includes('overflow rule') ||
+      name.toLowerCase().includes('weight mandate') ||
+      name.toLowerCase().includes('capacity mandate') ||
+      name.toLowerCase().includes('holding mandate') ||
+      name.toLowerCase().includes('weight & capacity')
+    ) {
+      return null;
+    }
 
     // Parse weight
     const weightResult = this.parseWeight(rest);
@@ -1798,34 +1975,51 @@ export class WeightInventoryEngine {
         }
 
         // Parse held item line
-        let holdingLimb = 'Hands';
-        let itemText = line;
-
-        const limbPrefixMatch = line.match(/^[-*•>\s]*(?:\[)?(right\s*hand|left\s*hand|main\s*hand|off\s*hand|both\s*hands|two[- ]handed|jaws?|mouth|teeth|talons?|beak|tentacles?\s*\d*|claws?\s*\d*|under\s*arm(?:\s*\(overflow\))?|chest|crook\s*of\s*arm|overflow\s*hold)(?:\])?\s*[:=-]\s*(.*)$/i);
-        if (limbPrefixMatch) {
-          holdingLimb = limbPrefixMatch[1].trim();
-          itemText = limbPrefixMatch[2].trim();
+        let defaultLimb = 'Hands';
+        if (customHoldingAnatomy) {
+          const cLower = customHoldingAnatomy.toLowerCase();
+          if (cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('teeth')) {
+            defaultLimb = 'Held in Jaws';
+          } else if (cLower.includes('beak')) {
+            defaultLimb = 'Beak';
+          } else if (cLower.includes('talon')) {
+            defaultLimb = 'Talons';
+          } else if (cLower.includes('tentacle')) {
+            defaultLimb = 'Tentacles';
+          } else if (cLower.includes('claws')) {
+            defaultLimb = 'Claws';
+          } else if (cLower.includes('trunk')) {
+            defaultLimb = 'Trunk';
+          }
         }
 
-        const item = this.parseItemLine(itemText);
+        const unwrapped = WeightInventoryEngine.unwrapHeldItem(line, defaultLimb);
+        if (!unwrapped) {
+          continue;
+        }
+
+        const item = this.parseItemLine(unwrapped.cleanText);
         if (item) {
           item.category = 'equipped';
-          const isOverflow = (
-            lower.includes('overflow') ||
-            lower.includes('under arm') ||
-            lower.includes('clutched') ||
-            lower.includes('teeth') ||
-            lower.includes('awkwardly') ||
-            lower.includes('risks dropping') ||
-            lower.includes('knocked down') ||
-            (currentlyHolding.length >= (customHoldingMax !== undefined ? customHoldingMax : 2))
-          );
+          const maxAllowed = customHoldingMax !== undefined ? customHoldingMax : 2;
+          const isOverflow = unwrapped.isOverflow || (currentlyHolding.length >= maxAllowed);
           const heldItem: HeldItemInfo = {
             ...item,
-            holdingLimb,
+            holdingLimb: unwrapped.holdingLimb,
             isOverflowHold: isOverflow,
             overflowWarning: isOverflow ? 'Held with overflow; risks dropping or getting knocked down depending on narrative context.' : undefined
           };
+          // Prevent duplicate held items caused by prior sync loops or accidental line replication
+          const isDuplicate = currentlyHolding.some(
+            existing =>
+              existing.name.toLowerCase() === item.name.toLowerCase() &&
+              existing.holdingLimb.toLowerCase() === unwrapped.holdingLimb.toLowerCase() &&
+              Math.abs(existing.weight - item.weight) < 0.001
+          );
+          if (isDuplicate && (customHoldingMax === 1 || unwrapped.holdingLimb.toLowerCase().includes('jaw') || unwrapped.holdingLimb.toLowerCase().includes('mouth') || unwrapped.holdingLimb.toLowerCase().includes('right hand') || unwrapped.holdingLimb.toLowerCase().includes('left hand'))) {
+            continue;
+          }
+
           currentlyHolding.push(heldItem);
           continue;
         }
@@ -2232,9 +2426,31 @@ export class WeightInventoryEngine {
         holdingLines.push(`  * (None - Hands/Appendages free)`);
       } else {
         for (const h of stats.currentlyHolding) {
+          // Clean name of any existing limb prefixes, repeated 'Hands:', and repeated overflow suffixes
+          let cleanName = h.name
+            .replace(/^[-*•>\s]*(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?|tentacles?|trunk|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+hands?|overflow\s+hold)[:=\s]+/i, '')
+            .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
+            .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
+            .trim();
+          if (!cleanName || cleanName.toLowerCase() === 'hands' || cleanName.toLowerCase().includes('overflow rule')) {
+            continue;
+          }
+
+          let cleanDim = h.dimensions.raw || 'Standard size';
+          const dimMatch = cleanDim.match(/([0-9.]+\s*x\s*[0-9.]+(?:\s*x\s*[0-9.]+)?\s*(?:in|inch|inches|cm|m|ft)?)/i);
+          if (dimMatch) {
+            cleanDim = dimMatch[1].trim();
+          } else if (cleanDim.length > 25 || cleanDim.includes(':') || cleanDim.includes('(')) {
+            if (h.dimensions.height !== undefined && h.dimensions.width !== undefined) {
+              cleanDim = `${h.dimensions.height}x${h.dimensions.width}${h.dimensions.depth !== undefined ? `x${h.dimensions.depth}` : ''} inches`;
+            } else {
+              cleanDim = 'Standard size';
+            }
+          }
+
           const limbPrefix = h.holdingLimb ? `${h.holdingLimb}: ` : '';
           const overflowSuffix = h.isOverflowHold ? ' (Overflow: Yes - risks dropping)' : '';
-          holdingLines.push(`  * ${limbPrefix}${h.name}: Weight: ${h.weight} lbs. Dimensions: ${h.dimensions.raw || 'N/A'}.${overflowSuffix}`);
+          holdingLines.push(`  * ${limbPrefix}${cleanName}: Weight: ${h.weight} lbs. Dimensions: ${cleanDim}.${overflowSuffix}`);
         }
       }
 

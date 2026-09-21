@@ -667,9 +667,21 @@ const Sidebar: React.FC<SidebarProps> = ({
                                         <div key={hi} className={`p-1 rounded ${it.isOverflowHold ? 'bg-red-950/40 border border-red-900/60' : 'bg-neutral-950/60'}`}>
                                           <div className="flex justify-between items-center">
                                             <span className="font-medium text-amber-200">
-                                              • {it.holdingLimb ? <span className="text-neutral-400 font-normal">[{it.holdingLimb}] </span> : null}{it.name}
+                                              • {it.holdingLimb ? <span className="text-neutral-400 font-normal">[{it.holdingLimb}] </span> : null}
+                                              {it.name.replace(/^[-*•>\s]*(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?|tentacles?|trunk|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+hands?|overflow\s+hold)[:=\s]+/i, '').replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '').trim() || it.name}
                                             </span>
-                                            <span className="font-mono text-gray-400 text-[8.5px]">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
+                                            <span className="font-mono text-gray-400 text-[8.5px]">
+                                              {it.weight} lbs ({(() => {
+                                                const raw = it.dimensions?.raw || '';
+                                                const dimMatch = raw.match(/([0-9.]+\s*x\s*[0-9.]+(?:\s*x\s*[0-9.]+)?\s*(?:in|inch|inches|cm|m|ft)?)/i);
+                                                if (dimMatch) return dimMatch[1].trim();
+                                                if (raw.length <= 25 && !raw.includes(':') && !raw.toLowerCase().includes('overflow')) return raw;
+                                                if (it.dimensions?.height !== undefined && it.dimensions?.width !== undefined) {
+                                                  return `${it.dimensions.height}x${it.dimensions.width}${it.dimensions.depth !== undefined ? `x${it.dimensions.depth}` : ''} in`;
+                                                }
+                                                return 'Standard size';
+                                              })()})
+                                            </span>
                                           </div>
                                           {it.isOverflowHold && (
                                             <div className="text-[8px] text-red-400 flex items-center gap-1 mt-0.5">
