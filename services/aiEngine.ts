@@ -139,6 +139,17 @@ STAT PERSISTENCE RULE (CRITICAL):
 - If an NPC is wounded or expends resources, you MUST update their file (or the shared group file).
 - NEVER assume the system will "remember" a stat change unless it is written into a file.
 
+HEALTH, DAMAGE, INJURIES & HEALING RULE (ABSOLUTE CRITICAL PRIORITY):
+- Whenever ANY character (player, ally, enemy, NPC, boss, monster, animal, or creature) takes damage or receives healing:
+  1. Calculate exact new health: clamp(Current Health - Damage + Healing, 0, Max Health).
+  2. You MUST include their character file (or shared group file e.g. "Goblins.txt") in the 'files' response object with their new health calculated: "- Health: NewCurrent / Max".
+  3. NEVER narrate that a character was struck, hit, wounded, slashed, shot, burned, poisoned, or took damage without immediately deducting the damage from their Health in their file.
+  4. If an attack or event inflicts a wound (e.g., broken arm, gash on chest, sprained leg), record it under [BODY PARTS & STATUS] or [STATUS EFFECTS & LORE].
+  5. If Health reaches 0, update their condition to Unconscious, Incapacitated, or Dead. If the active player's Health reaches 0, set "gameOver": true!
+  6. Include the health change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
+  7. Reflect the updated Health in the Guide.txt Master Stat Table.
+- NEVER forget to remove health from a hurt character. Dynamic updates must be 100% accurate with no details missing.
+
 ENERGY & STAMINA MANAGEMENT RULE (CRITICAL):
 - Every strenuous action, weapon attack, sprint, physical feat, or magical ability costs Energy, Stamina, or Mana according to the character's abilities or World Rules.
 - Resting, sleeping, or catching breath restores Energy/Stamina.
@@ -571,6 +582,20 @@ INSTRUCTIONS:
       * If receiving currency: add exact amounts to carried balance in their file and include in 'updates' array.
       * If accessing or moving stored/remote currency or stashes: verify specific location attached to each item or cache (using hide[...] for secret/hidden stashes).
       * Add both buyer/giver and seller/recipient entity files to "filesToUpdate".
+11. AUDIT FOR HEALTH, DAMAGE, INJURIES & HEALING (DYNAMIC AI REASONING):
+    - Dynamically detect if ANY character, player, ally, enemy, NPC, boss, monster, animal, or creature takes damage, is attacked, struck, shot, stabbed, burned, poisoned, falls, suffocates, or is healed.
+    - Accurately determine:
+      * isHealthAffected: true if any damage or healing occurs, false otherwise.
+      * damageAndHealing: array of:
+        - "target": exact name of the character/creature (e.g. "Kaelen", "Goblin Archer", "Bandit 1")
+        - "targetFile": filename if known (e.g. "Kaelen-Bob.txt", "Bandits.txt", "Goblin.txt")
+        - "type": "damage" | "heal"
+        - "amount": positive numeric points of damage or healing (calculate based on weapon/spell damage, armor thresholds, check results)
+        - "damageType": "slashing" | "piercing" | "bludgeoning" | "fire" | "frost" | "poison" | "falling" | etc.
+        - "source": weapon, attacker, spell, or environmental hazard
+        - "bodyPart": specific body part hit (e.g. "Torso", "Left Arm", "Head", "Leg")
+        - "injury": wound description (e.g. "Deep gash on chest", "Broken arm")
+    - Every character taking damage or healing MUST have their file added to "filesToUpdate"!
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -586,6 +611,21 @@ OUTPUT FORMAT (Strict JSON only):
       ]
     }
   ],
+  "healthAudit": {
+    "isHealthAffected": true,
+    "damageAndHealing": [
+      {
+        "target": "CharacterName",
+        "targetFile": "CharacterName.txt",
+        "type": "damage",
+        "amount": 15,
+        "damageType": "slashing",
+        "source": "Enemy Sword",
+        "bodyPart": "Torso",
+        "injury": "Deep gash on chest"
+      }
+    ]
+  },
   "currencyAudit": {
     "isCurrencyAffected": true,
     "transactions": [
@@ -804,8 +844,12 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
-          // Auto-include player character file in filesToUpdate if energy, stats, inventory/containers, currency, or mounting/riding are affected (dynamic AI reasoning)
+          // Auto-include player character file in filesToUpdate if health, energy, stats, inventory/containers, currency, or mounting/riding are affected (dynamic AI reasoning)
           if (playerFile) {
+            const isHealthAffected = Boolean(
+              audit.healthAudit?.isHealthAffected ||
+              (audit.healthAudit?.damageAndHealing && audit.healthAudit.damageAndHealing.length > 0)
+            );
             const isEnergyAffected = Boolean(
               audit.energyAudit?.isEnergyAffected ||
               (audit.energyAudit && typeof audit.energyAudit.expectedChange === 'number' && audit.energyAudit.expectedChange !== 0)
@@ -824,10 +868,25 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
               (audit.commerceAudit && audit.commerceAudit.isCommerceAction)
             );
 
-            if (isEnergyAffected || isInventoryAffected || isMountingAffected || isCurrencyAffected) {
+            if (isHealthAffected || isEnergyAffected || isInventoryAffected || isMountingAffected || isCurrencyAffected) {
               if (!audit.filesToUpdate) audit.filesToUpdate = [];
               if (!audit.filesToUpdate.includes(playerFile)) {
                 audit.filesToUpdate.push(playerFile);
+              }
+            }
+          }
+
+          // Also auto-include all damaged or healed NPCs / enemies in filesToUpdate
+          if (audit.healthAudit?.damageAndHealing && Array.isArray(audit.healthAudit.damageAndHealing)) {
+            if (!audit.filesToUpdate) audit.filesToUpdate = [];
+            for (const event of audit.healthAudit.damageAndHealing) {
+              if (event.targetFile && !audit.filesToUpdate.includes(event.targetFile)) {
+                audit.filesToUpdate.push(event.targetFile);
+              } else if (event.target) {
+                const matchedFile = this.findCharacterOrEntityFile(event.target);
+                if (matchedFile && !audit.filesToUpdate.includes(matchedFile)) {
+                  audit.filesToUpdate.push(matchedFile);
+                }
               }
             }
           }
@@ -885,13 +944,32 @@ CRITICAL REMINDERS:
      * Include the deduction in the 'updates' array (e.g. {"type": "stat", "text": "-$50 (given from wallet)", "value": -50}).
      * Always update both giver's and recipient's entity files in 'files'.
    - RECEIVING CURRENCY: When an NPC gives currency (e.g. 1 Gold Coin and 5 Silver Coins) or coins are found/earned, update the character's carried balance in their file and include in 'updates' array (e.g. {"type": "stat", "text": "+1 Gold Coin, +5 Silver Coins", "value": 1}).
-   - STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
-   - Both buyer/giver and seller/recipient entity files MUST be updated in 'files'.
-8. AUTO ACTION RECOMMENDATIONS (CRITICAL):
+    - STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
+    - Both buyer/giver and seller/recipient entity files MUST be updated in 'files'.
+8. DYNAMIC HEALTH, DAMAGE, INJURIES & HEALING (CRITICAL - NEVER MISS OR FORGET HEALTH REDUCTIONS):
+   - Whenever ANY character (player, ally, enemy, NPC, boss, monster, animal, or creature) takes damage, suffers injury, is attacked, burned, poisoned, falls, or is healed:
+     * You MUST include their character file (or shared group file e.g. "Goblins.txt") in the 'files' response object!
+     * You MUST calculate and deduct the damage: "- Health: [NewCurrent] / [Max]" (clamp between 0 and Max). NEVER leave Health unchanged or at maximum when narrating that a character took damage!
+     * If an injury is sustained (e.g. broken bone, gash, concussion), record it under [BODY PARTS & STATUS] or [STATUS EFFECTS & CONDITIONS].
+     * If Health reaches 0, update their condition to Unconscious, Incapacitated, or Dead (and if player, set "gameOver": true).
+     * Include the stat change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
+     * Keep Guide.txt Master Stat Table in 100% sync!
+9. AUTO ACTION RECOMMENDATIONS (CRITICAL):
    - The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
    - DO NOT generate suggestions for other NPCs or adversaries.
    - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, carried/stored wealth, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, shopping/bargaining if near a vendor, or mounting nearby rides).
-9. DYNAMIC STRUCTURED TRANSACTIONS (CRITICAL - ALWAYS POPULATE ACCURATELY):
+10. DYNAMIC STRUCTURED TRANSACTIONS (CRITICAL - ALWAYS POPULATE ACCURATELY):
+   - "healthTransactions": If ANY character or entity takes damage or heals:
+     [
+       {
+         "target": "Character or entity name",
+         "amount": 15,
+         "operation": "damage|heal",
+         "damageType": "slashing|piercing|bludgeoning|fire|frost|poison",
+         "bodyPart": "Torso|Arm|Head|Leg",
+         "injury": "Deep gash on chest"
+       }
+     ]
    - "currencyTransactions": If currency, money, or coinage is affected in any way (e.g. paying, giving money from wallet/pouch, donating, buying, selling, looting, finding, tipping), return structured objects:
      [
        {
@@ -914,8 +992,8 @@ CRITICAL REMINDERS:
          "targetCharacter": "Character name"
        }
      ]
-10. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
-11. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
+11. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
+12. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
 
           const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite', audit);
           
@@ -1436,7 +1514,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
       const followUpPrompt = `PREVIOUS CONTEXT: ${userPrompt}\n\n[SYSTEM: Probability Engine Results]\n\n${resultReport}\n\nBased on these FAIR and FINAL results, generate the highly detailed narrative and extensive file updates. Calculate exact dynamic outcomes (e.g., damage = base * probability result) WITHOUT using dice notation. 
       CRITICAL: You MUST include the exact text "${fullDetailsHtml}" at the very beginning or end of your narrative so the player can click to see the full mathematical details. Do not alter the formatting of that string. Include the Check Name and Result (e.g. "[Jump: Failure]") natively in the narrative text as well.
-      CRITICAL STAT & ENERGY UPDATE: If this action, attack, ability, or spell consumes or restores stamina, mana, or energy (or causes damage), you MUST include the updated "CharacterName-USERNAME.txt" in your 'files' object with the exact updated Energy/Mana/Stamina value in [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the stat change in the 'updates' array.`;
+      CRITICAL HEALTH, DAMAGE, & ENERGY UPDATE:
+      - If this action inflicts or takes damage or heals, you MUST include the affected character file(s) in 'files' with their new Health calculated: "- Health: [NewCurrent] / [Max]" and populate "healthTransactions": [{"target": "...", "amount": X, "operation": "damage|heal"}]. Include stat update in 'updates' array: {"type": "stat", "text": "Health -X", "value": -X}. NEVER forget to deduct damage from character health!
+      - If this action consumes or restores stamina, mana, or energy, you MUST include the updated "CharacterName-USERNAME.txt" in your 'files' object with the exact updated Energy/Mana/Stamina value in [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the stat change in the 'updates' array.`;
 
       // We make a fresh call with the context combined, as we don't maintain a full chat history object here 
       // (The FS is the history source of truth).
@@ -1703,6 +1783,195 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   }
 
   /**
+   * Finds a character or entity file by character name, entity name, or filename.
+   * Checks both filesObj (incoming files) and this.fs (disk files).
+   */
+  private findCharacterOrEntityFile(name?: string, filesObj?: any): string | null {
+    if (!name) return null;
+    const cleanName = name.trim().toLowerCase();
+    const listFromFiles = filesObj ? Object.keys(filesObj) : [];
+    const listFromFs = this.fs.list();
+    const candidateFiles = Array.from(new Set([...listFromFiles, ...listFromFs]));
+
+    // 1. Direct filename matches
+    const directMatch = candidateFiles.find(f => {
+      if (!f.endsWith('.txt')) return false;
+      const base = f.replace(/\.txt$/, '').toLowerCase();
+      return base === cleanName || base.split('-')[0].trim() === cleanName || base.split('_')[0].trim() === cleanName;
+    });
+    if (directMatch) return directMatch;
+
+    // 2. Substring filename match
+    const subMatch = candidateFiles.find(f => {
+      if (!f.endsWith('.txt')) return false;
+      if (f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt') return false;
+      const base = f.replace(/\.txt$/, '').toLowerCase();
+      return base.includes(cleanName) || cleanName.includes(base);
+    });
+    if (subMatch) return subMatch;
+
+    // 3. Search file contents for character name or group entity reference
+    for (const f of candidateFiles) {
+      if (!f.endsWith('.txt')) continue;
+      if (f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt') continue;
+      const content = filesObj && filesObj[f]
+        ? (typeof filesObj[f] === 'string' ? filesObj[f] : filesObj[f].content)
+        : this.fs.read(f);
+      if (typeof content === 'string') {
+        const lowerContent = content.toLowerCase();
+        if (lowerContent.includes(cleanName) && (content.includes('[STATS & MODIFIERS]') || content.includes('[NAME & DESCRIPTION]') || content.includes('Health') || content.includes('HP'))) {
+          return f;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Parses current and max Health from character file text.
+   * If charName is specified, attempts to find that character's specific health in a group file first.
+   */
+  private parseCharacterHealth(content: string, charName?: string): { prefix: string; current: number; max: number; suffix: string; rawLine: string } | null {
+    if (!content) return null;
+    const lines = content.split('\n');
+
+    // 1. If charName is specified, search for character-specific section or line in group file
+    if (charName) {
+      const lowerName = charName.trim().toLowerCase();
+      let inCharSection = false;
+
+      for (const line of lines) {
+        const lowerLine = line.toLowerCase();
+        if (lowerLine.includes(lowerName)) {
+          // Check for inline health e.g. - Goblin A: Health 15/15
+          const inlineMatch = line.match(/(\b(?:Health|HP|Hit\s*Points)[:=\s]+)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+          if (inlineMatch) {
+            const current = parseFloat(inlineMatch[2]);
+            const max = parseFloat(inlineMatch[3]);
+            if (!isNaN(current) && !isNaN(max)) {
+              return {
+                prefix: inlineMatch[1],
+                current,
+                max,
+                suffix: inlineMatch[4] || '',
+                rawLine: line
+              };
+            }
+          }
+          inCharSection = true;
+          continue;
+        }
+
+        if (inCharSection) {
+          if (line.startsWith('#') || (line.startsWith('- ') && line.includes(':') && !line.toLowerCase().includes('health') && !line.toLowerCase().includes('hp') && !line.toLowerCase().includes('status') && !line.toLowerCase().includes('energy'))) {
+            inCharSection = false;
+          } else {
+            const secMatch = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+            if (secMatch) {
+              const current = parseFloat(secMatch[2]);
+              const max = parseFloat(secMatch[3]);
+              if (!isNaN(current) && !isNaN(max)) {
+                return {
+                  prefix: secMatch[1],
+                  current,
+                  max,
+                  suffix: secMatch[4] || '',
+                  rawLine: line
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Standard character health parsing
+    for (const line of lines) {
+      const match = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+      if (match) {
+        const current = parseFloat(match[2]);
+        const max = parseFloat(match[3]);
+        if (!isNaN(current) && !isNaN(max)) {
+          return {
+            prefix: match[1],
+            current,
+            max,
+            suffix: match[4] || '',
+            rawLine: line
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Replaces or inserts the Health line in character file content with new current value.
+   */
+  private updateCharacterHealthInContent(content: string, newCurrent: number, injuryNote?: string, bodyPart?: string, charName?: string): string {
+    const parsed = this.parseCharacterHealth(content, charName);
+    let updated = content;
+    const clamped = Math.max(0, Math.round(newCurrent));
+
+    if (parsed) {
+      const finalVal = Math.min(parsed.max, clamped);
+      const isDead = finalVal === 0;
+      let suffix = parsed.suffix;
+      if (isDead) {
+        suffix = ' (Incapacitated / Slain)';
+      } else if (injuryNote && !suffix.toLowerCase().includes(injuryNote.toLowerCase())) {
+        suffix = ` (Injured: ${injuryNote})`;
+      }
+      const updatedLine = `${parsed.prefix}${finalVal} / ${parsed.max}${suffix}`;
+      updated = updated.replace(parsed.rawLine, updatedLine);
+    } else {
+      const statsHeaderIdx = updated.indexOf('[STATS & MODIFIERS]');
+      const healthLine = `\n- Health: ${clamped} / 100${injuryNote ? ` (Injured: ${injuryNote})` : ''}`;
+      if (statsHeaderIdx >= 0) {
+        const insertPos = statsHeaderIdx + '[STATS & MODIFIERS]'.length;
+        updated = updated.slice(0, insertPos) + healthLine + updated.slice(insertPos);
+      } else {
+        updated = healthLine + '\n' + updated;
+      }
+    }
+
+    // Dynamic wound / injury record in body parts or status
+    if (injuryNote || bodyPart) {
+      const injuryText = injuryNote || `Injured ${bodyPart || 'body'}`;
+      if (updated.includes('[BODY PARTS & STATUS]') || updated.includes('[BODY PARTS')) {
+        const bodyPartsHeader = updated.search(/\[BODY PARTS/i);
+        if (bodyPartsHeader >= 0) {
+          const nextSection = updated.indexOf('[', bodyPartsHeader + 12);
+          const endPos = nextSection > 0 ? nextSection : updated.length;
+          const bodySection = updated.substring(bodyPartsHeader, endPos);
+          if (bodyPart && bodySection.toLowerCase().includes(bodyPart.toLowerCase())) {
+            const bpRegex = new RegExp(`(^\\s*[-*•]?\\s*${bodyPart}[:=].*)$`, 'im');
+            if (bpRegex.test(updated)) {
+              updated = updated.replace(bpRegex, `- ${bodyPart}: ${injuryText} (Wounded)`);
+            }
+          } else {
+            const insertIdx = updated.indexOf('\n', bodyPartsHeader) + 1;
+            updated = updated.slice(0, insertIdx) + `- ${bodyPart || 'Wound'}: ${injuryText}\n` + updated.slice(insertIdx);
+          }
+        }
+      } else if (updated.includes('[STATUS EFFECTS & LORE]') || updated.includes('[STATUS EFFECTS')) {
+        const statusHeader = updated.search(/\[STATUS EFFECTS/i);
+        if (statusHeader >= 0) {
+          const insertIdx = updated.indexOf('\n', statusHeader) + 1;
+          const effectEntry = `- Injury: ${injuryText} (${clamped === 0 ? 'Lethal' : 'Active'})\n`;
+          if (!updated.includes(injuryText)) {
+            updated = updated.slice(0, insertIdx) + effectEntry + updated.slice(insertIdx);
+          }
+        }
+      }
+    }
+
+    return updated;
+  }
+
+  /**
    * Parses current and max Energy/Mana/Stamina from character file text.
    */
   private parseCharacterEnergy(content: string): { prefix: string; current: number; max: number; suffix: string; rawLine: string } | null {
@@ -1821,7 +2090,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
    * Automatically verifies and synchronizes character energy between updates,
    * narrative, and the character file. Guarantees that character energy is never forgotten.
    */
-  private syncPlayerEnergy(data: AIResponse, username?: string) {
+  private syncPlayerEnergy(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
     // 1. Locate the player's character file
@@ -1846,10 +2115,14 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     const existingEnergy = this.parseCharacterEnergy(baselineContent);
     if (!existingEnergy) return;
 
-    // 2. Extract energy delta from updates or narrative
+    // 2. Extract energy delta from updates, narrative, or auditContext
     const deltaFromUpdates = this.extractEnergyDeltaFromUpdates(data.updates || []);
     const deltaFromNarrative = this.extractEnergyDeltaFromText(data.narrative || '');
     let detectedDelta = deltaFromUpdates !== null ? deltaFromUpdates : deltaFromNarrative;
+
+    if (detectedDelta === null && auditContext?.energyAudit && typeof auditContext.energyAudit.expectedChange === 'number') {
+      detectedDelta = auditContext.energyAudit.expectedChange;
+    }
 
     // 2b. Check if action or narrative used an ability or attack from character file with an explicit stamina/energy cost
     if (detectedDelta === null && existingContent) {
@@ -1961,6 +2234,533 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             }
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Extracts health changes from updates array.
+   */
+  private extractHealthDeltasFromUpdates(updates: UpdateItem[]): { target?: string; delta: number; type: 'damage' | 'heal' }[] {
+    if (!updates || !Array.isArray(updates)) return [];
+    const deltas: { target?: string; delta: number; type: 'damage' | 'heal' }[] = [];
+
+    for (const u of updates) {
+      const text = (u.text || '').toLowerCase();
+      const val = typeof u.value === 'number' ? u.value : null;
+
+      if (u.type === 'stat' || u.category === 'health' || text.includes('health') || text.includes('hp') || text.includes('damage')) {
+        if (val !== null && val !== 0 && (u.category === 'health' || text.includes('health') || text.includes('hp'))) {
+          let target: string | undefined;
+          const colonIdx = u.text.indexOf(':');
+          if (colonIdx > 0 && !u.text.toLowerCase().startsWith('health') && !u.text.toLowerCase().startsWith('hp')) {
+            target = u.text.substring(0, colonIdx).trim();
+          }
+          deltas.push({
+            target,
+            delta: val,
+            type: val < 0 ? 'damage' : 'heal'
+          });
+          continue;
+        }
+
+        const numMatch = u.text.match(/([+-]?\s*\d+(?:\.\d+)?)\s*(?:health|hp|damage)/i) ||
+                         u.text.match(/(?:health|hp|damage)[:\s]*([+-]?\s*\d+(?:\.\d+)?)/i);
+        if (numMatch) {
+          const extracted = parseFloat(numMatch[1].replace(/\s+/g, ''));
+          if (!isNaN(extracted) && extracted !== 0) {
+            const isDamage = text.includes('damage') || text.includes('hurt') || text.includes('wound') || extracted < 0;
+            const delta = isDamage ? -Math.abs(extracted) : Math.abs(extracted);
+            let target: string | undefined;
+            const colonIdx = u.text.indexOf(':');
+            if (colonIdx > 0 && !u.text.toLowerCase().startsWith('health') && !u.text.toLowerCase().startsWith('hp')) {
+              target = u.text.substring(0, colonIdx).trim();
+            }
+            deltas.push({
+              target,
+              delta,
+              type: delta < 0 ? 'damage' : 'heal'
+            });
+          }
+        }
+      }
+    }
+
+    return deltas;
+  }
+
+  /**
+   * Extracts explicit damage and healing events from narrative text.
+   */
+  private extractHealthDeltasFromNarrative(text: string, activePlayerName?: string): { target?: string; delta: number; type: 'damage' | 'heal'; damageType?: string; bodyPart?: string; injury?: string }[] {
+    if (!text) return [];
+    const results: { target?: string; delta: number; type: 'damage' | 'heal'; damageType?: string; bodyPart?: string; injury?: string }[] = [];
+
+    // 1. Bracketed combat / damage / health tags:
+    const bracketRegex = /\[(?:Damage|Combat|Health|HP)[:\s]*([^\]]+)\]/gi;
+    let bMatch;
+    while ((bMatch = bracketRegex.exec(text)) !== null) {
+      const inner = bMatch[1];
+      const numMatch = inner.match(/([+-]?\s*\d+(?:\.\d+)?)/);
+      if (numMatch) {
+        const val = parseFloat(numMatch[1].replace(/\s+/g, ''));
+        if (!isNaN(val) && val !== 0) {
+          const isHeal = inner.toLowerCase().includes('heal') || inner.toLowerCase().includes('recov') || (val > 0 && !inner.toLowerCase().includes('damage'));
+          const delta = isHeal ? Math.abs(val) : -Math.abs(val);
+          let target: string | undefined;
+          const tMatch = inner.match(/^([A-Za-z0-9\s'-]+?)\s*[:\-–]/i) || inner.match(/(?:to|against|on)\s+([A-Za-z0-9\s'-]+)/i);
+          if (tMatch) target = tMatch[1].trim();
+          results.push({
+            target: target || activePlayerName,
+            delta,
+            type: delta < 0 ? 'damage' : 'heal'
+          });
+        }
+      }
+    }
+
+    // 2. Pattern: "[Target] takes/suffers/is hit for/is struck for X points of [type] damage"
+    const takesDamageRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:takes?|suffers?|is struck for|is hit for)\s+(\d+(?:\.\d+)?)\s*(?:points of\s+)?(?:([a-zA-Z]+)\s+)?damage(?:\s+(?:to|across|in)\s+(?:his|her|their|the)\s+([a-zA-Z\s]+?)(?:[,.\n]|$))?/gi;
+    let tdMatch;
+    while ((tdMatch = takesDamageRegex.exec(text)) !== null) {
+      const rawTarget = tdMatch[1] ? tdMatch[1].trim() : undefined;
+      const amount = parseFloat(tdMatch[2]);
+      const damageType = tdMatch[3] || undefined;
+      const bodyPart = tdMatch[4] ? tdMatch[4].trim() : undefined;
+
+      const cleanedTarget = (rawTarget && !['he', 'she', 'it', 'they', 'you', 'who', 'which', 'and', 'then'].includes(rawTarget.toLowerCase()))
+        ? rawTarget
+        : activePlayerName;
+
+      if (!isNaN(amount) && amount > 0) {
+        results.push({
+          target: cleanedTarget,
+          delta: -amount,
+          type: 'damage',
+          damageType,
+          bodyPart,
+          injury: bodyPart ? `${damageType || ''} wound to ${bodyPart}`.trim() : undefined
+        });
+      }
+    }
+
+    // 3. Pattern: "deals/inflicts X points of [type] damage to [Target]"
+    const dealsDamageRegex = /(?:deals?|dealt?|inflicts?|inflicted)\s+(\d+(?:\.\d+)?)\s*(?:points of\s+)?(?:([a-zA-Z]+)\s+)?damage\s+(?:to|on|against)\s+([A-Za-z0-9\s'-]{2,25})/gi;
+    let ddMatch;
+    while ((ddMatch = dealsDamageRegex.exec(text)) !== null) {
+      const amount = parseFloat(ddMatch[1]);
+      const damageType = ddMatch[2] || undefined;
+      const rawTarget = ddMatch[3] ? ddMatch[3].trim().replace(/[.,;].*$/, '') : undefined;
+
+      if (!isNaN(amount) && amount > 0 && rawTarget) {
+        results.push({
+          target: rawTarget,
+          delta: -amount,
+          type: 'damage',
+          damageType
+        });
+      }
+    }
+
+    // 4. Pattern: "[Target] loses X HP / health / hit points"
+    const losesHpRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:loses?|lost)\s+(\d+(?:\.\d+)?)\s*(?:HP|health|hit points)/gi;
+    let lMatch;
+    while ((lMatch = losesHpRegex.exec(text)) !== null) {
+      const rawTarget = lMatch[1] ? lMatch[1].trim() : activePlayerName;
+      const amount = parseFloat(lMatch[2]);
+      if (!isNaN(amount) && amount > 0) {
+        results.push({
+          target: rawTarget,
+          delta: -amount,
+          type: 'damage'
+        });
+      }
+    }
+
+    // 5. Pattern: "[Target] heals/recovers/regains X HP / health / hit points"
+    const healsHpRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:heals?|recovers?|regains?|restores?)\s+(\d+(?:\.\d+)?)\s*(?:HP|health|hit points)/gi;
+    let hMatch;
+    while ((hMatch = healsHpRegex.exec(text)) !== null) {
+      const rawTarget = hMatch[1] ? hMatch[1].trim() : activePlayerName;
+      const amount = parseFloat(hMatch[2]);
+      if (!isNaN(amount) && amount > 0) {
+        results.push({
+          target: rawTarget,
+          delta: amount,
+          type: 'heal'
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Automatically verifies and synchronizes character and entity Health, damage, and healing.
+   * Guarantees that health changes are never forgotten and always written to disk files.
+   */
+  private syncCharacterHealth(data: AIResponse, username?: string, auditContext?: any) {
+    if (!data) return;
+
+    // 1. Gather all damage / healing events
+    const healthEvents: {
+      target?: string;
+      targetFile?: string;
+      delta: number;
+      type: 'damage' | 'heal';
+      damageType?: string;
+      bodyPart?: string;
+      injury?: string;
+    }[] = [];
+
+    // From auditContext (Phase 1 logic audit)
+    if (auditContext?.healthAudit?.damageAndHealing && Array.isArray(auditContext.healthAudit.damageAndHealing)) {
+      for (const ev of auditContext.healthAudit.damageAndHealing) {
+        if (ev && typeof ev.amount === 'number' && ev.amount > 0) {
+          const delta = ev.type === 'heal' ? ev.amount : -Math.abs(ev.amount);
+          healthEvents.push({
+            target: ev.target,
+            targetFile: ev.targetFile,
+            delta,
+            type: ev.type || 'damage',
+            damageType: ev.damageType,
+            bodyPart: ev.bodyPart,
+            injury: ev.injury
+          });
+        }
+      }
+    }
+
+    // From data.healthTransactions
+    if (data.healthTransactions && Array.isArray(data.healthTransactions)) {
+      for (const tx of data.healthTransactions) {
+        if (tx && typeof tx.amount === 'number' && tx.amount > 0) {
+          const delta = tx.operation === 'heal' ? tx.amount : -Math.abs(tx.amount);
+          healthEvents.push({
+            target: tx.target,
+            delta,
+            type: tx.operation || 'damage',
+            damageType: tx.damageType,
+            bodyPart: tx.bodyPart,
+            injury: tx.injury
+          });
+        }
+      }
+    }
+
+    // From data.updates
+    if (data.updates && Array.isArray(data.updates)) {
+      const updateDeltas = this.extractHealthDeltasFromUpdates(data.updates);
+      for (const ud of updateDeltas) {
+        const exists = healthEvents.some(h => 
+          (!ud.target || !h.target || h.target.toLowerCase() === ud.target.toLowerCase()) &&
+          Math.sign(h.delta) === Math.sign(ud.delta) &&
+          Math.abs(h.delta) === Math.abs(ud.delta)
+        );
+        if (!exists) {
+          healthEvents.push(ud);
+        }
+      }
+    }
+
+    // From narrative text
+    if (data.narrative && typeof data.narrative === 'string') {
+      const narrativeDeltas = this.extractHealthDeltasFromNarrative(data.narrative);
+      for (const nd of narrativeDeltas) {
+        const exists = healthEvents.some(h => 
+          (!nd.target || !h.target || h.target.toLowerCase() === nd.target.toLowerCase()) &&
+          Math.sign(h.delta) === Math.sign(nd.delta) &&
+          Math.abs(h.delta) === Math.abs(nd.delta)
+        );
+        if (!exists) {
+          healthEvents.push(nd);
+        }
+      }
+    }
+
+    if (healthEvents.length === 0) return;
+
+    // 2. Process each event and reconcile character health
+    const playerFile = this.findPlayerCharacterFile(username, data.files);
+
+    for (const event of healthEvents) {
+      let targetFile = event.targetFile;
+      if (!targetFile && event.target) {
+        targetFile = this.findCharacterOrEntityFile(event.target, data.files);
+      }
+      if (!targetFile) {
+        targetFile = playerFile || null;
+      }
+      if (!targetFile) continue;
+
+      // Determine baseline content
+      const baselineContent = this.fs.read(targetFile);
+      const incomingRaw = data.files && data.files[targetFile]
+        ? (typeof data.files[targetFile] === 'string' ? data.files[targetFile] : (data.files[targetFile] as any).content)
+        : null;
+
+      const existingContent = incomingRaw || baselineContent;
+      if (!existingContent || typeof existingContent !== 'string') continue;
+
+      const existingHealth = this.parseCharacterHealth(baselineContent || existingContent, event.target);
+      if (!existingHealth) continue;
+
+      let alreadyUpdated = false;
+      let newCurrent = existingHealth.current;
+
+      if (incomingRaw && typeof incomingRaw === 'string' && baselineContent) {
+        const incomingHealth = this.parseCharacterHealth(incomingRaw, event.target);
+        if (incomingHealth) {
+          if (event.delta < 0 && incomingHealth.current < existingHealth.current) {
+            alreadyUpdated = true;
+            newCurrent = incomingHealth.current;
+          } else if (event.delta > 0 && incomingHealth.current > existingHealth.current) {
+            alreadyUpdated = true;
+            newCurrent = incomingHealth.current;
+          }
+        }
+      }
+
+      if (!alreadyUpdated) {
+        // The AI forgot to update health or omitted the file! Auto-correct it!
+        newCurrent = Math.max(0, Math.min(existingHealth.max, Math.round(existingHealth.current + event.delta)));
+        const updatedContent = this.updateCharacterHealthInContent(
+          incomingRaw || existingContent,
+          newCurrent,
+          event.injury || (event.delta < 0 ? `${Math.abs(event.delta)} damage taken` : undefined),
+          event.bodyPart,
+          event.target
+        );
+
+        if (!data.files || typeof data.files !== 'object') data.files = {};
+        if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+          (data.files[targetFile] as any).content = updatedContent;
+        } else {
+          data.files[targetFile] = updatedContent;
+        }
+      }
+
+      // Check if player died -> gameOver
+      if (newCurrent === 0 && (targetFile === playerFile || (username && targetFile.toLowerCase().includes(username.toLowerCase())))) {
+        data.gameOver = true;
+      }
+
+      // Ensure data.updates has a stat change entry
+      if (!data.updates) data.updates = [];
+      const hasUpdate = data.updates.some(u => 
+        u.text && (u.text.toLowerCase().includes('health') || u.text.toLowerCase().includes('hp')) &&
+        (typeof u.value === 'number' && Math.sign(u.value) === Math.sign(event.delta))
+      );
+      if (!hasUpdate) {
+        const charLabel = event.target || (targetFile === playerFile ? 'Health' : targetFile.replace(/\.txt$/, ''));
+        data.updates.push({
+          type: 'stat',
+          text: `${charLabel} ${event.delta > 0 ? '+' : ''}${event.delta} HP (${newCurrent}/${existingHealth.max})`,
+          value: event.delta,
+          category: 'health'
+        });
+      }
+
+      // Synchronize Master Stat Table in Guide.txt
+      const guideKey = data.files && data.files['Guide.txt'] ? 'Guide.txt' : (this.fs.read('Guide.txt') ? 'Guide.txt' : null);
+      if (guideKey) {
+        const rawGuide = data.files && data.files['Guide.txt']
+          ? (typeof data.files['Guide.txt'] === 'string' ? data.files['Guide.txt'] : (data.files['Guide.txt'] as any).content)
+          : this.fs.read('Guide.txt');
+
+        if (typeof rawGuide === 'string' && rawGuide.length > 0) {
+          const charBaseName = (event.target || targetFile.replace(/\.txt$/, '').split('-')[0]).trim();
+          if (charBaseName && rawGuide.includes(charBaseName)) {
+            const lines = rawGuide.split('\n');
+            let modifiedGuide = false;
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (line.includes(charBaseName) && (line.includes('|') || line.toLowerCase().includes('health'))) {
+                const hpPattern = /(\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\b)/g;
+                const matches = Array.from(line.matchAll(hpPattern));
+                if (matches.length >= 1) {
+                  const firstMatch = matches[0];
+                  const oldHpStr = firstMatch[0];
+                  const maxVal = oldHpStr.split('/')[1].trim();
+                  lines[i] = line.replace(oldHpStr, `${newCurrent}/${maxVal}`);
+                  modifiedGuide = true;
+                } else if (line.toLowerCase().includes('health') || line.toLowerCase().includes('hp')) {
+                  const singleMatch = line.match(/((?:health|hp)[:=\s]+)(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?/i);
+                  if (singleMatch) {
+                    const maxVal = singleMatch[3] || existingHealth.max;
+                    lines[i] = line.replace(singleMatch[0], `Health: ${newCurrent}/${maxVal}`);
+                    modifiedGuide = true;
+                  }
+                }
+              }
+            }
+            if (modifiedGuide) {
+              const updatedGuide = lines.join('\n');
+              if (!data.files || typeof data.files !== 'object') data.files = {};
+              if (typeof data.files['Guide.txt'] === 'object' && (data.files['Guide.txt'] as any).content !== undefined) {
+                (data.files['Guide.txt'] as any).content = updatedGuide;
+              } else {
+                data.files['Guide.txt'] = updatedGuide;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Decrements or consumes items like potions, arrows, bandages, or rations used during a turn.
+   */
+  private syncConsumableUsage(data: AIResponse, username?: string) {
+    if (!data || !data.narrative) return;
+    const narrative = data.narrative.toLowerCase();
+
+    const consumablePatterns = [
+      { pattern: /(?:drinks?|quaffs?|chugs?|consumes?)\s+(?:a\s+|an\s+)?(?:potion|draught|elixir|brew)\s+of\s+([a-zA-Z\s]+)/i, itemMatch: 'potion' },
+      { pattern: /(?:drinks?|quaffs?|chugs?|consumes?)\s+(?:a\s+|an\s+)?([a-zA-Z\s]+potion)/i, itemMatch: 'potion' },
+      { pattern: /(?:fires?|shoots?|looses?)\s+(\d+)?\s*(?:arrows?|bolts?)/i, itemMatch: 'arrow' },
+      { pattern: /(?:uses?|applies?|wraps?)\s+(?:a\s+|an\s+)?(?:bandage|clean cloth|splint)/i, itemMatch: 'bandage' },
+      { pattern: /(?:eats?|consumes?)\s+(?:a\s+|some\s+)?(?:ration|food|bread|meat)/i, itemMatch: 'ration' }
+    ];
+
+    const playerFile = this.findPlayerCharacterFile(username, data.files);
+    if (!playerFile) return;
+
+    let content = data.files && data.files[playerFile]
+      ? (typeof data.files[playerFile] === 'string' ? data.files[playerFile] : (data.files[playerFile] as any).content)
+      : this.fs.read(playerFile);
+    if (!content || typeof content !== 'string') return;
+
+    for (const cp of consumablePatterns) {
+      const match = narrative.match(cp.pattern);
+      if (match) {
+        const keyword = cp.itemMatch;
+        const lines = content.split('\n');
+        let itemIndex = -1;
+        let itemLine = '';
+
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i];
+          if (l.toLowerCase().includes(keyword) && (l.includes('- ') || l.includes('* '))) {
+            itemIndex = i;
+            itemLine = l;
+            break;
+          }
+        }
+
+        if (itemIndex >= 0) {
+          const countMatch = itemLine.match(/[\(\[]\s*(?:x\s*)?(\d+)\s*(?:arrows?|count|remaining|units)?\s*[\)\]]/i) ||
+                             itemLine.match(/x\s*(\d+)/i) ||
+                             itemLine.match(/(\d+)\s*(?:arrows?|charges|doses|units)/i);
+          let newContent = content;
+
+          if (countMatch) {
+            const currentCount = parseInt(countMatch[1]);
+            const deduction = match[1] && !isNaN(parseInt(match[1])) ? parseInt(match[1]) : 1;
+            const newCount = Math.max(0, currentCount - deduction);
+            if (newCount > 0) {
+              const updatedLine = itemLine.replace(countMatch[0], `(${newCount} remaining)`);
+              lines[itemIndex] = updatedLine;
+              newContent = lines.join('\n');
+            } else {
+              lines.splice(itemIndex, 1);
+              newContent = lines.join('\n');
+            }
+          } else {
+            lines.splice(itemIndex, 1);
+            newContent = lines.join('\n');
+          }
+
+          if (newContent !== content) {
+            if (!data.files) data.files = {};
+            if (typeof data.files[playerFile] === 'object' && (data.files[playerFile] as any).content !== undefined) {
+              (data.files[playerFile] as any).content = newContent;
+            } else {
+              data.files[playerFile] = newContent;
+            }
+            content = newContent;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Synchronizes active status conditions (poisoned, bleeding, stunned, prone, burning)
+   * or cures mentioned in narrative onto character files.
+   */
+  private syncStatusEffects(data: AIResponse, username?: string) {
+    if (!data || !data.narrative) return;
+    const narrative = data.narrative;
+    const lowerNarrative = narrative.toLowerCase();
+
+    const conditions = [
+      { name: 'Poisoned', patterns: [/is poisoned/i, /inflicted with poison/i, /venom surges/i, /succumbs to the venom/i, /takes poison damage/i] },
+      { name: 'Burning', patterns: [/catches fire/i, /engulfed in flames/i, /ignited/i, /burning/i] },
+      { name: 'Bleeding', patterns: [/is bleeding/i, /bleeds heavily/i, /arterial spray/i, /deep bleeding gash/i] },
+      { name: 'Stunned', patterns: [/is stunned/i, /dazed and reels/i, /knocked senseless/i] },
+      { name: 'Prone', patterns: [/knocked prone/i, /falls to the ground/i, /knocked to the floor/i, /tripped/i] },
+      { name: 'Blinded', patterns: [/is blinded/i, /eyes burned/i, /loses sight/i] },
+    ];
+
+    const recoveries = [
+      { name: 'Poisoned', patterns: [/cured of poison/i, /poison neutral/i, /antidote takes effect/i] },
+      { name: 'Burning', patterns: [/puts out the fire/i, /extinguishes the flames/i, /smothers the fire/i] },
+      { name: 'Bleeding', patterns: [/bleeding is staunched/i, /bandaged the wound/i, /stops the bleeding/i] },
+      { name: 'Prone', patterns: [/stands back up/i, /scrambles to their feet/i, /rises to feet/i] }
+    ];
+
+    const playerFile = this.findPlayerCharacterFile(username, data.files);
+    if (!playerFile) return;
+
+    let content = data.files && data.files[playerFile]
+      ? (typeof data.files[playerFile] === 'string' ? data.files[playerFile] : (data.files[playerFile] as any).content)
+      : this.fs.read(playerFile);
+    if (!content || typeof content !== 'string') return;
+
+    let modified = false;
+
+    // Process recoveries first
+    for (const rec of recoveries) {
+      if (rec.patterns.some(p => p.test(lowerNarrative))) {
+        const statusRegex = new RegExp(`\\[Status:${rec.name}[^\\]]*\\]`, 'gi');
+        if (statusRegex.test(content)) {
+          content = content.replace(statusRegex, '');
+          modified = true;
+        }
+        const lineRegex = new RegExp(`^\\s*[-*•]?\\s*(?:Status\\s*Effect|Effect)?[:=]?\\s*${rec.name}.*$`, 'gim');
+        if (lineRegex.test(content)) {
+          content = content.replace(lineRegex, '');
+          modified = true;
+        }
+      }
+    }
+
+    // Process afflictions
+    for (const cond of conditions) {
+      if (cond.patterns.some(p => p.test(lowerNarrative))) {
+        if (!content.toLowerCase().includes(`status:${cond.name.toLowerCase()}`) && !content.toLowerCase().includes(`- ${cond.name.toLowerCase()}`)) {
+          const statusTag = `\n- [Status:${cond.name}(Active)]`;
+          if (content.includes('[STATUS EFFECTS & LORE]')) {
+            const idx = content.indexOf('[STATUS EFFECTS & LORE]') + '[STATUS EFFECTS & LORE]'.length;
+            content = content.slice(0, idx) + statusTag + content.slice(idx);
+            modified = true;
+          } else if (content.includes('[STATS & MODIFIERS]')) {
+            const idx = content.indexOf('[STATS & MODIFIERS]') + '[STATS & MODIFIERS]'.length;
+            content = content.slice(0, idx) + statusTag + content.slice(idx);
+            modified = true;
+          }
+        }
+      }
+    }
+
+    if (modified) {
+      if (!data.files) data.files = {};
+      if (typeof data.files[playerFile] === 'object' && (data.files[playerFile] as any).content !== undefined) {
+        (data.files[playerFile] as any).content = content;
+      } else {
+        data.files[playerFile] = content;
       }
     }
   }
@@ -2294,14 +3094,23 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
+    // Ensure character health, wounds, damage, and healing are always properly updated and in sync
+    this.syncCharacterHealth(data, username, auditContext);
+
     // Ensure character energy is always properly updated and in sync
-    this.syncPlayerEnergy(data, username);
+    this.syncPlayerEnergy(data, username, auditContext);
 
     // Ensure items added or placed in containers are properly reflected
     this.syncPlayerInventory(data, username, auditContext);
 
     // Ensure currency transactions and balance changes are synchronized
     this.syncPlayerCurrency(data, username, auditContext);
+
+    // Ensure consumable items (potions, arrows, bandages, rations) are properly decremented
+    this.syncConsumableUsage(data, username);
+
+    // Ensure status conditions (poisoned, bleeding, stunned, prone, burning) are reflected
+    this.syncStatusEffects(data, username);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username
@@ -2329,33 +3138,21 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
       }
 
-      // ==================== ADD MAP MERGE GUARD HERE ====================
-      if (data.files['CurrentMap.json'] && this.lastValidMap) {
+      // ==================== ENHANCED MAP MERGE GUARD ====================
+      if (data.files['CurrentMap.json']) {
         try {
           const rawIncoming = (data.files['CurrentMap.json'] as any)?.content ?? data.files['CurrentMap.json'];
           const incomingStr = typeof rawIncoming === 'object' ? JSON.stringify(rawIncoming) : String(rawIncoming);
-          const newMap = JSON.parse(incomingStr);
-          const oldMap = JSON.parse(this.lastValidMap);
+          const incomingParsed = JSON.parse(incomingStr);
+          const mergedMap = this.mergeAndNormalizeMap(incomingParsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+          const mergedJson = JSON.stringify(mergedMap, null, 2);
 
-          const oldPages = oldMap.pages || (oldMap.areas ? [oldMap] : []);
-          const newPages = newMap.pages || (newMap.areas ? [newMap] : []);
-
-          // Preserve pages that were present in oldMap but omitted by the AI
-          if (oldPages.length > 1 && newPages.length > 0) {
-            const returnedNames = new Set(newPages.map((p: any) => p.name?.toLowerCase()));
-            const missingPages = oldPages.filter((p: any) => !returnedNames.has(p.name?.toLowerCase()));
-
-            if (missingPages.length > 0) {
-              newMap.pages = [...newPages, ...missingPages];
-              const mergedJson = JSON.stringify(newMap);
-
-              if (typeof data.files['CurrentMap.json'] === 'object' && (data.files['CurrentMap.json'] as any).content !== undefined) {
-                (data.files['CurrentMap.json'] as any).content = mergedJson;
-              } else {
-                data.files['CurrentMap.json'] = mergedJson;
-              }
-            }
+          if (typeof data.files['CurrentMap.json'] === 'object' && (data.files['CurrentMap.json'] as any).content !== undefined) {
+            (data.files['CurrentMap.json'] as any).content = mergedJson;
+          } else {
+            data.files['CurrentMap.json'] = mergedJson;
           }
+          this.lastValidMap = mergedJson;
         } catch (e) {
           console.error("Map merge guard failed", e);
         }
@@ -2429,7 +3226,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
    * If the new content is invalid, attempts repair. If repair fails,
    * merges the old valid map data with any salvageable new data.
    */
-/**
+  /**
    * Normalizes arbitrary AI map output structures into a standard { pages: [...] } schema.
    * Handles top-level page wrappers, arrays of pages, and legacy single-map flat objects.
    */
@@ -2453,16 +3250,198 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   }
 
   /**
+   * Deeply merges incoming AI map with previous valid map and file system character states.
+   * Ensures players, landmarks, NPCs, items, and areas are not inadvertently omitted or deleted.
+   */
+  private mergeAndNormalizeMap(incomingParsed: any, oldMapStr: string | null): any {
+    const normalized = this.normalizeMapStructure(incomingParsed);
+    if (!normalized.pages || normalized.pages.length === 0) {
+      normalized.pages = [{ name: 'World Map', areas: [], players: [], items: [], landmarks: [] }];
+    }
+
+    // Distribute root-level entities to page 0 if present
+    if (Array.isArray((incomingParsed as any)?.players) && (incomingParsed as any).players.length > 0) {
+      if (!Array.isArray(normalized.pages[0].players) || normalized.pages[0].players.length === 0) {
+        normalized.pages[0].players = (incomingParsed as any).players;
+      }
+    }
+    if (Array.isArray((incomingParsed as any)?.items) && (incomingParsed as any).items.length > 0) {
+      if (!Array.isArray(normalized.pages[0].items) || normalized.pages[0].items.length === 0) {
+        normalized.pages[0].items = (incomingParsed as any).items;
+      }
+    }
+    if (Array.isArray((incomingParsed as any)?.landmarks) && (incomingParsed as any).landmarks.length > 0) {
+      if (!Array.isArray(normalized.pages[0].landmarks) || normalized.pages[0].landmarks.length === 0) {
+        normalized.pages[0].landmarks = (incomingParsed as any).landmarks;
+      }
+    }
+    if (Array.isArray((incomingParsed as any)?.npcs) && (incomingParsed as any).npcs.length > 0) {
+      if (!Array.isArray(normalized.pages[0].npcs) || normalized.pages[0].npcs.length === 0) {
+        normalized.pages[0].npcs = (incomingParsed as any).npcs;
+      }
+    }
+
+    let oldMap: any = null;
+    if (oldMapStr) {
+      try {
+        const rawOld = typeof oldMapStr === 'object' ? oldMapStr : JSON.parse(oldMapStr);
+        oldMap = this.normalizeMapStructure(rawOld);
+      } catch (e) {
+        // ignore parse error of old map
+      }
+    }
+
+    if (oldMap && Array.isArray(oldMap.pages)) {
+      // 1. Preserve pages that were present in oldMap but missing in newMap
+      const returnedNames = new Set(normalized.pages.map((p: any) => (p.name || '').trim().toLowerCase()));
+      for (const oldPage of oldMap.pages) {
+        const oldName = (oldPage.name || '').trim().toLowerCase();
+        if (oldName && !returnedNames.has(oldName)) {
+          normalized.pages.push(oldPage);
+          returnedNames.add(oldName);
+        }
+      }
+
+      // 2. Intra-page entity and player merging
+      for (let i = 0; i < normalized.pages.length; i++) {
+        const newPage = normalized.pages[i];
+        const pageName = (newPage.name || '').trim().toLowerCase();
+        const matchingOldPage = oldMap.pages.find((p: any) => (p.name || '').trim().toLowerCase() === pageName) || (i === 0 ? oldMap.pages[0] : null);
+
+        if (matchingOldPage) {
+          // Merge Players: ensure no player from oldPage is dropped
+          if (Array.isArray(matchingOldPage.players) && matchingOldPage.players.length > 0) {
+            if (!Array.isArray(newPage.players)) {
+              newPage.players = [];
+            }
+            const newPlayerNames = new Set(newPage.players.map((p: any) => (p.username || p.name || '').trim().toLowerCase()));
+            for (const oldPlayer of matchingOldPage.players) {
+              const oldUName = (oldPlayer.username || oldPlayer.name || '').trim().toLowerCase();
+              if (oldUName && !newPlayerNames.has(oldUName)) {
+                newPage.players.push(oldPlayer);
+                newPlayerNames.add(oldUName);
+              }
+            }
+          }
+
+          // Merge Landmarks: ensure persistent landmarks aren't dropped
+          if (Array.isArray(matchingOldPage.landmarks) && matchingOldPage.landmarks.length > 0) {
+            if (!Array.isArray(newPage.landmarks)) {
+              newPage.landmarks = [];
+            }
+            const newLandmarkNames = new Set(newPage.landmarks.map((l: any) => (l.name || '').trim().toLowerCase()));
+            for (const oldLm of matchingOldPage.landmarks) {
+              const oldLmName = (oldLm.name || '').trim().toLowerCase();
+              if (oldLmName && !newLandmarkNames.has(oldLmName)) {
+                newPage.landmarks.push(oldLm);
+                newLandmarkNames.add(oldLmName);
+              }
+            }
+          }
+
+          // Merge NPCs: ensure persistent NPCs aren't dropped
+          if (Array.isArray(matchingOldPage.npcs)) {
+            if (!Array.isArray(newPage.npcs)) {
+              newPage.npcs = [];
+            }
+            const newNpcNames = new Set(newPage.npcs.map((n: any) => (n.name || '').trim().toLowerCase()));
+            for (const oldNpc of matchingOldPage.npcs) {
+              const oldNpcName = (oldNpc.name || '').trim().toLowerCase();
+              if (oldNpcName && !newNpcNames.has(oldNpcName)) {
+                newPage.npcs.push(oldNpc);
+                newNpcNames.add(oldNpcName);
+              }
+            }
+          }
+
+          // Merge Areas: if new page has 0 areas, preserve old areas
+          if (Array.isArray(matchingOldPage.areas) && matchingOldPage.areas.length > 0) {
+            if (!Array.isArray(newPage.areas) || newPage.areas.length === 0) {
+              newPage.areas = matchingOldPage.areas;
+            } else {
+              const newAreaKeys = new Set(newPage.areas.map((a: any) => (a.id || a.name || '').trim().toLowerCase()));
+              for (const oldArea of matchingOldPage.areas) {
+                const areaKey = (oldArea.id || oldArea.name || '').trim().toLowerCase();
+                if (areaKey && !newAreaKeys.has(areaKey)) {
+                  newPage.areas.push(oldArea);
+                  newAreaKeys.add(areaKey);
+                }
+              }
+            }
+          }
+
+          // Merge Items: if items existed on old page and aren't in new page, preserve
+          if (Array.isArray(matchingOldPage.items) && matchingOldPage.items.length > 0) {
+            if (!Array.isArray(newPage.items)) {
+              newPage.items = [];
+            }
+            const newItemNames = new Set(newPage.items.map((it: any) => (it.name || '').trim().toLowerCase()));
+            for (const oldIt of matchingOldPage.items) {
+              const itName = (oldIt.name || '').trim().toLowerCase();
+              if (itName && !newItemNames.has(itName)) {
+                newPage.items.push(oldIt);
+                newItemNames.add(itName);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. File-System Player Verification:
+    // Ensure every player with a character file is on AT LEAST ONE map page
+    try {
+      const allFiles = this.fs.listFiles();
+      const characterFiles = allFiles.filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
+      
+      const allMapUsernames = new Set<string>();
+      for (const p of normalized.pages) {
+        if (Array.isArray(p.players)) {
+          for (const pl of p.players) {
+            const u = (pl.username || pl.name || '').trim().toLowerCase();
+            if (u) allMapUsernames.add(u);
+          }
+        }
+      }
+
+      for (const cf of characterFiles) {
+        const parts = cf.replace(/\.txt$/, '').split('-');
+        const charUsername = parts[parts.length - 1].trim();
+        const charName = parts.slice(0, -1).join('-').trim();
+        
+        if (charUsername && !allMapUsernames.has(charUsername.toLowerCase())) {
+          if (!Array.isArray(normalized.pages[0].players)) {
+            normalized.pages[0].players = [];
+          }
+          const existingCount = normalized.pages[0].players.length;
+          normalized.pages[0].players.push({
+            username: charUsername,
+            characterName: charName || charUsername,
+            x: 10 + (existingCount * 8),
+            y: 15 + (existingCount * 6),
+            facing: 0
+          });
+          allMapUsernames.add(charUsername.toLowerCase());
+        }
+      }
+    } catch (err) {
+      console.warn('Player verification guard encountered non-fatal issue', err);
+    }
+
+    return normalized;
+  }
+
+  /**
    * Safely writes CurrentMap.json by validating it is proper JSON first.
    * Enforces structural schema normalization to prevent nested or corrupt arrays.
    * Attempts sequential fallback: direct parse -> repairJSON -> lastValidMap -> sanitizeJSON.
    */
   private writeMapSafe(content: string): void {
-    // 1. Direct parse attempt with normalization
+    // 1. Direct parse attempt with normalization and merging
     try {
       const parsed = JSON.parse(content);
-      const normalizedObj = this.normalizeMapStructure(parsed);
-      const normalized = JSON.stringify(normalizedObj, null, 2);
+      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+      const normalized = JSON.stringify(mergedObj, null, 2);
       this.fs.write('CurrentMap.json', normalized);
       this.lastValidMap = normalized;
       return;
@@ -2475,8 +3454,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     if (repaired) {
       try {
         const parsed = JSON.parse(repaired);
-        const normalizedObj = this.normalizeMapStructure(parsed);
-        const normalized = JSON.stringify(normalizedObj, null, 2);
+        const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+        const normalized = JSON.stringify(mergedObj, null, 2);
         this.fs.write('CurrentMap.json', normalized);
         this.lastValidMap = normalized;
         console.warn('CurrentMap.json required JSON repair — repaired and normalized successfully');
@@ -2497,8 +3476,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     try {
       const sanitized = this.sanitizeJSON(content);
       const parsed = JSON.parse(sanitized);
-      const normalizedObj = this.normalizeMapStructure(parsed);
-      const normalized = JSON.stringify(normalizedObj, null, 2);
+      const mergedObj = this.mergeAndNormalizeMap(parsed, this.lastValidMap || this.fs.read('CurrentMap.json'));
+      const normalized = JSON.stringify(mergedObj, null, 2);
       this.fs.write('CurrentMap.json', normalized);
       this.lastValidMap = normalized;
       console.warn('CurrentMap.json required sanitization — recovered and normalized successfully');

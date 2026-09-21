@@ -6,6 +6,7 @@ import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
 import { WeightInventoryEngine, CharacterPhysicalStats } from '../services/weightInventoryEngine';
+import { parseSecretLocation, formatVisibilityMarkup, isFileVisible } from '../services/visibilityEngine';
 
 interface SidebarProps {
   files: string[];
@@ -128,21 +129,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!content) return '';
     let formatted = content;
 
-    // Handle target(...) syntax safely without backtracking
-    formatted = formatted.replace(/target\(([^)]*)\)\[([^\]]*)\]/g, (match, targets, innerText) => {
-      const targetList = targets.split(',').map((t: string) => t.trim());
-      if (debugMode || targetList.includes(username)) {
-        return `<span class="text-purple-300 bg-purple-900/20 px-1 border border-dashed border-purple-800 rounded" title="Target: ${targets}">${innerText}</span>`;
-      }
-      return ''; // Hide completely for non-targets
-    });
-
-    // Handle hide[] syntax safely without backtracking
-    if (debugMode) {
-      formatted = formatted.replace(/hide\[([^\]]*)\]/g, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded">$1</span>');
-    } else {
-      formatted = formatted.replace(/hide\[[^\]]*\]/g, '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>');
-    }
+    // Use unified visibility markup formatting (supports hide:besides, hide:for, target, hide[])
+    formatted = formatVisibilityMarkup(formatted, username, debugMode);
 
     return formatted;
   };
@@ -162,27 +150,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Filter files based on hide[] and target()
+  // Filter files based on hide[], hide:besides(), hide:for(), and target()
   const visibleFiles = files.filter(filename => {
-    if (debugMode) return true;
-
-    // Check if filename has hide[]
-    if (filename.includes('hide[')) return false;
-
-    // Check if filename has target()
-    const targetMatch = filename.match(/target\((.*?)\)/);
-    if (targetMatch) {
-      const targetList = targetMatch[1].split(',').map(t => t.trim().toLowerCase());
-      if (!targetList.includes(username.toLowerCase())) return false;
-    }
-
-    // Check content for hide[] or target() that might hide the whole file
-    // For simplicity, we just check if the file is a character file of another player
-    if (filename.includes('-') && filename.endsWith('.txt') && !filename.endsWith(`-${username}.txt`) && !isHost) {
-      // Let's rely on the filename containing hide[] or target() for hiding the whole file instead of trying to guess character files.
-    }
-
-    return true;
+    return isFileVisible(filename, username, debugMode, isHost);
   });
 
   return (
@@ -888,11 +858,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                                             <span className="text-gray-300 font-mono font-medium">
                                               {pStats.currency.storedSummary}
                                             </span>
-                                            {pStats.currency.storedCurrencies.map((sc, sci) => sc.location ? (
-                                              <div key={sci} className="text-[8px] text-amber-400/90 italic truncate">
-                                                📍 {sc.location}
-                                              </div>
-                                            ) : null)}
+                                            {pStats.currency.storedCurrencies.map((sc, sci) => {
+                                              if (!sc.location) return null;
+                                              const res = parseSecretLocation(sc.location, username, debugMode);
+                                              return (
+                                                <div key={sci} className={`text-[8px] italic truncate ${res.isSecret ? (res.isVisibleToPlayer ? 'text-emerald-400 font-medium' : 'text-gray-500') : 'text-amber-400/90'}`}>
+                                                  📍 {res.displayFormatted}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         </div>
                                       )}
@@ -930,11 +904,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                                               {it.dimensions?.raw && it.dimensions.raw !== 'None' && it.dimensions.raw !== '0 lbs' ? ` (${it.dimensions.raw})` : ''}
                                             </span>
                                           </div>
-                                          {it.location && (
-                                            <div className="text-[8px] text-amber-300/80 italic pl-2 flex items-center gap-1 mt-0.5">
-                                              <span>📍 {it.isHiddenLocation ? `Secret: ${it.location}` : it.location}</span>
-                                            </div>
-                                          )}
+                                          {it.location && (() => {
+                                            const locRes = parseSecretLocation(it.location, username, debugMode);
+                                            return (
+                                              <div className="text-[8px] italic pl-2 flex items-center gap-1 mt-0.5">
+                                                <span className={locRes.isSecret ? (locRes.isVisibleToPlayer ? 'text-emerald-300 font-medium' : 'text-gray-500 font-medium') : 'text-amber-300/80'}>
+                                                  📍 {locRes.displayFormatted}
+                                                </span>
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                       ))}
                                     </div>

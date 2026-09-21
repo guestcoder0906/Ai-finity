@@ -13,6 +13,17 @@ export interface FileMetadata {
   };
 }
 
+export interface HealthTransaction {
+  target?: string;
+  amount: number;
+  operation: 'damage' | 'heal';
+  damageType?: string;
+  source?: string;
+  bodyPart?: string;
+  injury?: string;
+  rawText?: string;
+}
+
 export interface CurrencyTransaction {
   name: string;
   amount: number;
@@ -39,9 +50,10 @@ export interface UpdateItem {
   /** Numeric value associated with the update (e.g. -10) */
   value: number;
   /** High-level category for dynamic classification without hardcoded keywords */
-  category?: 'currency' | 'inventory' | 'stat' | 'energy' | 'mount' | 'time' | 'location' | 'misc';
+  category?: 'currency' | 'inventory' | 'stat' | 'energy' | 'mount' | 'time' | 'location' | 'health' | 'misc';
   currency?: CurrencyTransaction;
   inventory?: InventoryTransaction;
+  health?: HealthTransaction;
 }
 
 export interface CheckDef {
@@ -67,6 +79,7 @@ export interface AIResponse {
   recommendations?: string[];
   currencyTransactions?: CurrencyTransaction[];
   inventoryTransactions?: InventoryTransaction[];
+  healthTransactions?: HealthTransaction[];
 }
 
 export interface Message {

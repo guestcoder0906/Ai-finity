@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { NarrativeEntry } from '../types';
 import { FileSystem } from '../services/fileSystem';
+import { formatVisibilityMarkup } from '../services/visibilityEngine';
 
 interface NarrativeWindowProps {
   history: NarrativeEntry[];
@@ -20,25 +21,12 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
     }
   }, [history]);
 
-  // Helper to parse text with [Links], hide[...], and target(...)
+  // Helper to parse text with [Links], hide:besides(...), target(...), and hide[...]
   const parseText = (text: string) => {
     let processed = text;
 
-    // 1. Handle target(...)
-    processed = processed.replace(/target\((.*?)\)\[(.*?)\]/gs, (match, targets, innerText) => {
-      const targetList = targets.split(',').map((t: string) => t.trim().toLowerCase());
-      if (debugMode || targetList.includes(username.toLowerCase())) {
-        return `<span class="text-purple-300 bg-purple-900/20 px-1 border border-dashed border-purple-800 rounded" title="Target: ${targets}">${innerText}</span>`;
-      }
-      return ''; // Hide completely for non-targets
-    });
-
-    // 2. Handle hide[...]
-    if (debugMode) {
-      processed = processed.replace(/hide\[(.*?)\]/gs, (match, p1) => `<span class="bg-yellow-900/30 text-yellow-300 px-1 rounded border border-yellow-700/50 border-dashed">${p1}</span>`);
-    } else {
-      processed = processed.replace(/hide\[.*?\]/gs, '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>');
-    }
+    // 1. Handle visibility markup: hide:besides, hide:for, target, hide[]
+    processed = formatVisibilityMarkup(processed, username, debugMode);
 
     // 3. Handle Status/Effect/Outcome effects specially so they don't become clickable links
     // This catches patterns like [Status:Hidden(...)], [Effect:Poison], [Jump: Failure], [Perception: Success]

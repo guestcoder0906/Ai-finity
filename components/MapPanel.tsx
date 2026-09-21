@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import { FileSystem } from '../services/fileSystem';
 import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { resolveMapEntityName } from '../services/visibilityEngine';
 
 interface MapPanelProps {
   fileSystem: FileSystem;
@@ -146,6 +147,36 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     pages = [{ name: 'World Map', ...mapData }];
   }
 
+  // Ensure every player with a character file is represented on at least one map page
+  if (pages.length > 0) {
+    const characterFiles = (files || []).filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
+    const allUsernamesOnMap = new Set<string>();
+    pages.forEach(p => {
+      (p.players || []).forEach((pl: any) => {
+        const u = (pl.username || pl.name || '').trim().toLowerCase();
+        if (u) allUsernamesOnMap.add(u);
+      });
+    });
+
+    characterFiles.forEach(cf => {
+      const parts = cf.replace(/\.txt$/, '').split('-');
+      const charUsername = parts[parts.length - 1].trim();
+      const charName = parts.slice(0, -1).join('-').trim();
+      if (charUsername && !allUsernamesOnMap.has(charUsername.toLowerCase())) {
+        if (!pages[0].players) pages[0].players = [];
+        const offset = pages[0].players.length;
+        pages[0].players.push({
+          username: charUsername,
+          characterName: charName || charUsername,
+          x: 10 + (offset * 8),
+          y: 15 + (offset * 6),
+          facing: 0
+        });
+        allUsernamesOnMap.add(charUsername.toLowerCase());
+      }
+    });
+  }
+
   const safePageIndex = pages.length > 0 ? Math.max(0, Math.min(currentPageIndex, pages.length - 1)) : 0;
 
   // Auto-reset pan and zoom when changing pages
@@ -180,6 +211,18 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   }
 
   const currentPage = pages[safePageIndex];
+  if (currentPage) {
+    if ((!currentPage.players || currentPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
+      currentPage.players = mapData.players;
+    }
+    if ((!currentPage.items || currentPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
+      currentPage.items = mapData.items;
+    }
+    if ((!currentPage.landmarks || currentPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
+      currentPage.landmarks = mapData.landmarks;
+    }
+  }
+  const activeNpcs = (currentPage?.npcs || currentPage?.creatures || currentPage?.entities || mapData?.npcs || mapData?.creatures || []) as any[];
 
   // Pan and Zoom Handlers
   const handleResetPanZoom = () => {
@@ -284,7 +327,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     setIsDragging(false);
   };
 
-  if (!currentPage || !currentPage.areas) {
+  if (!currentPage) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500 italic p-4 text-center bg-black">
         Map data unavailable. The AI engine is generating the world...
@@ -292,35 +335,27 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     );
   }
 
+  if (!currentPage.areas) {
+    currentPage.areas = [];
+  }
+
   const parseName = (name: string) => {
     if (!name) return 'Unknown Area';
-    let processed = name;
+    const res = resolveMapEntityName(name, username, debugMode);
+    return res.displayName;
+  };
 
-    // Handle target(...)
-    processed = processed.replace(/target\((.*?)\)\[(.*?)\]/gs, (match, targets, innerText) => {
-      const targetList = targets.split(',').map((t: string) => t.trim().toLowerCase());
-      if (debugMode || targetList.includes(username?.toLowerCase())) {
-        return innerText;
-      }
-      return 'Unknown Area';
-    });
-
-    // Handle hide[...]
-    if (debugMode) {
-      processed = processed.replace(/hide\[(.*?)\]/gs, '$1 (Hidden)');
-    } else {
-      processed = processed.replace(/hide\[.*?\]/gs, 'Unknown Area');
-    }
-
-    return processed;
+  const isEntityHidden = (name: string) => {
+    if (!name) return false;
+    const res = resolveMapEntityName(name, username, debugMode);
+    return res.isHidden;
   };
 
   // Calculate bounds to scale the map dynamically
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   if (currentPage.areas && currentPage.areas.length > 0) {
     currentPage.areas.forEach((area: any) => {
-      const parsedName = parseName(area.name);
-      const isHidden = parsedName === 'Unknown Area' && !debugMode;
+      const isHidden = isEntityHidden(area.name);
       if (isHidden) return;
 
       const ax = Number(area.x ?? area.cx) || 0;
@@ -380,6 +415,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   // Also include top-level items and landmarks if present
   if (currentPage.items && Array.isArray(currentPage.items)) {
     currentPage.items.forEach((it: any) => {
+      if (isEntityHidden(it.name)) return;
       const ix = Number(it.x) || 0;
       const iy = Number(it.y) || 0;
       if (ix < minX) minX = ix;
@@ -390,12 +426,34 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   }
   if (currentPage.landmarks && Array.isArray(currentPage.landmarks)) {
     currentPage.landmarks.forEach((lm: any) => {
+      if (isEntityHidden(lm.name)) return;
       const lx = Number(lm.x) || 0;
       const ly = Number(lm.y) || 0;
       if (lx < minX) minX = lx;
       if (ly < minY) minY = ly;
       if (lx > maxX) maxX = lx;
       if (ly > maxY) maxY = ly;
+    });
+  }
+  if (activeNpcs && activeNpcs.length > 0) {
+    activeNpcs.forEach((npc: any) => {
+      if (isEntityHidden(npc.name)) return;
+      const nx = Number(npc.x) || 0;
+      const ny = Number(npc.y) || 0;
+      if (nx < minX) minX = nx;
+      if (ny < minY) minY = ny;
+      if (nx > maxX) maxX = nx;
+      if (ny > maxY) maxY = ny;
+    });
+  }
+  if (currentPage.notes && Array.isArray(currentPage.notes)) {
+    currentPage.notes.forEach((note: any) => {
+      const nx = Number(note.x) || 0;
+      const ny = Number(note.y) || 0;
+      if (nx < minX) minX = nx;
+      if (ny < minY) minY = ny;
+      if (nx > maxX) maxX = nx;
+      if (ny > maxY) maxY = ny;
     });
   }
 
@@ -563,19 +621,27 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       {/* Top Left Pages Bar */}
       {pages.length > 1 && (
         <div className="absolute top-2 left-2 flex gap-1 z-20 pointer-events-auto flex-wrap max-w-[calc(100%-260px)]">
-          {pages.map((p, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => setCurrentPageIndex(idx)}
-              className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${idx === safePageIndex
-                ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-bold'
-                : 'bg-black/70 border-neutral-800 text-gray-400 hover:bg-neutral-800'
-                }`}
-            >
-              {p.name || `Page ${idx + 1}`}
-            </button>
-          ))}
+          {pages.map((p, idx) => {
+            const pagePlayerCount = p.players?.length || 0;
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setCurrentPageIndex(idx)}
+                className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors flex items-center gap-1 ${idx === safePageIndex
+                  ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-bold'
+                  : 'bg-black/70 border-neutral-800 text-gray-400 hover:bg-neutral-800'
+                  }`}
+              >
+                <span>{p.name || `Page ${idx + 1}`}</span>
+                {pagePlayerCount > 0 && (
+                  <span className="text-[8px] bg-blue-500/20 text-blue-300 px-1 rounded-full border border-blue-500/40">
+                    {pagePlayerCount}👤
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -655,10 +721,9 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         >
           {/* Draw Areas & Structures */}
           {currentPage.areas?.map((area: any, i: number) => {
-            const parsedName = parseName(area.name);
-            const isHidden = parsedName === 'Unknown Area' && !debugMode;
-
+            const isHidden = isEntityHidden(area.name);
             if (isHidden) return null;
+            const parsedName = parseName(area.name);
 
             const ax = Number(area.x ?? area.cx) || 0;
             const ay = Number(area.y ?? area.cy) || 0;
@@ -783,6 +848,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
           {/* Draw Top-Level Items (if separately registered on page) */}
           {currentPage.items?.map((item: any, i: number) => {
+            if (isEntityHidden(item.name)) return null;
             const ix = Number(item.x) || 0;
             const iy = Number(item.y) || 0;
             const iName = parseName(item.name || 'Item');
@@ -817,6 +883,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
           {/* Draw Top-Level Landmarks (if separately registered on page) */}
           {currentPage.landmarks?.map((lm: any, i: number) => {
+            if (isEntityHidden(lm.name)) return null;
             const lx = Number(lm.x) || 0;
             const ly = Number(lm.y) || 0;
             const lName = parseName(lm.name || 'Landmark');
@@ -845,6 +912,46 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
                     {lName}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+
+          {/* Draw NPCs / Creatures / Entities */}
+          {activeNpcs.map((npc: any, i: number) => {
+            if (isEntityHidden(npc.name)) return null;
+            const nx = Number(npc.x) || 0;
+            const ny = Number(npc.y) || 0;
+            const nName = parseName(npc.name || 'NPC');
+            const nType = npc.type || 'npc';
+            const isHostile = /enemy|monster|hostile|boss|bandit/i.test(nType);
+
+            return (
+              <g key={`page-npc-${i}`} className="group cursor-crosshair">
+                <circle
+                  cx={nx}
+                  cy={ny}
+                  r={3.8}
+                  className={isHostile ? "fill-red-900/80 stroke-red-400" : "fill-purple-900/80 stroke-purple-400"}
+                  strokeWidth={1.5}
+                />
+                <title>{`${nName} (${nType}${npc.description ? `: ${npc.description}` : ''})`}</title>
+                <g
+                  transform={`translate(${nx}, ${ny}) scale(${textScale})`}
+                  className={`pointer-events-auto transition-opacity duration-150 ${
+                    showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  <text
+                    x={0}
+                    y={-7}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    className={`${isHostile ? 'fill-red-300' : 'fill-purple-300'} text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]`}
+                    style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                  >
+                    {nName}
                   </text>
                 </g>
               </g>
@@ -896,7 +1003,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     className="fill-white text-[5.5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
-                    {player.username}
+                    {player.characterName && player.characterName !== player.username ? `${player.characterName} (${player.username})` : player.username}
                   </text>
                 </g>
               </g>

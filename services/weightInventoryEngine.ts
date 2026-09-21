@@ -182,10 +182,23 @@ export class WeightInventoryEngine {
     // Extract location if present
     let location = defaultLocation;
     let isHiddenLocation = false;
-    const locMatch = trimmed.match(/location[:=\s]+(hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i);
+    const locPattern = /(?:\[\s*)?(?:location|secret)[:=\s]+(hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]|target\([^)]+\)\[[^\]]+\]|hide(?::all)?\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i;
+    const locMatch = trimmed.match(locPattern);
     if (locMatch) {
       location = locMatch[1].trim();
-      if (location.toLowerCase().includes('hide[')) {
+      if (/hide[:\[]|target\(/i.test(location)) {
+        isHiddenLocation = true;
+      }
+    } else if (/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i.test(trimmed)) {
+      const match = trimmed.match(/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i);
+      if (match) {
+        location = match[0];
+        isHiddenLocation = true;
+      }
+    } else if (/target\([^)]+\)\[[^\]]+\]/i.test(trimmed)) {
+      const match = trimmed.match(/target\([^)]+\)\[[^\]]+\]/i);
+      if (match) {
+        location = match[0];
         isHiddenLocation = true;
       }
     } else if (trimmed.toLowerCase().includes('hide[')) {
@@ -1144,10 +1157,23 @@ export class WeightInventoryEngine {
     // Parse location (especially for stored items or remote caches)
     let location: string | undefined;
     let isHiddenLocation = false;
-    const locMatch = rest.match(/location[:=\s]+(hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i);
+    const locPattern = /(?:\[\s*)?(?:location|secret)[:=\s]+(hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]|target\([^)]+\)\[[^\]]+\]|hide(?::all)?\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i;
+    const locMatch = rest.match(locPattern);
     if (locMatch) {
       location = locMatch[1].trim();
-      if (location.toLowerCase().includes('hide[')) {
+      if (/hide[:\[]|target\(/i.test(location)) {
+        isHiddenLocation = true;
+      }
+    } else if (/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i.test(rest)) {
+      const match = rest.match(/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i);
+      if (match) {
+        location = match[0];
+        isHiddenLocation = true;
+      }
+    } else if (/target\([^)]+\)\[[^\]]+\]/i.test(rest)) {
+      const match = rest.match(/target\([^)]+\)\[[^\]]+\]/i);
+      if (match) {
+        location = match[0];
         isHiddenLocation = true;
       }
     } else if (rest.toLowerCase().includes('hide[')) {
