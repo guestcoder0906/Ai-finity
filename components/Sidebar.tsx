@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -622,7 +622,34 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   {pStats.isEncumbered && (
                                     <span className="text-[9px] text-yellow-500 font-semibold">(Penalty Active)</span>
                                   )}
+                                  </div>
+                              </div>
+
+                              {/* Equipped Gear & Armor */}
+                              <div className="space-y-1 pt-1 border-t border-neutral-800">
+                                <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                                  <div className="flex items-center gap-1">
+                                    <Shield size={11} className="text-emerald-400" />
+                                    <span>Equipped Gear & Armor ({pStats.equippedGear.length}):</span>
+                                  </div>
+                                  <span className="text-gray-400 font-mono text-[9px]">
+                                    {Math.round(pStats.equippedGear.reduce((sum, g) => sum + g.weight, 0) * 10) / 10} lbs
+                                  </span>
                                 </div>
+                                {pStats.equippedGear.length > 0 ? (
+                                  <div className="text-[9px] text-gray-300 pl-1 border-l border-emerald-800/60 space-y-0.5">
+                                    {pStats.equippedGear.map((it, gi) => (
+                                      <div key={gi} className="flex justify-between items-center">
+                                        <span>• {it.name}</span>
+                                        <span className="font-mono text-gray-500">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[9px] text-gray-500 italic pl-1">
+                                    0 lbs (None)
+                                  </div>
+                                )}
                               </div>
 
                               {/* Containers & Overflow Detection */}
@@ -640,18 +667,24 @@ const Sidebar: React.FC<SidebarProps> = ({
                                           Max Space: {cont.maxDimensions.raw || '18x12"'} | Weight: {cont.totalWeight} lbs
                                         </span>
                                       </div>
+                                      {cont.hasDoesNotFit && (
+                                        <div className="mt-1 flex items-center gap-1 text-[9px] text-red-400 bg-red-950/50 p-1 rounded border border-red-800/60">
+                                          <AlertOctagon size={11} className="text-red-400 shrink-0" />
+                                          <span>Cannot Fit: Rigid item's dimensions exceed container opening/smallest dimension!</span>
+                                        </div>
+                                      )}
                                       {cont.hasOverflow && (
                                         <div className="mt-1 flex items-center gap-1 text-[9px] text-amber-400 bg-amber-950/50 p-1 rounded border border-amber-800/60">
                                           <AlertTriangle size={11} className="text-amber-400 shrink-0" />
-                                          <span>Container Overflow: item exceeds dimensions and risks dropping during story!</span>
+                                          <span>Container Overflow: Rigid item protrudes/sticks out and risks dropping during story!</span>
                                         </div>
                                       )}
                                       {cont.items.length > 0 && (
                                         <div className="mt-1 text-[9px] text-gray-400 pl-1 border-l border-neutral-800 space-y-0.5">
                                           {cont.items.map((it, ii) => (
                                             <div key={ii} className="flex justify-between items-center">
-                                              <span className={it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}>
-                                                • {it.name} {it.isOverflow && '⚠️ (Overflow: Risks Dropping)'}
+                                              <span className={it.doesNotFit ? 'text-red-400 font-semibold' : it.isOverflow ? 'text-amber-300 font-semibold' : 'text-gray-300'}>
+                                                • {it.name} {it.doesNotFit ? '⛔ (Does Not Fit)' : it.isOverflow ? '⚠️ (Overflow: Risks Dropping)' : ''}
                                               </span>
                                               <span className="font-mono text-gray-500">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
                                             </div>
@@ -660,6 +693,23 @@ const Sidebar: React.FC<SidebarProps> = ({
                                       )}
                                     </div>
                                   ))}
+                                </div>
+                              )}
+
+                              {/* Carried Loose Items */}
+                              {pStats.carriedItems.length > 0 && (
+                                <div className="space-y-1 pt-1 border-t border-neutral-800">
+                                  <div className="text-[10px] text-gray-400 font-medium">
+                                    Carried Loose Items ({pStats.carriedItems.length}):
+                                  </div>
+                                  <div className="text-[9px] text-gray-300 pl-1 border-l border-neutral-800 space-y-0.5">
+                                    {pStats.carriedItems.map((it, li) => (
+                                      <div key={li} className="flex justify-between items-center">
+                                        <span>• {it.name}</span>
+                                        <span className="font-mono text-gray-500">{it.weight} lbs</span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
 

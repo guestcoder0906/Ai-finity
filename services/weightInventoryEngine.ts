@@ -28,7 +28,10 @@ export interface ItemInfo {
   dimensions: ParsedDimensions;
   category: 'equipped' | 'carried' | 'container' | 'stored';
   containerName?: string;
+  isFoldable?: boolean;
   isOverflow?: boolean;
+  doesNotFit?: boolean;
+  fitStatus?: 'fits' | 'overflow' | 'does_not_fit';
   overflowReason?: string;
   rawText: string;
   temporaryEffect?: {
@@ -49,6 +52,7 @@ export interface ContainerInfo {
   currentItemsWeight: number;
   totalWeight: number; // container weight + items weight
   hasOverflow: boolean;
+  hasDoesNotFit?: boolean;
   rawText: string;
 }
 
@@ -235,40 +239,323 @@ export class WeightInventoryEngine {
   }
 
   /**
-   * Checks whether an item's dimensions exceed a container's max dimensions.
-   * If forced to overflow, items might drop during the story (e.g. staff sticking out of a backpack).
+   * Determines whether an item is pliable, flexible, or foldable (e.g. leather tunic, cloth clothing,
+   * cloaks, robes, bedrolls, blankets, ropes, bandages, parchment) versus a rigid item
+   * (e.g. iron armor, steel plate, breastplate, shield, helmet, sword, staff, chest).
+   *
+   * Foldable items fold and compress to fit inside containers and do NOT cause overflow
+   * simply because their flat unfolded dimensions exceed the container dimensions.
    */
-  public static checkOverflow(itemDim: ParsedDimensions, containerMaxDim: ParsedDimensions): {
+  public static isFoldableItem(name: string, rawText: string = ''): boolean {
+    const text = `${name} ${rawText}`.toLowerCase();
+
+    // Explicit rigidity markers
+    if (
+      text.includes('rigid') ||
+      text.includes('inflexible') ||
+      text.includes('unbendable') ||
+      text.includes('solid metal') ||
+      text.includes('solid wood') ||
+      text.includes('solid stone')
+    ) {
+      return false;
+    }
+
+    // Explicit foldability markers
+    if (
+      text.includes('foldable') ||
+      text.includes('folded') ||
+      text.includes('flexible') ||
+      text.includes('pliable') ||
+      text.includes('rollable') ||
+      text.includes('rolled') ||
+      text.includes('soft')
+    ) {
+      return true;
+    }
+
+    // Rigid armor & items (cannot fold down to fit)
+    if (
+      text.includes('iron armor') ||
+      text.includes('steel armor') ||
+      text.includes('plate armor') ||
+      text.includes('breastplate') ||
+      text.includes('cuirass') ||
+      text.includes('full plate') ||
+      text.includes('plate mail') ||
+      text.includes('metal armor') ||
+      text.includes('chainmail') ||
+      text.includes('shield') ||
+      text.includes('helmet') ||
+      text.includes('helm') ||
+      text.includes('greathelm') ||
+      text.includes('sword') ||
+      text.includes('blade') ||
+      text.includes('staff') ||
+      text.includes('stave') ||
+      text.includes('spear') ||
+      text.includes('polearm') ||
+      text.includes('halberd') ||
+      text.includes('mace') ||
+      text.includes('warhammer') ||
+      text.includes('bow') ||
+      text.includes('crossbow') ||
+      text.includes('chest') ||
+      text.includes('crate') ||
+      text.includes('vial') ||
+      text.includes('bottle') ||
+      text.includes('flask') ||
+      text.includes('ingot') ||
+      text.includes('anvil') ||
+      text.includes('statue') ||
+      text.includes('lantern')
+    ) {
+      return false;
+    }
+
+    // Pliable/foldable clothing and soft gear
+    if (
+      text.includes('tunic') || // e.g. "Reinforced Leather Tunic"
+      text.includes('leather tunic') ||
+      text.includes('leather jacket') ||
+      text.includes('leather vest') ||
+      text.includes('robe') ||
+      text.includes('cloak') ||
+      text.includes('cape') ||
+      text.includes('shirt') ||
+      text.includes('pants') ||
+      text.includes('trousers') ||
+      text.includes('vest') ||
+      text.includes('garment') ||
+      text.includes('clothing') ||
+      text.includes('clothes') ||
+      text.includes('dress') ||
+      text.includes('skirt') ||
+      text.includes('shawl') ||
+      text.includes('scarf') ||
+      text.includes('blanket') ||
+      text.includes('bedroll') ||
+      text.includes('sleeping bag') ||
+      text.includes('cloth') ||
+      text.includes('fabric') ||
+      text.includes('linen') ||
+      text.includes('silk') ||
+      text.includes('cotton') ||
+      text.includes('wool') ||
+      text.includes('pelt') ||
+      text.includes('hide') ||
+      text.includes('fur') ||
+      text.includes('rope') ||
+      text.includes('bandages') ||
+      text.includes('bandage') ||
+      text.includes('parchment') ||
+      text.includes('paper') ||
+      text.includes('scroll') ||
+      text.includes('sack') ||
+      text.includes('pouch') ||
+      text.includes('bag')
+    ) {
+      return true;
+    }
+
+    // Leather items without plate/rigid terms are pliable
+    if (text.includes('leather') && !text.includes('hardened plate') && !text.includes('rigid')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Evaluates container fit and overflow:
+   * 1. Foldable items (leather tunic, cloth clothing, robes, cloaks, blankets) fold and compress
+   *    to fit inside containers without overflowing, provided total container volume/weight is not exceeded.
+   * 2. Rigid items (iron armor, plate, shields, staves, spears) cannot fold.
+   * 3. Cannot Fit Rule: "If an item has all dimensions bigger than smallest dimension of the container
+   *    then it doesn't fit at all in first place." (i.e. even its smallest dimension exceeds the container's
+   *    smallest dimension; it cannot enter or fit inside).
+   * 4. Protruding Overflow Rule: If a rigid item can enter (its cross section fits through the opening),
+   *    but its length exceeds container depth (e.g. 60-inch staff in 18-inch backpack), it protrudes/overflows
+   *    and risks dropping during movement or combat.
+   */
+  public static checkContainerFit(
+    item: { name: string; weight?: number; dimensions: ParsedDimensions; rawText?: string },
+    containerMaxDim: ParsedDimensions,
+    containerCapacity?: { maxWeight?: number; currentWeight?: number }
+  ): {
+    canFit: boolean;
     isOverflow: boolean;
+    doesNotFit: boolean;
+    isFoldable: boolean;
+    status: 'fits' | 'overflow' | 'does_not_fit';
     reason?: string;
   } {
-    if (!itemDim.applies || !containerMaxDim.applies) {
-      return { isOverflow: false };
-    }
+    const rawText = (item.rawText || '').toLowerCase();
+    const isFoldable = this.isFoldableItem(item.name, item.rawText);
 
-    const itemDims = [itemDim.height || 0, itemDim.width || 0, itemDim.depth || 0].sort((a, b) => b - a);
-    const contDims = [containerMaxDim.height || 0, containerMaxDim.width || 0, containerMaxDim.depth || 0].sort((a, b) => b - a);
-
-    const itemMax = itemDims[0];
-    const contMax = contDims[0];
-
-    // If item's largest dimension exceeds container's largest dimension
-    if (contMax > 0 && itemMax > contMax) {
+    // Check explicit narrative tags in raw text
+    if (rawText.includes('does not fit') || rawText.includes('cannot fit') || rawText.includes('too big to enter')) {
       return {
+        canFit: false,
+        isOverflow: false,
+        doesNotFit: true,
+        isFoldable,
+        status: 'does_not_fit',
+        reason: 'Item explicitly does not fit inside container.'
+      };
+    }
+    if (rawText.includes('overflow: yes') || rawText.includes('overflowing') || rawText.includes('sticks out') || rawText.includes('protruding')) {
+      return {
+        canFit: true,
         isOverflow: true,
-        reason: `Item length (${itemMax}") exceeds container max space (${contMax}"). Risks dropping or getting knocked down by accident!`
+        doesNotFit: false,
+        isFoldable,
+        status: 'overflow',
+        reason: 'Item protrudes from container opening; risks falling or dropping.'
       };
     }
 
-    // Check second dimension
-    if (contDims[1] > 0 && itemDims[1] > contDims[1]) {
+    if (!item.dimensions.applies || !containerMaxDim.applies) {
+      return { canFit: true, isOverflow: false, doesNotFit: false, isFoldable, status: 'fits' };
+    }
+
+    const itemDims = [item.dimensions.height || 0, item.dimensions.width || 0, item.dimensions.depth || 0]
+      .filter(d => d > 0)
+      .sort((a, b) => b - a);
+    const contDims = [containerMaxDim.height || 0, containerMaxDim.width || 0, containerMaxDim.depth || 0]
+      .filter(d => d > 0)
+      .sort((a, b) => b - a);
+
+    if (itemDims.length === 0 || contDims.length === 0) {
+      return { canFit: true, isOverflow: false, doesNotFit: false, isFoldable, status: 'fits' };
+    }
+
+    const cMax = contDims[0];
+    const cMid = contDims.length > 1 ? contDims[1] : contDims[0];
+    const cMin = contDims[contDims.length - 1]; // Smallest dimension of the container!
+
+    // Check container weight limit if provided
+    if (containerCapacity?.maxWeight && containerCapacity.maxWeight > 0) {
+      const current = containerCapacity.currentWeight || 0;
+      const itWeight = item.weight || 0;
+      if (current + itWeight > containerCapacity.maxWeight) {
+        return {
+          canFit: true,
+          isOverflow: true,
+          doesNotFit: false,
+          isFoldable,
+          status: 'overflow',
+          reason: `Container weight capacity exceeded (${current + itWeight} lbs > ${containerCapacity.maxWeight} lbs max).`
+        };
+      }
+    }
+
+    // 1. Foldable / Pliable items (e.g. Leather Tunic, Cloak, Robes, Clothes, Blankets, Ropes)
+    if (isFoldable) {
+      // Foldable items fold and compress to fit inside typical containers.
+      // They do NOT overflow simply because flat unfolded length/width exceeds the container.
+      const itemVol = itemDims.reduce((a, b) => a * b, 1);
+      const contVol = contDims.reduce((a, b) => a * b, 1);
+
+      // Only if raw uncompressed material volume itself exceeds the container internal volume by a wide margin
+      if (contVol > 0 && itemVol > contVol * 1.5) {
+        return {
+          canFit: false,
+          isOverflow: false,
+          doesNotFit: true,
+          isFoldable: true,
+          status: 'does_not_fit',
+          reason: `Folded volume of item exceeds total container volume.`
+        };
+      }
+
       return {
-        isOverflow: true,
-        reason: `Item width (${itemDims[1]}") exceeds container opening (${contDims[1]}").`
+        canFit: true,
+        isOverflow: false,
+        doesNotFit: false,
+        isFoldable: true,
+        status: 'fits',
+        reason: 'Item is flexible and folds cleanly to fit inside container.'
       };
     }
 
-    return { isOverflow: false };
+    // 2. Rigid items (e.g. Iron Armor, Steel Breastplate, Shield, Staff, Spear, Greatsword, Chest)
+    // CRITICAL MANDATE: "If an item has all dimensions bigger than smallest dimension of the container then it doesn't fit at all in first place."
+    const allDimsExceedCMin = itemDims.every(d => d > cMin);
+    if (allDimsExceedCMin) {
+      return {
+        canFit: false,
+        isOverflow: false,
+        doesNotFit: true,
+        isFoldable: false,
+        status: 'does_not_fit',
+        reason: `Rigid item has all dimensions (${itemDims.join('x')}") larger than container's smallest dimension (${cMin}"). It cannot enter or fit in the container at all!`
+      };
+    }
+
+    const iMax = itemDims[0];
+    const iMid = itemDims.length > 1 ? itemDims[1] : itemDims[0];
+
+    // Check if the rigid item's cross-section is too wide to enter the container opening
+    if (iMid > cMid && iMid > cMax) {
+      return {
+        canFit: false,
+        isOverflow: false,
+        doesNotFit: true,
+        isFoldable: false,
+        status: 'does_not_fit',
+        reason: `Rigid item cannot fold; width (${iMid}") exceeds container opening (${cMid}"). Does not fit in container.`
+      };
+    }
+
+    // If rigid item can enter the opening, but its length exceeds container depth/max dimension:
+    // It cannot fold down, so it protrudes/overflows out the opening (e.g. staff, spear, greatsword sticking out of backpack).
+    if (cMax > 0 && iMax > cMax) {
+      return {
+        canFit: true,
+        isOverflow: true,
+        doesNotFit: false,
+        isFoldable: false,
+        status: 'overflow',
+        reason: `Rigid item cannot fold; length (${iMax}") exceeds container depth (${cMax}"). It protrudes out of the container and risks dropping!`
+      };
+    }
+
+    return {
+      canFit: true,
+      isOverflow: false,
+      doesNotFit: false,
+      isFoldable: false,
+      status: 'fits'
+    };
+  }
+
+  /**
+   * Backwards-compatible checkOverflow delegating to checkContainerFit.
+   */
+  public static checkOverflow(
+    itemDimOrItem: ParsedDimensions | { name: string; weight?: number; dimensions: ParsedDimensions; rawText?: string },
+    containerMaxDim: ParsedDimensions,
+    itemName?: string
+  ): {
+    isOverflow: boolean;
+    doesNotFit?: boolean;
+    canFit?: boolean;
+    isFoldable?: boolean;
+    reason?: string;
+  } {
+    const item = 'raw' in itemDimOrItem && 'applies' in itemDimOrItem
+      ? { name: itemName || 'Item', dimensions: itemDimOrItem as ParsedDimensions }
+      : itemDimOrItem as { name: string; weight?: number; dimensions: ParsedDimensions; rawText?: string };
+
+    const fit = this.checkContainerFit(item, containerMaxDim);
+    return {
+      isOverflow: fit.isOverflow,
+      doesNotFit: fit.doesNotFit,
+      canFit: fit.canFit,
+      isFoldable: fit.isFoldable,
+      reason: fit.reason
+    };
   }
 
   /**
@@ -290,7 +577,14 @@ export class WeightInventoryEngine {
       lower.startsWith('items:') ||
       lower.startsWith('containers:') ||
       lower.startsWith('total carried weight') ||
-      lower.startsWith('encumbrance')
+      lower.startsWith('encumbrance') ||
+      lower === 'none' ||
+      lower === '(none)' ||
+      lower === 'none.' ||
+      lower === '0 lbs' ||
+      lower.startsWith('0 lbs (none') ||
+      lower.startsWith('0 lbs (none)') ||
+      lower.startsWith('(none)')
     ) {
       return null;
     }
@@ -313,7 +607,7 @@ export class WeightInventoryEngine {
       }
     }
 
-    if (!name) return null;
+    if (!name || name.toLowerCase() === 'none' || name.toLowerCase() === '0 lbs') return null;
 
     // Parse weight
     const weightResult = this.parseWeight(rest);
@@ -346,6 +640,9 @@ export class WeightInventoryEngine {
     // Parse dimensions
     const dimensions = this.parseDimensions(rest);
 
+    // Check foldability
+    const isFoldable = this.isFoldableItem(name, line);
+
     // Parse container
     let containerName = defaultContainer;
     const containerMatch = rest.match(/container[:=\s]*\[?([a-zA-Z0-9_\s]+)\]?/i);
@@ -353,10 +650,14 @@ export class WeightInventoryEngine {
       containerName = containerMatch[1].trim();
     }
 
-    // Check overflow note in text
+    // Check overflow & does not fit notes in text
+    let doesNotFit = false;
     let isOverflow = false;
     let overflowReason: string | undefined;
-    if (lower.includes('overflow: yes') || lower.includes('overflowing') || lower.includes('protruding') || lower.includes('sticks out')) {
+    if (lower.includes('does not fit') || lower.includes('cannot fit') || lower.includes('too big to enter')) {
+      doesNotFit = true;
+      overflowReason = 'Item does not fit inside container dimensions.';
+    } else if (lower.includes('overflow: yes') || lower.includes('overflowing') || lower.includes('protruding') || lower.includes('sticks out')) {
       isOverflow = true;
       overflowReason = 'Item exceeds container space; risks falling or dropping during actions/movement.';
     }
@@ -367,7 +668,10 @@ export class WeightInventoryEngine {
       dimensions,
       category: defaultContainer ? 'carried' : 'equipped',
       containerName,
+      isFoldable,
       isOverflow,
+      doesNotFit,
+      fitStatus: doesNotFit ? 'does_not_fit' : isOverflow ? 'overflow' : 'fits',
       overflowReason,
       rawText: line,
       temporaryEffect
@@ -412,6 +716,7 @@ export class WeightInventoryEngine {
 
     let currentSection = '';
     let activeContainerName = '';
+    let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'general' = 'general';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -422,6 +727,7 @@ export class WeightInventoryEngine {
       if (secMatch) {
         currentSection = secMatch[1].toUpperCase();
         activeContainerName = '';
+        activeSubsection = 'general';
         continue;
       }
 
@@ -583,56 +889,194 @@ export class WeightInventoryEngine {
         currentSection.includes('EQUIPMENT') ||
         currentSection.includes('GEAR')
       ) {
-        // Container detection: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
+        // Check for subsection headers
         if (
-          lower.includes('container') ||
+          lower.startsWith('- containers equipped/carried:') ||
+          lower.startsWith('- containers carried:') ||
+          lower.startsWith('- containers equipped:') ||
+          lower.startsWith('- containers:') ||
+          lower.startsWith('containers equipped:') ||
+          lower.startsWith('containers:')
+        ) {
+          activeSubsection = 'containers';
+          activeContainerName = '';
+          continue;
+        }
+
+        if (
+          lower.startsWith('- equipped gear & armor:') ||
+          lower.startsWith('- equipped gear:') ||
+          lower.startsWith('- equipped armor:') ||
+          lower.startsWith('- equipped items:') ||
+          lower.startsWith('- worn gear:') ||
+          lower.startsWith('- worn armor:') ||
+          lower.startsWith('- equipped:') ||
+          lower.startsWith('equipped gear & armor:') ||
+          lower.startsWith('equipped gear:') ||
+          lower.startsWith('equipped armor:')
+        ) {
+          activeSubsection = 'equipped';
+          activeContainerName = '';
+          continue;
+        }
+
+        if (
+          lower.startsWith('- carried inventory (inside containers):') ||
+          lower.startsWith('- carried inventory:') ||
+          lower.startsWith('- items inside containers:') ||
+          lower.startsWith('- items in containers:') ||
+          lower.startsWith('- container inventory:') ||
+          lower.startsWith('- carried items:') ||
+          lower.startsWith('carried inventory:') ||
+          lower.startsWith('carried items:')
+        ) {
+          activeSubsection = 'inside_containers';
+          if (!activeContainerName && containers.length > 0) {
+            activeContainerName = containers[0].name;
+          }
+          continue;
+        }
+
+        // Ignore metadata notes, empty markers, or summary lines
+        if (
+          lower.startsWith('- auto-equip') ||
+          lower.startsWith('auto-equip') ||
+          lower.includes('oversized / wearable items rule') ||
+          lower.startsWith('- total carried weight') ||
+          lower.startsWith('total carried weight') ||
+          lower.startsWith('- total weight') ||
+          lower === '(none)' ||
+          lower === '- (none)' ||
+          lower === '* (none)' ||
+          lower === 'none' ||
+          lower === '0 lbs (none)' ||
+          lower === '- 0 lbs (none)'
+        ) {
+          continue;
+        }
+
+        // Container definition: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
+        const isContainerDef = (
           lower.includes('backpack') ||
           lower.includes('satchel') ||
           lower.includes('pouch') ||
           lower.includes('sack') ||
-          lower.includes('bag')
-        ) {
-          // If this line defines a container
-          const isContainerDef = lower.includes('dimensions') || lower.includes('capacity') || lower.includes('space');
-          if (isContainerDef) {
-            const name = line.split(/[:=]/)[0].replace(/^[-*•>]\s*/, '').trim();
-            const wResult = this.parseWeight(line);
-            const maxDim = this.parseDimensions(line);
-            const containerWeight = wResult.weight > 0 ? wResult.weight : 2.0; // default empty container wt
+          lower.includes('bag') ||
+          lower.includes('haversack') ||
+          lower.includes('chest')
+        ) && (
+          lower.includes('dimension') ||
+          lower.includes('capacity') ||
+          lower.includes('max space') ||
+          lower.includes('max weight')
+        );
 
-            activeContainerName = name;
-            containers.push({
-              name,
-              weight: containerWeight,
-              dimensions: maxDim,
-              maxDimensions: maxDim,
-              items: [],
-              currentItemsWeight: 0,
-              totalWeight: containerWeight,
-              hasOverflow: false,
-              rawText: line
-            });
-            continue;
+        if (isContainerDef) {
+          const name = line.split(/[:=]/)[0].replace(/^[-*•>]\s*/, '').trim();
+
+          // Distinguish container empty weight from max capacity
+          let containerWeight = 2.0; // default empty container wt
+          const emptyWeightMatch = line.match(/(?:empty\s*weight|weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
+          if (emptyWeightMatch) {
+            containerWeight = parseFloat(emptyWeightMatch[1]);
+          } else {
+            const wResult = this.parseWeight(line);
+            if (wResult.applies && wResult.weight > 0) {
+              containerWeight = wResult.weight;
+            }
           }
+
+          let maxWeightCapacity: number | undefined;
+          const capMatch = line.match(/(?:max\s*(?:weight|capacity)|capacity)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
+          if (capMatch) {
+            maxWeightCapacity = parseFloat(capMatch[1]);
+          }
+
+          const maxDim = this.parseDimensions(line);
+
+          activeContainerName = name;
+          containers.push({
+            name,
+            weight: containerWeight,
+            dimensions: maxDim,
+            maxDimensions: maxDim,
+            maxWeightCapacity,
+            items: [],
+            currentItemsWeight: 0,
+            totalWeight: containerWeight,
+            hasOverflow: false,
+            hasDoesNotFit: false,
+            rawText: line
+          });
+          continue;
         }
 
         // Check if line is an item
-        const item = this.parseItemLine(line, activeContainerName);
+        const item = this.parseItemLine(line, activeSubsection === 'inside_containers' ? activeContainerName : undefined);
         if (item) {
-          if (activeContainerName) {
-            // Put in active container
-            const cont = containers.find(c => c.name.toLowerCase() === activeContainerName.toLowerCase());
+          // If explicitly marked or parsed in equipped subsection
+          if (
+            activeSubsection === 'equipped' ||
+            lower.includes('equipped: yes') ||
+            lower.includes('worn: yes') ||
+            lower.includes('wielding') ||
+            lower.includes('wearing')
+          ) {
+            item.category = 'equipped';
+            item.containerName = undefined;
+            item.isOverflow = false;
+            item.doesNotFit = false;
+            equippedGear.push(item);
+          } else if (activeSubsection === 'inside_containers' || activeContainerName || item.containerName) {
+            // Put in targeted or active container
+            const targetName = item.containerName || activeContainerName || (containers.length > 0 ? containers[0].name : '');
+            const cont = containers.find(c => c.name.toLowerCase() === targetName.toLowerCase()) || containers[0];
+
             if (cont) {
-              // Check overflow against container dimensions
-              const overflowCheck = this.checkOverflow(item.dimensions, cont.maxDimensions);
-              if (overflowCheck.isOverflow) {
-                item.isOverflow = true;
-                item.overflowReason = overflowCheck.reason;
-                cont.hasOverflow = true;
+              item.category = 'carried';
+              item.containerName = cont.name;
+
+              // Auto-Equip Rule: If item is wearable (e.g. leather tunic, cloth robes, armor) and character has no equipped armor,
+              // auto-equip it unless marked as spare/backup
+              const isWearable = (
+                lower.includes('armor base') ||
+                lower.includes('armor:') ||
+                (this.isFoldableItem(item.name, line) && (lower.includes('tunic') || lower.includes('robe') || lower.includes('cloak') || lower.includes('armor')))
+              );
+              const alreadyHasArmor = equippedGear.some(g => {
+                const gl = g.name.toLowerCase();
+                return gl.includes('tunic') || gl.includes('armor') || gl.includes('robe') || gl.includes('cuirass') || gl.includes('mail');
+              });
+
+              if (isWearable && !alreadyHasArmor && !lower.includes('spare') && !lower.includes('backup') && equippedGear.length === 0) {
+                item.category = 'equipped';
+                item.containerName = undefined;
+                item.isOverflow = false;
+                item.doesNotFit = false;
+                equippedGear.push(item);
+              } else {
+                // Check container fit with new rule
+                const fitCheck = this.checkContainerFit(item, cont.maxDimensions, {
+                  currentWeight: cont.currentItemsWeight
+                });
+
+                item.isFoldable = fitCheck.isFoldable;
+                item.fitStatus = fitCheck.status;
+
+                if (fitCheck.doesNotFit) {
+                  item.doesNotFit = true;
+                  item.overflowReason = fitCheck.reason;
+                  cont.hasDoesNotFit = true;
+                } else if (fitCheck.isOverflow) {
+                  item.isOverflow = true;
+                  item.overflowReason = fitCheck.reason;
+                  cont.hasOverflow = true;
+                }
+
+                cont.items.push(item);
+                cont.currentItemsWeight += item.weight;
+                cont.totalWeight += item.weight;
               }
-              cont.items.push(item);
-              cont.currentItemsWeight += item.weight;
-              cont.totalWeight += item.weight;
             } else {
               carriedItems.push(item);
             }
