@@ -23,6 +23,7 @@ import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
 import { PurchaseNotificationBanner } from './components/PurchaseNotificationBanner';
+import { LiveStatusUpdates } from './components/LiveStatusUpdates';
 import { auth, db } from './services/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
@@ -1772,17 +1773,7 @@ function App() {
         />
 
         {/* Floating Status Updates */}
-        {!gameOver && (updates || []).length > 0 && (
-          <div className="absolute bottom-24 right-4 z-20 flex flex-col gap-1 items-end pointer-events-none">
-            {(updates || []).slice(0, 5).map((u, i) => (
-              <div key={i} className="bg-black/80 border border-neutral-800 px-3 py-1 rounded text-xs font-mono shadow-xl animate-in slide-in-from-right-10 fade-in duration-500">
-                <span className={u.value < 0 ? 'text-red-400' : u.value > 0 ? 'text-green-400' : 'text-yellow-400'}>
-                  {u.text}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <LiveStatusUpdates updates={updates} gameOver={gameOver} />
 
         {gameOver && (
           <div className="absolute inset-0 flex items-center justify-center bg-red-950/40 backdrop-blur-md z-30 pointer-events-none">
