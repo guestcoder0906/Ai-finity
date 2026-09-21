@@ -150,13 +150,17 @@ ENERGY & STAMINA MANAGEMENT RULE (CRITICAL):
   5. Reflect the updated energy in the Guide.txt Master Stat Table.
 - NEVER narrate spending or restoring energy without updating the character file. NEVER forget to update the character's energy when it changes.
 
+DYNAMIC SETUP MANDATE (NO RIGID HARDCODED TEMPLATES):
+The AI MUST set up characters, physical dimensions, body weight, holding limbs, anatomy, containers, and inventory dynamically, flexibly, and accurately for each specific character, race, creature, animal, or entity.
+NEVER use rigid hardcoded templates (e.g., do NOT assume all characters are 5'11", 165 lbs, 2-armed humanoids with a leather backpack). A wolf has four legs and jaws; a goblin might be 3'2" and 45 lbs with a belt pouch; a giant might be 15 ft and 1,800 lbs carrying a stone urn; a bird has talons and beak; a fairy is 8 inches and 0.5 lbs; a slime has amorphous gelatinous dimensions. Set up everything dynamically, authentically, and accurately!
+
 ENTITY FILE SCHEMA:
 All character/NPC/Entity files MUST follow this structured format for consistency:
 [NAME & DESCRIPTION]
 - Full Name: ...
 - Description: (Extensive, detailed physical & psychological profile)
-- Physical Dimensions: (Height, Width, Depth e.g. "Height: 5'11\", Width: 20\", Depth: 12\"" - unless one or none applies based on AI's inference of character, e.g. "None (Incorporeal/Ghost)" or "None (Formless)")
-- Body Weight: (Exact body weight e.g. "165 lbs", or "0 lbs / Incorporeal")
+- Physical Dimensions: (Height, Width, Depth e.g. "Height: 5'11\", Width: 20\", Depth: 12\"" - dynamically determined by AI based on character's actual species/form, e.g. "Height: 3'2\", Width: 14\", Depth: 9\"" for a goblin, "Height: 28\", Length: 42\", Width: 12\"" for a wolf, or "None (Incorporeal/Ghost)" or "None (Formless Slime)")
+- Body Weight: (Exact body weight dynamically determined by AI e.g. "165 lbs", "45 lbs", "110 lbs", or "0 lbs / Incorporeal")
 
 [STATS & MODIFIERS]
 - Health: (Current / Max)
@@ -167,6 +171,20 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 - Max Lift Strength: (Exact max weight this character can lift based on body weight and strength multiplier, e.g. "165 lbs (100% of body weight for average human with 1.0x strength modifier; anything heavier is impossible to lift without machinery or magic)")
 - Encumbrance Threshold & Effects: (DYNAMIC per character/race/biology. For standard baseline humans: default 20% of body weight, where carried weight at 21%+ causes a slower speed penalty until dropped. For Slimes, Oozes, Incorporeal/Ghosts, Telekinetics, or certain monsters/races, this is DYNAMIC - e.g. "Immune (Slime biology absorbs items internally without slowdown)" or "None (Incorporeal)" or custom higher thresholds. Never force human penalties onto creatures whose biology is unaffected!)
 - Armor: (Threshold format: "armor: material base X (immunities/resistances)")
+
+[CURRENTLY HOLDING]
+- Holding Anatomy: (Determined dynamically and accurately by AI based on character's actual biology and anatomy. E.g. "2 Hands / Arms (Humanoid)", "Mouth / Jaws (Canine/Wolf - 1 item hold)", "4 Arms / Claws (Insectoid - 4 items hold)", "Prehensile Tail & 2 Hands (3 items hold)", "None (Limbless/Formless Slime/Snake/Incorporeal - cannot hold items unless shapeshifted)", or "Telekinetic Grip (2 items hold)")
+- Holding Capacity & Status: (Determined dynamically by AI. Normal capacity equals available holding limbs. When holding limbs are full, character CANNOT hold anything anymore dynamically as usual unless they hold with overflow. E.g. "2/2 Hands Occupied (Full - Cannot hold more items without overflow)", "1/2 Hands Occupied (1 Free Hand)", "0/2 Hands Occupied (Empty - Hands free)", or "2/2 Hands (+1 Held with Overflow)")
+- Items Currently Held:
+  * (List each item currently held in hands/limbs/mouth with detectable weight and dimensions. Examples:
+    - Right Hand: Steel Longsword: 3 lbs, 36x2 inches. (One-handed weapon)
+    - Left Hand: Iron Lantern: 2 lbs, 10x6 inches. (Light source)
+    - Both Hands (Two-Handed): Greatsword: 6 lbs, 48x4 inches. (Occupies both hands; 0 free hands remaining)
+    - Held in Jaws: Healing Herb: 0.1 lbs, 4x1 inches. (Held in mouth/teeth)
+    - Overflow Hold: Rolled Map: 0.3 lbs, 12x2 inches. (Overflow: Yes - awkwardly clutched under arm while hands are occupied; risks dropping or getting knocked down))
+  * If holding nothing: "- (None - Hands/Appendages free)"
+- Dynamic Overflow Rule (CRITICAL): If the character wants or attempts to hold more items than their anatomy normally allows (e.g. clutching an extra item under an arm, tucking something under a chin, clamping an item in their teeth while hands are full), the AI dynamically marks it as an overflow hold. Overflow items are NOT securely gripped — they might slip, drop, or get knocked down depending on narrative context (combat collisions, sudden dodging, sprinting, climbing, jumping, or taking damage) determined dynamically by AI!
+- Weight & Capacity Mandate: All items currently held count toward total items capacity, carried weight, and encumbrance like usual.
 
 [CONTAINERS & CARRIED GEAR]
 - Containers Equipped/Carried: (Carrying loose items REQUIRES at least one container the character can equip or carry, such as a Backpack, Satchel, Pouch, or Belt Bag. Each container has max space dimensions, e.g. "Leather Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs, Weight: 2 lbs".)

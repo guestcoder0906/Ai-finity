@@ -56,6 +56,23 @@ export interface ContainerInfo {
   rawText: string;
 }
 
+export interface HeldItemInfo extends ItemInfo {
+  holdingLimb?: string; // e.g. "Right Hand", "Left Hand", "Both Hands", "Mouth / Jaws", "Tentacle 1", "Under Arm (Overflow)"
+  isOverflowHold?: boolean;
+  overflowWarning?: string;
+}
+
+export interface HoldingCapacityInfo {
+  applies: boolean;
+  holdingLimbsDescription: string; // e.g. "2 Hands / Arms", "Jaws / Mouth (Quadruped)", "4 Arms", "None (Limbless/Amorphous)"
+  maxStandardHoldCount: number;
+  currentHeldCount: number;
+  isFull: boolean;
+  hasOverflowHold: boolean;
+  overflowReason?: string;
+  freeSlots: number;
+}
+
 export interface CharacterPhysicalStats {
   characterName: string;
   username?: string;
@@ -79,6 +96,8 @@ export interface CharacterPhysicalStats {
   encumbranceImmunityReason?: string; // e.g. "Slime biology absorbs items internally without standard encumbrance/slowing"
   encumbranceEffectDescription: string; // Dynamic description of what carrying weight does to this specific entity
   totalCarriedWeight: number; // lbs
+  currentlyHolding: HeldItemInfo[];
+  holdingCapacity: HoldingCapacityInfo;
   containers: ContainerInfo[];
   equippedGear: ItemInfo[];
   carriedItems: ItemInfo[];
@@ -764,11 +783,15 @@ export class WeightInventoryEngine {
     const equippedGear: ItemInfo[] = [];
     const carriedItems: ItemInfo[] = [];
     const storedItems: ItemInfo[] = [];
+    const currentlyHolding: HeldItemInfo[] = [];
+    let customHoldingAnatomy: string | undefined;
+    let customHoldingMax: number | undefined;
+    let customHoldingApplies: boolean | undefined;
     const activeWeightEffects: CharacterPhysicalStats['activeWeightEffects'] = [];
 
     let currentSection = '';
     let activeContainerName = '';
-    let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'general' = 'general';
+    let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'holding' | 'general' = 'general';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -779,7 +802,7 @@ export class WeightInventoryEngine {
       if (secMatch) {
         currentSection = secMatch[1].toUpperCase();
         activeContainerName = '';
-        activeSubsection = 'general';
+        activeSubsection = (currentSection.includes('HOLDING') || currentSection.includes('HELD')) ? 'holding' : 'general';
         continue;
       }
 
@@ -949,6 +972,22 @@ export class WeightInventoryEngine {
 
         if (isContainersHeader) {
           activeSubsection = 'containers';
+          activeContainerName = '';
+          continue;
+        }
+
+        const isHoldingHeader = (
+          lower.includes('currently holding') ||
+          lower.includes('held items') ||
+          lower.includes('items being held') ||
+          lower.includes('items currently held') ||
+          lower.startsWith('- holding:') ||
+          lower.startsWith('* holding:') ||
+          lower.startsWith('holding:')
+        );
+
+        if (isHoldingHeader) {
+          activeSubsection = 'holding';
           activeContainerName = '';
           continue;
         }
@@ -1187,6 +1226,102 @@ export class WeightInventoryEngine {
         }
       }
 
+      // 3.5. [CURRENTLY HOLDING] Section or Holding Subsection
+      if (
+        currentSection.includes('HOLDING') ||
+        currentSection.includes('HELD') ||
+        activeSubsection === 'holding'
+      ) {
+        // Holding Anatomy line
+        if (
+          lower.includes('holding anatomy:') ||
+          lower.includes('holding limbs:') ||
+          lower.includes('holding appendages:') ||
+          lower.startsWith('- anatomy:') ||
+          lower.startsWith('* anatomy:') ||
+          lower.startsWith('anatomy:')
+        ) {
+          customHoldingAnatomy = line.split(/[:=]/).slice(1).join(':').trim();
+          const cLower = customHoldingAnatomy.toLowerCase();
+          if (cLower.includes('none') || cLower.includes('incorporeal') || cLower.includes('formless') || cLower.includes('cannot hold')) {
+            customHoldingApplies = false;
+            customHoldingMax = 0;
+          } else if (cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('1 item') || cLower.includes('1 hand')) {
+            customHoldingApplies = true;
+            customHoldingMax = 1;
+          } else if (cLower.includes('4') || cLower.includes('four')) {
+            customHoldingApplies = true;
+            customHoldingMax = 4;
+          } else if (cLower.includes('3') || cLower.includes('three')) {
+            customHoldingApplies = true;
+            customHoldingMax = 3;
+          } else {
+            customHoldingApplies = true;
+            customHoldingMax = 2;
+          }
+          continue;
+        }
+
+        // Holding capacity / status line
+        if (
+          lower.includes('holding capacity') ||
+          lower.includes('capacity & status') ||
+          lower.includes('holding status') ||
+          lower.startsWith('- capacity:') ||
+          lower.startsWith('capacity:')
+        ) {
+          continue;
+        }
+
+        // Informational lines or instructions
+        if (
+          lower.includes('overflow rules:') ||
+          lower.includes('weight mandate:') ||
+          lower.startsWith('- items currently held:') ||
+          lower.startsWith('* items currently held:') ||
+          lower.startsWith('items currently held:') ||
+          lower.startsWith('- held items:') ||
+          lower.startsWith('held items:') ||
+          lower.includes('(none') ||
+          lower.includes('hands/appendages free')
+        ) {
+          continue;
+        }
+
+        // Parse held item line
+        let holdingLimb = 'Hands';
+        let itemText = line;
+
+        const limbPrefixMatch = line.match(/^[-*•>\s]*(?:\[)?(right\s*hand|left\s*hand|main\s*hand|off\s*hand|both\s*hands|two[- ]handed|jaws?|mouth|teeth|talons?|beak|tentacles?\s*\d*|claws?\s*\d*|under\s*arm(?:\s*\(overflow\))?|chest|crook\s*of\s*arm|overflow\s*hold)(?:\])?\s*[:=-]\s*(.*)$/i);
+        if (limbPrefixMatch) {
+          holdingLimb = limbPrefixMatch[1].trim();
+          itemText = limbPrefixMatch[2].trim();
+        }
+
+        const item = this.parseItemLine(itemText);
+        if (item) {
+          item.category = 'equipped';
+          const isOverflow = (
+            lower.includes('overflow') ||
+            lower.includes('under arm') ||
+            lower.includes('clutched') ||
+            lower.includes('teeth') ||
+            lower.includes('awkwardly') ||
+            lower.includes('risks dropping') ||
+            lower.includes('knocked down') ||
+            (currentlyHolding.length >= (customHoldingMax !== undefined ? customHoldingMax : 2))
+          );
+          const heldItem: HeldItemInfo = {
+            ...item,
+            holdingLimb,
+            isOverflowHold: isOverflow,
+            overflowWarning: isOverflow ? 'Held with overflow; risks dropping or getting knocked down depending on narrative context.' : undefined
+          };
+          currentlyHolding.push(heldItem);
+          continue;
+        }
+      }
+
       // 4. [OWNED / STORED ITEMS (NOT ON PERSON)]
       if (currentSection.includes('OWNED') || currentSection.includes('STORED') || currentSection.includes('NOT ON PERSON')) {
         const item = this.parseItemLine(line);
@@ -1222,8 +1357,62 @@ export class WeightInventoryEngine {
     // Ensure Max Lift Strength matches standard human baseline (100% of body weight for 1.0x strength)
     maxLiftStrength = Math.round(bodyWeight * strengthMultiplier);
 
+    // Calculate Holding Capacity and Status dynamically based on character's anatomy
+    let holdingCapacityApplies = customHoldingApplies !== undefined ? customHoldingApplies : true;
+    let holdingLimbsDescription = customHoldingAnatomy || '2 Hands / Arms (Humanoid)';
+    let maxStandardHoldCount = customHoldingMax !== undefined ? customHoldingMax : 2;
+
+    const lowerType = characterType ? characterType.toLowerCase() : '';
+    if (customHoldingApplies === undefined && (lowerType.includes('slime') || lowerType.includes('ghost') || lowerType.includes('incorporeal') || lowerType.includes('snake') || lowerType.includes('serpent'))) {
+      holdingCapacityApplies = false;
+      holdingLimbsDescription = 'None (Limbless / Amorphous biology)';
+      maxStandardHoldCount = 0;
+    } else if (customHoldingApplies === undefined && (lowerType.includes('dog') || lowerType.includes('wolf') || lowerType.includes('canine') || lowerType.includes('horse') || lowerType.includes('feline'))) {
+      holdingCapacityApplies = true;
+      holdingLimbsDescription = 'Mouth / Jaws (Quadruped - 1 item hold)';
+      maxStandardHoldCount = 1;
+    }
+
+    // Auto-populate held items from equipped weapons/shields if currentlyHolding is empty
+    if (currentlyHolding.length === 0 && holdingCapacityApplies && maxStandardHoldCount > 0 && equippedGear.length > 0) {
+      const weaponShieldWords = ['sword', 'dagger', 'blade', 'spear', 'staff', 'bow', 'axe', 'mace', 'wand', 'shield', 'lantern', 'torch', 'hammer', 'scythe'];
+      for (const eq of equippedGear) {
+        const eqLower = eq.name.toLowerCase();
+        if (weaponShieldWords.some(w => eqLower.includes(w))) {
+          const isTwoHanded = eqLower.includes('greatsword') || eqLower.includes('bow') || eqLower.includes('two-handed') || eqLower.includes('staff') || eqLower.includes('spear');
+          const limb = isTwoHanded ? 'Both Hands (Two-Handed)' : (currentlyHolding.length === 0 ? 'Main Hand' : 'Off Hand');
+          const isOverflow = currentlyHolding.length >= maxStandardHoldCount;
+          currentlyHolding.push({
+            ...eq,
+            holdingLimb: limb,
+            isOverflowHold: isOverflow,
+            overflowWarning: isOverflow ? 'Held with overflow; risks dropping or getting knocked down depending on narrative context.' : undefined
+          });
+          if (isTwoHanded && maxStandardHoldCount <= 2) {
+            break;
+          }
+        }
+      }
+    }
+
+    const nonOverflowCount = currentlyHolding.filter(h => !h.isOverflowHold).length;
+    const isFull = holdingCapacityApplies && (nonOverflowCount >= maxStandardHoldCount);
+    const hasOverflowHold = currentlyHolding.some(h => h.isOverflowHold);
+    const freeSlots = holdingCapacityApplies ? Math.max(0, maxStandardHoldCount - nonOverflowCount) : 0;
+
+    const holdingCapacity: HoldingCapacityInfo = {
+      applies: holdingCapacityApplies,
+      holdingLimbsDescription,
+      maxStandardHoldCount,
+      currentHeldCount: currentlyHolding.length,
+      isFull,
+      hasOverflowHold,
+      overflowReason: hasOverflowHold ? 'Character is holding items with overflow beyond standard anatomical capacity; risks dropping or being knocked down.' : undefined,
+      freeSlots
+    };
+
     // Calculate Total Carried Weight on Person:
-    // = Equipped Gear + Containers (empty weight) + Items inside containers + Carried loose items
+    // = Equipped Gear + Containers (empty weight) + Items inside containers + Carried loose items + Currently Held items
     let totalCarriedWeight = 0;
     for (const eq of equippedGear) {
       totalCarriedWeight += eq.weight;
@@ -1233,6 +1422,14 @@ export class WeightInventoryEngine {
     }
     for (const cItem of carriedItems) {
       totalCarriedWeight += cItem.weight;
+    }
+    for (const hItem of currentlyHolding) {
+      // Avoid double counting if held item was already mirrored in equippedGear or carriedItems
+      const alreadyInEquipped = equippedGear.some(e => e.name.toLowerCase() === hItem.name.toLowerCase());
+      const alreadyInCarried = carriedItems.some(c => c.name.toLowerCase() === hItem.name.toLowerCase());
+      if (!alreadyInEquipped && !alreadyInCarried) {
+        totalCarriedWeight += hItem.weight;
+      }
     }
     // Stored items are EXCLUDED (user mandate: "not owned, owned items they don't have on them are put in another category but it's theirs still")
 
@@ -1283,6 +1480,8 @@ export class WeightInventoryEngine {
       encumbranceImmunityReason,
       encumbranceEffectDescription,
       totalCarriedWeight: Math.round(totalCarriedWeight * 10) / 10,
+      currentlyHolding,
+      holdingCapacity,
       containers,
       equippedGear,
       carriedItems,
@@ -1305,17 +1504,24 @@ export class WeightInventoryEngine {
 
     let updated = content;
 
-    // 1. Ensure [NAME & DESCRIPTION] contains Physical Dimensions and Body Weight
-    if (!updated.includes('Physical Dimensions:') && !updated.includes('Dimensions:')) {
+    // 1. Ensure [NAME & DESCRIPTION] contains Physical Dimensions and Body Weight if not already present
+    if (!updated.includes('Physical Dimensions:') && !updated.includes('Dimensions:') && !updated.includes('Body Dimensions:')) {
       const nameDescIdx = updated.indexOf('[NAME & DESCRIPTION]');
       if (nameDescIdx >= 0) {
         const nextHeader = updated.indexOf('[', nameDescIdx + 20);
         const insertPos = nextHeader > 0 ? nextHeader : updated.length;
-        const dimStr = stats.dimensionsApply
-          ? `- Physical Dimensions: Height: 5'11", Width: 20", Depth: 12"\n- Body Weight: ${stats.bodyWeight} lbs\n\n`
-          : `- Physical Dimensions: None (${stats.characterType || 'Incorporeal/Formless'})\n- Body Weight: ${stats.bodyWeight} lbs\n\n`;
-        updated = updated.substring(0, insertPos) + dimStr + updated.substring(insertPos);
-        changes.push('Added Physical Dimensions & Body Weight');
+        let dimStr = '';
+        if (stats.dimensionsApply && stats.dimensionsRaw && !stats.dimensionsRaw.includes("5'11\"")) {
+          dimStr = `- Physical Dimensions: ${stats.dimensionsRaw}\n- Body Weight: ${stats.bodyWeight} lbs\n\n`;
+        } else if (!stats.dimensionsApply) {
+          dimStr = `- Physical Dimensions: None (${stats.characterType || 'Incorporeal/Formless'})\n- Body Weight: ${stats.bodyWeight} lbs\n\n`;
+        } else {
+          dimStr = `- Body Weight: ${stats.bodyWeight} lbs\n\n`;
+        }
+        if (dimStr) {
+          updated = updated.substring(0, insertPos) + dimStr + updated.substring(insertPos);
+          changes.push('Added Physical Dimensions & Body Weight');
+        }
       }
     }
 
@@ -1380,6 +1586,46 @@ export class WeightInventoryEngine {
       const storedSection = `[OWNED / STORED ITEMS (NOT ON PERSON)]\n- (Items owned by character stored at home, vault, camp, or stash. Their weight is NOT added to carried weight)\n\n`;
       updated = updated.substring(0, insertPos) + storedSection + updated.substring(insertPos);
       changes.push('Added Owned/Stored Items section');
+    }
+
+    // 5. Ensure [CURRENTLY HOLDING] section reflects dynamic held items if applicable
+    if (stats.holdingCapacity.applies && (stats.currentlyHolding.length > 0 || updated.includes('[CURRENTLY HOLDING]'))) {
+      const holdingLines: string[] = [];
+      holdingLines.push(`- Holding Anatomy: ${stats.holdingCapacity.holdingLimbsDescription}`);
+      const statusSuffix = stats.holdingCapacity.hasOverflowHold
+        ? ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} - Overflow Hold: Items risk dropping!)`
+        : stats.holdingCapacity.isFull
+          ? ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} Occupied - Full)`
+          : ` (${stats.holdingCapacity.currentHeldCount}/${stats.holdingCapacity.maxStandardHoldCount} Occupied - ${stats.holdingCapacity.freeSlots} Free)`;
+      holdingLines.push(`- Holding Capacity & Status:${statusSuffix}`);
+      holdingLines.push(`- Items Currently Held:`);
+      if (stats.currentlyHolding.length === 0) {
+        holdingLines.push(`  * (None - Hands/Appendages free)`);
+      } else {
+        for (const h of stats.currentlyHolding) {
+          const limbPrefix = h.holdingLimb ? `${h.holdingLimb}: ` : '';
+          const overflowSuffix = h.isOverflowHold ? ' (Overflow: Yes - risks dropping)' : '';
+          holdingLines.push(`  * ${limbPrefix}${h.name}: Weight: ${h.weight} lbs. Dimensions: ${h.dimensions.raw || 'N/A'}.${overflowSuffix}`);
+        }
+      }
+
+      const holdingBlock = `[CURRENTLY HOLDING]\n${holdingLines.join('\n')}\n\n`;
+
+      if (updated.includes('[CURRENTLY HOLDING]')) {
+        const holdIdx = updated.indexOf('[CURRENTLY HOLDING]');
+        const nextH = updated.indexOf('[', holdIdx + 19);
+        const replaceEnd = nextH > 0 ? nextH : updated.length;
+        updated = updated.substring(0, holdIdx) + holdingBlock + updated.substring(replaceEnd);
+      } else {
+        const invIdx = updated.indexOf('[CONTAINERS & CARRIED GEAR]');
+        const insertPos = invIdx >= 0 ? invIdx : (updated.indexOf('[INVENTORY & EQUIPMENT]') >= 0 ? updated.indexOf('[INVENTORY & EQUIPMENT]') : updated.indexOf('[ATTACKS'));
+        if (insertPos >= 0) {
+          updated = updated.substring(0, insertPos) + holdingBlock + updated.substring(insertPos);
+        } else {
+          updated += `\n${holdingBlock}`;
+        }
+      }
+      changes.push('Synchronized Currently Holding section');
     }
 
     return {

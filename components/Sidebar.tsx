@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -627,6 +627,66 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   )}
                                   </div>
                               </div>
+
+                              {/* Currently Holding Section */}
+                              {pStats.holdingCapacity && pStats.holdingCapacity.applies && (
+                                <div className="space-y-1 pt-1 border-t border-neutral-800">
+                                  <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                                    <div className="flex items-center gap-1">
+                                      <Hand size={11} className="text-amber-400" />
+                                      <span>Currently Holding ({pStats.currentlyHolding.length}):</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-semibold ${
+                                        pStats.holdingCapacity.hasOverflowHold
+                                          ? 'bg-red-950 text-red-300 border border-red-800'
+                                          : pStats.holdingCapacity.isFull
+                                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                            : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                      }`}>
+                                        {pStats.holdingCapacity.hasOverflowHold
+                                          ? 'Overflow Hold'
+                                          : pStats.holdingCapacity.isFull
+                                            ? 'Full'
+                                            : `${pStats.holdingCapacity.freeSlots} Free`}
+                                      </span>
+                                      <span className="text-gray-400 font-mono text-[9px]">
+                                        {Math.round(pStats.currentlyHolding.reduce((sum, h) => sum + h.weight, 0) * 10) / 10} lbs
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="text-[8.5px] text-neutral-400 pl-1 flex items-center justify-between">
+                                    <span className="truncate">Anatomy: {pStats.holdingCapacity.holdingLimbsDescription}</span>
+                                    <span className="text-neutral-500 shrink-0">Cap: {pStats.holdingCapacity.maxStandardHoldCount} items</span>
+                                  </div>
+
+                                  {pStats.currentlyHolding.length > 0 ? (
+                                    <div className="text-[9px] text-gray-300 pl-1 border-l border-amber-800/60 space-y-1 mt-0.5">
+                                      {pStats.currentlyHolding.map((it, hi) => (
+                                        <div key={hi} className={`p-1 rounded ${it.isOverflowHold ? 'bg-red-950/40 border border-red-900/60' : 'bg-neutral-950/60'}`}>
+                                          <div className="flex justify-between items-center">
+                                            <span className="font-medium text-amber-200">
+                                              • {it.holdingLimb ? <span className="text-neutral-400 font-normal">[{it.holdingLimb}] </span> : null}{it.name}
+                                            </span>
+                                            <span className="font-mono text-gray-400 text-[8.5px]">{it.weight} lbs ({it.dimensions.raw || 'No dim'})</span>
+                                          </div>
+                                          {it.isOverflowHold && (
+                                            <div className="text-[8px] text-red-400 flex items-center gap-1 mt-0.5">
+                                              <AlertTriangle size={9} className="shrink-0 text-red-400" />
+                                              <span>{it.overflowWarning || 'Held with overflow; risks dropping or being knocked down.'}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="text-[9px] text-gray-500 italic pl-1">
+                                      Hands/Appendages Free (0 lbs)
+                                    </div>
+                                  )}
+                                </div>
+                              )}
 
                               {/* Equipped Gear & Armor */}
                               <div className="space-y-1 pt-1 border-t border-neutral-800">
