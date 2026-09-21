@@ -450,6 +450,19 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           if (px > maxX) maxX = px;
           if (py > maxY) maxY = py;
         }
+      } else if (area.shape === 'path' && area.d) {
+        const matches = String(area.d).match(/-?\d+(\.\d+)?/g);
+        if (matches) {
+          const nums = matches.map(Number);
+          for (let j = 0; j < nums.length - 1; j += 2) {
+            const px = nums[j];
+            const py = nums[j + 1];
+            if (!isNaN(px) && px < minX) minX = px;
+            if (!isNaN(py) && py < minY) minY = py;
+            if (!isNaN(px) && px > maxX) maxX = px;
+            if (!isNaN(py) && py > maxY) maxY = py;
+          }
+        }
       } else {
         if (ax < minX) minX = ax;
         if (ay < minY) minY = ay;
@@ -811,6 +824,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 }
                 textX = sumX / numPoints;
                 textY = sumY / numPoints;
+              }
+            } else if (area.shape === 'path' && area.d) {
+              const matches = String(area.d).match(/-?\d+(\.\d+)?/g);
+              if (matches && matches.length >= 2) {
+                const nums = matches.map(Number);
+                let sumX = 0, sumY = 0, count = 0;
+                for (let j = 0; j < nums.length - 1; j += 2) {
+                  if (!isNaN(nums[j]) && !isNaN(nums[j + 1])) {
+                    sumX += nums[j];
+                    sumY += nums[j + 1];
+                    count++;
+                  }
+                }
+                if (count > 0) {
+                  textX = sumX / count;
+                  textY = sumY / count;
+                }
               }
             }
 

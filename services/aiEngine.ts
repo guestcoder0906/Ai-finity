@@ -107,13 +107,15 @@ MANDATORY MAP GENERATION & POPULATION RULES:
   * Maps MUST have NOTHING missing within all players' observable and known areas. Every single observable, sensed, or known area, landmark, item, weapon, treasure, NPC, enemy, ally, obstacle, building, interior room, door, vehicle, hazard, container, or dynamic element MUST be plotted and updated on the map on every turn without exception.
   * Always keep everything on the map updated correctly as positions, statuses, or environments evolve.
 - ADVANCED, ACCURATE & FLEXIBLE SHAPES (NOT JUST CIRCLES AND SQUARES):
-  * Maps are flexible and can make ANY shapes instead of just circles and squares:
-    1. Oblong / Elliptical Areas (shape: "ellipse" or "oblong"): Use with cx, cy, rx, ry, and optional rotation in degrees (e.g. { "shape": "ellipse", "cx": 40, "cy": 50, "rx": 35, "ry": 18, "rotation": 25, "name": "Whispering Woods", "type": "forest" }). Ideal for oblong forest areas, oval clearings, groves, lakes, ponds, hills, or broad meadows.
-    2. Polygons (shape: "polygon"): Use with points string ("x1,y1 x2,y2 x3,y3...") for organic, jagged, or angled terrain such as riverbanks, winding forest perimeters, coastline, castle fortifications, courtyards, or rocky ridges.
-    3. High-Detail Architectural Buildings & Sub-Structures: Break down complex locations into rich, detailed individual structures instead of a single generic box! For example, a market MUST show individual vendor stalls (type: "shop" or "stall"), vendor carts, central fountain, market square, surrounding shops, taverns, and alleys. A dungeon or castle must show distinct individual rooms, walls, corridors, and doorways.
-    4. Paths & Roads (shape: "path" with SVG "d" attribute or "polygon"): Curved or straight paths, roads, tracks, bridges, and rivers.
-    5. Circles (shape: "circle"): Use with cx, cy (or x, y) and radius for round towers, circular clearings, fountains, wells, or campfires.
-    6. Rectangles (shape: "rect"): Use with x, y, width, height, and optional rx, ry for rectangular rooms, buildings, counters, tables, or crates.
+  * Maps are organic, highly realistic, and visually accurate. They MUST NOT be limited to basic circles or rectangles!
+  * Support for dynamic, jagged, oblong, winding, and composite geometry:
+    1. Composite Multi-Shape Features: An organic or architectural location can be composed of multiple overlapping sub-shapes, polygons, or ovals (e.g., an irregular castle courtyard made of 3 intersecting polygons and 4 circular turrets; a jagged forest made of overlapping jagged polygons and irregular ovals).
+    2. Jagged / Organic Polygons (shape: "polygon"): Use "points" string ("x1,y1 x2,y2 x3,y3 x4,y4...") to render realistic, jagged, irregular, or angled terrain such as craggy mountain ridges, uneven caverns, shoreline indentations, riverbanks, or custom non-symmetric clearings.
+    3. Winding Roads, Rivers, Trails & Paths (shape: "path"): Use SVG path string "d" (e.g. "M 10,20 Q 35,40 60,25 T 110,60") with "strokeWidth" (e.g. 4) and "fill": "none" for organic winding rivers, serpentine forest tracks, curving stone walls, or mountain passes.
+    4. Oblong / Elliptical Areas (shape: "ellipse" or "oblong"): Use with cx, cy, rx, ry, and optional rotation in degrees (e.g. { "shape": "ellipse", "cx": 40, "cy": 50, "rx": 35, "ry": 18, "rotation": 25, "name": "Whispering Woods", "type": "forest" }). Ideal for oblong forest areas, oval clearings, groves, lakes, ponds, hills, or broad meadows.
+    5. High-Detail Architectural Buildings & Sub-Structures: Break down complex locations into rich, detailed individual structures instead of a single generic box! For example, a market MUST show individual vendor stalls (type: "shop" or "stall"), vendor carts, central fountain, market square, surrounding shops, taverns, and alleys. A dungeon or castle must show distinct individual rooms, walls, corridors, and doorways.
+    6. Circles (shape: "circle"): Use with cx, cy (or x, y) and radius for round towers, circular clearings, fountains, wells, or campfires.
+    7. Rectangles (shape: "rect"): Use with x, y, width, height, and optional rx, ry for rectangular rooms, buildings, counters, tables, or crates.
 - FULL ENTITY REGISTRATION: Every single entity within map bounds MUST be present:
   * All active player characters on that page (in 'players' array).
   * Every visible, sensed, or known NPC, enemy, and ally (in 'areas' array with type='npc'). If 3 bandits are present, there MUST be 3 distinct NPC entries.
