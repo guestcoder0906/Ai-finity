@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import { FileSystem } from '../services/fileSystem';
-import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff } from 'lucide-react';
 
 interface MapPanelProps {
   fileSystem: FileSystem;
@@ -20,6 +20,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [showAllLabels, setShowAllLabels] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aimud_map_show_all_labels') === 'true';
+    }
+    return false;
+  });
+
+  const toggleShowAllLabels = () => {
+    setShowAllLabels((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('aimud_map_show_all_labels', String(next));
+      }
+      return next;
+    });
+  };
+
   const dragStartPos = useRef({ x: 0, y: 0 });
   const panStartPos = useRef({ x: 0, y: 0 });
   const touchStartRef = useRef<{ x: number; y: number; dist?: number }>({ x: 0, y: 0 });
@@ -117,20 +134,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     pages = [{ name: 'World Map', ...mapData }];
   }
 
-  if (pages.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-gray-500 italic p-6 text-center gap-4 bg-black">
-        <div className="w-12 h-12 border-2 border-dashed border-gray-800 rounded-full animate-spin-slow flex items-center justify-center text-xl">🗺️</div>
-        <div>
-          <p className="font-bold text-gray-400 not-italic">NO ACTIVE MAP DATA</p>
-          <p className="mt-1 text-[10px]">The AI engine generates the world as you move.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const safePageIndex = Math.max(0, Math.min(currentPageIndex, pages.length - 1));
-  const currentPage = pages[safePageIndex];
+  const safePageIndex = pages.length > 0 ? Math.max(0, Math.min(currentPageIndex, pages.length - 1)) : 0;
 
   // Auto-reset pan and zoom when changing pages
   useEffect(() => {
@@ -150,6 +154,20 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       window.removeEventListener('touchend', handleGlobalUp);
     };
   }, []);
+
+  if (pages.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-gray-500 italic p-6 text-center gap-4 bg-black">
+        <div className="w-12 h-12 border-2 border-dashed border-gray-800 rounded-full animate-spin-slow flex items-center justify-center text-xl">🗺️</div>
+        <div>
+          <p className="font-bold text-gray-400 not-italic">NO ACTIVE MAP DATA</p>
+          <p className="mt-1 text-[10px]">The AI engine generates the world as you move.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const currentPage = pages[safePageIndex];
 
   // Pan and Zoom Handlers
   const handleResetPanZoom = () => {
@@ -512,6 +530,9 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     return `M ${x} ${y} L ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY} Z`;
   };
 
+  // Text scale counteracts zoom to keep text labels the exact same screen size regardless of zooming in/out
+  const textScale = zoom > 0 ? +(1 / zoom).toFixed(4) : 1;
+
   return (
     <div
       ref={mapContainerRef}
@@ -552,7 +573,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         )}
       </div>
 
-      {/* Top Right Zoom and Pan Controls */}
+      {/* Top Right Zoom, Pan and Labels Controls */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 z-20 bg-black/85 backdrop-blur-sm border border-neutral-800 rounded-lg p-1 px-1.5 shadow-lg select-none pointer-events-auto">
         <button
           type="button"
@@ -586,14 +607,27 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           <RotateCcw className="w-3 h-3" />
           <span>Reset</span>
         </button>
+        <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
+        <button
+          type="button"
+          id="map-toggle-labels-btn"
+          onClick={(e) => { e.stopPropagation(); toggleShowAllLabels(); }}
+          title={showAllLabels ? "Labels: Always showing all (click to switch to hover-only)" : "Labels: Showing on hover only (click to show all labels)"}
+          className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono rounded border transition-colors ${
+            showAllLabels
+              ? 'bg-blue-950/80 text-blue-300 border-blue-600/70 shadow-[0_0_8px_rgba(59,130,246,0.3)]'
+              : 'text-neutral-400 hover:text-white hover:bg-neutral-800 border-neutral-800'
+          }`}
+        >
+          {showAllLabels ? <Eye className="w-3 h-3 text-blue-400" /> : <EyeOff className="w-3 h-3 text-neutral-400" />}
+          <span>{showAllLabels ? 'All Text' : 'Hover Text'}</span>
+        </button>
       </div>
 
       {/* Bottom Hint on Drag/Zoom */}
-      {(zoom !== 1 || pan.x !== 0 || pan.y !== 0) && (
-        <div className="absolute bottom-2 right-2 z-10 pointer-events-none bg-black/75 text-[9px] font-mono text-gray-400 px-2 py-0.5 rounded border border-neutral-800/80 backdrop-blur-xs">
-          Drag to pan • Scroll to zoom • Double-click to reset
-        </div>
-      )}
+      <div className="absolute bottom-2 right-2 z-10 pointer-events-none bg-black/75 text-[9px] font-mono text-gray-400 px-2 py-0.5 rounded border border-neutral-800/80 backdrop-blur-xs">
+        {showAllLabels ? 'Showing all labels • Scroll to zoom' : 'Hover elements for text labels • Scroll to zoom'}
+      </div>
 
       <svg
         ref={svgRef}
@@ -705,21 +739,29 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 {/* Tooltip on hover */}
                 <title>{`${parsedName}${area.type ? ` (${area.type})` : ''}`}</title>
 
-                {/* Area Label */}
-                {((area.shape !== 'polygon' && (aw > 16 || ar > 8 || rx > 10)) || area.shape === 'polygon' || isItemType) && (
-                  <text
-                    x={textX}
-                    y={textY}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    className={`text-[8px] font-mono pointer-events-none transition-opacity ${
-                      isItemType
-                        ? 'fill-yellow-300 opacity-80 group-hover:opacity-100 font-bold'
-                        : 'fill-gray-400 opacity-50 group-hover:opacity-100'
+                {/* Area Label - shows on hover over area or text, or always if showAllLabels is active; scale(textScale) keeps size constant on zoom */}
+                {parsedName && (
+                  <g
+                    transform={`translate(${textX}, ${textY}) scale(${textScale})`}
+                    className={`pointer-events-auto transition-opacity duration-150 ${
+                      showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                     }`}
                   >
-                    {parsedName}
-                  </text>
+                    <text
+                      x={0}
+                      y={0}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className={`text-[6px] font-mono font-medium select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] ${
+                        isItemType
+                          ? 'fill-yellow-300 font-bold'
+                          : 'fill-gray-200'
+                      }`}
+                      style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                    >
+                      {parsedName}
+                    </text>
+                  </g>
                 )}
               </g>
             );
@@ -738,14 +780,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   strokeWidth={1}
                 />
                 <title>{`${iName} (Item: ${item.description || ''})`}</title>
-                <text
-                  x={ix}
-                  y={iy - 5}
-                  textAnchor="middle"
-                  className="fill-yellow-300 text-[6px] font-mono pointer-events-none opacity-80 group-hover:opacity-100 font-semibold"
+                <g
+                  transform={`translate(${ix}, ${iy}) scale(${textScale})`}
+                  className={`pointer-events-auto transition-opacity duration-150 ${
+                    showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                 >
-                  {iName}
-                </text>
+                  <text
+                    x={0}
+                    y={-6}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    className="fill-yellow-300 text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
+                    style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                  >
+                    {iName}
+                  </text>
+                </g>
               </g>
             );
           })}
@@ -765,14 +816,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   strokeWidth={1.5}
                 />
                 <title>{`${lName} (Landmark: ${lm.description || ''})`}</title>
-                <text
-                  x={lx}
-                  y={ly - 6}
-                  textAnchor="middle"
-                  className="fill-indigo-300 text-[6px] font-mono pointer-events-none opacity-80 group-hover:opacity-100 font-semibold"
+                <g
+                  transform={`translate(${lx}, ${ly}) scale(${textScale})`}
+                  className={`pointer-events-auto transition-opacity duration-150 ${
+                    showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                 >
-                  {lName}
-                </text>
+                  <text
+                    x={0}
+                    y={-7}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    className="fill-indigo-300 text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
+                    style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                  >
+                    {lName}
+                  </text>
+                </g>
               </g>
             );
           })}
@@ -785,7 +845,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const isMe = String(player.username).toLowerCase() === String(username).toLowerCase();
 
             return (
-              <g key={player.username || i}>
+              <g key={player.username || i} className="group cursor-pointer">
                 {/* Vision Cones */}
                 {player.vision && (
                   <>
@@ -808,14 +868,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   fill={isMe ? "#3b82f6" : "#ef4444"}
                   transform={`translate(${px}, ${py}) rotate(${pfacing})`}
                 />
-                <text
-                  x={px}
-                  y={py - 8}
-                  textAnchor="middle"
-                  className="fill-white text-[6px] font-mono pointer-events-none font-bold"
+                <g
+                  transform={`translate(${px}, ${py}) scale(${textScale})`}
+                  className={`pointer-events-auto transition-opacity duration-150 ${
+                    showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                 >
-                  {player.username}
-                </text>
+                  <text
+                    x={0}
+                    y={-8}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    className="fill-white text-[5.5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
+                    style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                  >
+                    {player.username}
+                  </text>
+                </g>
               </g>
             );
           })}
@@ -828,16 +897,29 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const isDiscovery = note.type === 'discovery';
 
             return (
-              <g key={`note-${i}`} transform={`translate(${nx}, ${ny})`}>
-                <circle r="1" className={isDanger ? "fill-red-500" : isDiscovery ? "fill-yellow-400" : "fill-blue-400"} />
-                <text
-                  y="-3"
-                  textAnchor="middle"
-                  className={`text-[5px] font-bold font-mono pointer-events-none drop-shadow-md ${isDanger ? "fill-red-400" : isDiscovery ? "fill-yellow-300" : "fill-blue-300"
-                    }`}
+              <g key={`note-${i}`} transform={`translate(${nx}, ${ny})`} className="group cursor-pointer">
+                {/* Invisible larger hit circle for comfortable hover */}
+                <circle r={4} className="fill-transparent" />
+                <circle r={1.5} className={isDanger ? "fill-red-500" : isDiscovery ? "fill-yellow-400" : "fill-blue-400"} />
+                <g
+                  transform={`scale(${textScale})`}
+                  className={`pointer-events-auto transition-opacity duration-150 ${
+                    showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                 >
-                  {note.text}
-                </text>
+                  <text
+                    x={0}
+                    y={-5}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    className={`text-[4.5px] font-bold font-mono select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] ${
+                      isDanger ? "fill-red-400" : isDiscovery ? "fill-yellow-300" : "fill-blue-300"
+                    }`}
+                    style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                  >
+                    {note.text}
+                  </text>
+                </g>
               </g>
             );
           })}
