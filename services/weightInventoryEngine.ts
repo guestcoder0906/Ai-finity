@@ -22,6 +22,15 @@ export interface ParsedDimensions {
   unit: string;
 }
 
+export interface ItemUsageInfo {
+  current: number;
+  max?: number;
+  unit?: string; // e.g. "uses", "charges", "doses", "sips", "hours", "arrows", "durability", "shots", "servings"
+  isRefillable: boolean;
+  refillType?: string; // e.g. "Water", "Oil", "Mana", "Herbs", "Arrows", "Fuel"
+  rawText?: string;
+}
+
 export interface ItemInfo {
   name: string;
   weight: number; // lbs
@@ -36,6 +45,7 @@ export interface ItemInfo {
   fitStatus?: 'fits' | 'overflow' | 'does_not_fit';
   overflowReason?: string;
   rawText: string;
+  usage?: ItemUsageInfo;
   temporaryEffect?: {
     name: string;
     expires?: string;
@@ -137,6 +147,16 @@ export interface CharacterPhysicalStats {
     tempVal: number;
     baseVal: number;
   }>;
+  healthState?: {
+    isUnconscious: boolean;
+    isDead: boolean;
+    unconsciousExpires?: string;
+    unconsciousDurationRemainingMinutes?: number;
+    rotStage?: number;
+    rotStageName?: string;
+    rotDescription?: string;
+    deathReason?: string;
+  };
 }
 
 export class WeightInventoryEngine {
@@ -992,6 +1012,211 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Parses item usage, charges, doses, ammo, fuel, and refillable attributes dynamically.
+   * Handles patterns like:
+   * - "Uses: 3/5", "[Uses: 4/5]", "Charges: 2/3", "4 sips", "Sips: 3/4"
+   * - "Fuel: 2/4 hours", "Ammo: 18/20 arrows", "Durability: 85/100"
+   * - "Refillable: Yes (Resource: Fresh Water)", "[Refillable: Oil]"
+   * - "Empty [Refillable: Water]"
+   */
+  public static parseItemUsage(text: string, itemName?: string): ItemUsageInfo | undefined {
+    if (!text) return undefined;
+    const lower = text.toLowerCase();
+
+    // 1. Detect refillable status and refill resource
+    let isRefillable = false;
+    let refillType: string | undefined;
+
+    const refillMatch = text.match(/(?:\[|\(|\b)(?:refillable|rechargeable|restockable)(?:[:=\s]+([a-zA-Z0-9_\s'-]+?))?(?:\)|\]|,|;|\.|$)/i);
+    if (refillMatch) {
+      isRefillable = true;
+      if (refillMatch[1]) {
+        const rawType = refillMatch[1].trim();
+        if (!/^(?:yes|true|always)$/i.test(rawType)) {
+          refillType = rawType;
+        }
+      }
+    } else if (lower.includes('refillable: yes') || lower.includes('[refillable]') || lower.includes('(refillable)')) {
+      isRefillable = true;
+    }
+
+    // Heuristics for inherently refillable items if described as such
+    if (!isRefillable && itemName) {
+      const lowerName = itemName.toLowerCase();
+      if (
+        (lowerName.includes('waterskin') || lowerName.includes('canteen') || lowerName.includes('flask') || lowerName.includes('lantern') || lowerName.includes('quiver') || lowerName.includes('oil lamp')) &&
+        (text.includes('/') || lower.includes('sip') || lower.includes('fuel') || lower.includes('ammo') || lower.includes('dose') || lower.includes('charge'))
+      ) {
+        isRefillable = true;
+        if (!refillType) {
+          if (lowerName.includes('waterskin') || lowerName.includes('canteen')) refillType = 'Water';
+          else if (lowerName.includes('lantern') || lowerName.includes('lamp')) refillType = 'Oil';
+          else if (lowerName.includes('quiver')) refillType = 'Arrows';
+        }
+      }
+    }
+
+    // 2. Detect fractional or count usage:
+    const fractionMatch = text.match(/(?:uses?|charges?|doses?|sips?|fuel|ammo|arrows?|durability|usage|remaining)[:=\s]*\[?(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(?:\s*([a-zA-Z]+))?\]?/i)
+      || text.match(/\[(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\]/)
+      || text.match(/\((\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\)/)
+      || text.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*(uses?|charges?|doses?|sips?|arrows?|shots?|hours?)/i);
+
+    if (fractionMatch) {
+      const current = parseFloat(fractionMatch[1]);
+      const max = parseFloat(fractionMatch[2]);
+      const unit = fractionMatch[3]?.trim() || (lower.includes('sip') ? 'sips' : lower.includes('charge') ? 'charges' : lower.includes('dose') ? 'doses' : lower.includes('arrow') ? 'arrows' : lower.includes('hour') ? 'hours' : 'uses');
+      return {
+        current,
+        max,
+        unit,
+        isRefillable,
+        refillType,
+        rawText: `${current}/${max} ${unit}`
+      };
+    }
+
+    // b) Single usage count:
+    const singleMatch = text.match(/(?:uses?|charges?|doses?|sips?|fuel|ammo)[:=\s]+(\d+(?:\.\d+)?)(?:\s*([a-zA-Z]+))?/i)
+      || text.match(/(\d+)\s+(?:uses?|charges?|doses?|sips?|arrows?|shots?)\s+remaining/i);
+
+    if (singleMatch) {
+      const current = parseFloat(singleMatch[1]);
+      const unit = singleMatch[2]?.trim() || (lower.includes('sip') ? 'sips' : lower.includes('charge') ? 'charges' : lower.includes('dose') ? 'doses' : 'uses');
+      return {
+        current,
+        unit,
+        isRefillable,
+        refillType,
+        rawText: `${current} ${unit}`
+      };
+    }
+
+    // c) Check if explicitly empty but refillable
+    if (lower.includes('empty') && isRefillable) {
+      return {
+        current: 0,
+        unit: refillType ? `${refillType.toLowerCase()}` : 'uses',
+        isRefillable: true,
+        refillType,
+        rawText: 'Empty (0 uses)'
+      };
+    }
+
+    // d) If just refillable without explicit numbers
+    if (isRefillable) {
+      return {
+        current: 1,
+        isRefillable: true,
+        refillType,
+        rawText: `Refillable${refillType ? ` (${refillType})` : ''}`
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Updates or appends item usage information in an item line.
+   */
+  public static updateItemUsageInLine(
+    line: string,
+    newCurrent: number,
+    newMax?: number,
+    refillType?: string
+  ): string {
+    let updated = line;
+    const fractionRegex = /(?:uses?|charges?|doses?|sips?|fuel|ammo|durability|usage)[:=\s]*\[?(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(?:\s*([a-zA-Z]+))?\]?/i;
+    const match = updated.match(fractionRegex);
+    if (match) {
+      const maxVal = newMax !== undefined ? newMax : match[2];
+      const unit = match[3] || '';
+      const replacement = `Uses: ${newCurrent}/${maxVal}${unit ? ` ${unit}` : ''}`;
+      updated = updated.replace(match[0], replacement);
+    } else {
+      const maxStr = newMax !== undefined ? `/${newMax}` : '';
+      const refillStr = refillType ? ` (Refillable: ${refillType})` : '';
+      updated = `${updated.trimEnd()} [Uses: ${newCurrent}${maxStr}${refillStr}]`;
+    }
+    return updated;
+  }
+
+  /**
+   * Calculates corpse decomposition/rot stage based on elapsed WorldTime.
+   * Rot stages (when biological decomposition applies in context):
+   * - Stage 1: Fresh Corpse (< 2 hours)
+   * - Stage 2: Early Decomposition (2 - 24 hours)
+   * - Stage 3: Active Decay / Bloating (1 - 3 days)
+   * - Stage 4: Advanced Decay (3 - 10 days)
+   * - Stage 5: Skeletonized / Remains (10+ days)
+   */
+  public static calculateDecompositionStage(
+    beganTimestampStr?: string,
+    currentTimestampStr?: string
+  ): { stage: number; stageName: string; description: string } {
+    if (!beganTimestampStr || !currentTimestampStr) {
+      return {
+        stage: 1,
+        stageName: 'Stage 1 - Fresh Corpse',
+        description: 'Warm, no odor, rigor mortis developing gradually.'
+      };
+    }
+
+    let elapsedHours = 0;
+    try {
+      const cleanBegan = beganTimestampStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
+      const cleanCurrent = currentTimestampStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
+      
+      const parseD = (s: string) => {
+        const parts = s.split(' - ');
+        if (parts.length === 2) return new Date(`${parts[1]} ${parts[0]}`);
+        return new Date(s);
+      };
+
+      const dBegan = parseD(cleanBegan);
+      const dCurrent = parseD(cleanCurrent);
+      if (!isNaN(dBegan.getTime()) && !isNaN(dCurrent.getTime())) {
+        const diffMs = dCurrent.getTime() - dBegan.getTime();
+        elapsedHours = Math.max(0, diffMs / (1000 * 60 * 60));
+      }
+    } catch {
+      elapsedHours = 0;
+    }
+
+    if (elapsedHours < 2) {
+      return {
+        stage: 1,
+        stageName: 'Stage 1 - Fresh Corpse',
+        description: 'Warm, no odor, rigor mortis developing gradually.'
+      };
+    } else if (elapsedHours < 24) {
+      return {
+        stage: 2,
+        stageName: 'Stage 2 - Early Decomposition',
+        description: 'Algor mortis (cooling), rigor mortis present then releasing, initial pallor/lividity.'
+      };
+    } else if (elapsedHours < 72) {
+      return {
+        stage: 3,
+        stageName: 'Stage 3 - Active Decay / Bloating',
+        description: 'Abdominal distension, biological decomposition, strong decay odor, marbling.'
+      };
+    } else if (elapsedHours < 240) {
+      return {
+        stage: 4,
+        stageName: 'Stage 4 - Advanced Decay',
+        description: 'Tissue softening and purge fluids, significant structural tissue breakdown, exposed bone.'
+      };
+    } else {
+      return {
+        stage: 5,
+        stageName: 'Stage 5 - Skeletonized / Remains',
+        description: 'Organic tissue fully decayed; dry skeletal remains and apparel/gear persist.'
+      };
+    }
+  }
+
+  /**
    * Parses an item line, extracting name, weight, dimensions, container, and overflow notes.
    * Example lines:
    * - "feather 0 weight 3x0 inch"
@@ -1196,6 +1421,9 @@ export class WeightInventoryEngine {
       overflowReason = 'Item exceeds container space; risks falling or dropping during actions/movement.';
     }
 
+    // Dynamic item usage & refillable detection
+    const usage = this.parseItemUsage(rest, name);
+
     return {
       name,
       weight,
@@ -1210,6 +1438,7 @@ export class WeightInventoryEngine {
       fitStatus: doesNotFit ? 'does_not_fit' : isOverflow ? 'overflow' : 'fits',
       overflowReason,
       rawText: line,
+      usage,
       temporaryEffect
     };
   }
@@ -2296,7 +2525,54 @@ export class WeightInventoryEngine {
       equippedGear,
       carriedItems,
       storedItems,
-      activeWeightEffects
+      activeWeightEffects,
+      healthState: (() => {
+        let isUnconscious = false;
+        let isDead = false;
+        let unconsciousExpires: string | undefined;
+        let unconsciousDurationRemainingMinutes: number | undefined;
+        let rotStage: number | undefined;
+        let rotStageName: string | undefined;
+        let rotDescription: string | undefined;
+        let deathReason: string | undefined;
+
+        const lowerContent = fileContent.toLowerCase();
+        if (lowerContent.includes('status: dead') || lowerContent.includes('(dead)') || lowerContent.includes('status: slain')) {
+          isDead = true;
+          const deathMatch = fileContent.match(/Status:\s*Dead\s*\(([^)]+)\)/i);
+          if (deathMatch) deathReason = deathMatch[1].trim();
+        } else if (lowerContent.includes('status: unconscious') || lowerContent.includes('(unconscious')) {
+          isUnconscious = true;
+          const expMatch = fileContent.match(/Status:\s*Unconscious\s*\([^)]*Expires:\s*([^;)]+)/i);
+          if (expMatch) unconsciousExpires = expMatch[1].trim();
+        }
+
+        const rotMatch = fileContent.match(/Decomposition\s*\/\s*Rot:\s*([^\n\r]+)/i);
+        if (rotMatch) {
+          const rotLine = rotMatch[1];
+          const beganMatch = rotLine.match(/Began:\s*([^;)]+)/i);
+          const beganTime = beganMatch ? beganMatch[1].trim() : undefined;
+          const decomp = WeightInventoryEngine.calculateDecompositionStage(beganTime, currentTimestamp);
+          rotStage = decomp.stage;
+          rotStageName = decomp.stageName;
+          rotDescription = decomp.description;
+        } else if (isDead) {
+          rotStage = 1;
+          rotStageName = 'Stage 1 - Fresh Corpse';
+          rotDescription = 'Warm, no odor, rigor mortis developing gradually.';
+        }
+
+        return {
+          isUnconscious,
+          isDead,
+          unconsciousExpires,
+          unconsciousDurationRemainingMinutes,
+          rotStage,
+          rotStageName,
+          rotDescription,
+          deathReason
+        };
+      })()
     };
   }
 
@@ -2618,6 +2894,75 @@ export class WeightInventoryEngine {
         updated = updated.substring(0, insertPos) + currencyBlock + updated.substring(insertPos);
       }
       changes.push('Synchronized Currency & Financial Balance section');
+    }
+
+    // 7. Synchronize Unconscious duration check and Dead character decomposition/rot progression based on WorldTime
+    if (currentTimestamp) {
+      // Check if character is Unconscious at 0 HP
+      const isUnconscious = updated.toLowerCase().includes('status: unconscious') || updated.toLowerCase().includes('(unconscious');
+      const healthMatch = updated.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/im);
+      const currentHP = healthMatch ? parseFloat(healthMatch[2]) : undefined;
+      const maxHP = healthMatch ? parseFloat(healthMatch[3]) : 100;
+
+      if (isUnconscious && currentHP === 0) {
+        const expMatch = updated.match(/Status:\s*Unconscious\s*\([^)]*Expires:\s*([^;)]+)/i);
+        if (expMatch) {
+          const expTimeStr = expMatch[1].trim();
+          try {
+            const parseD = (s: string) => {
+              const clean = s.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
+              const parts = clean.split(' - ');
+              if (parts.length === 2) return new Date(`${parts[1]} ${parts[0]}`);
+              return new Date(clean);
+            };
+            const dExp = parseD(expTimeStr);
+            const dCur = parseD(currentTimestamp);
+            if (!isNaN(dExp.getTime()) && !isNaN(dCur.getTime()) && dCur.getTime() >= dExp.getTime()) {
+              // Expired! Character succumbs to 0 HP and becomes Dead
+              updated = updated.replace(/Status:\s*Unconscious[^\n\r]*/i, `Status: Dead (Succumbed to 0 HP wounds after unconscious survival window elapsed; Slain)`);
+              if (healthMatch) {
+                updated = updated.replace(healthMatch[0], `${healthMatch[1]}0 / ${maxHP} (Dead)`);
+              }
+              if (!updated.includes('Decomposition / Rot:')) {
+                const loreIdx = updated.indexOf('[STATUS EFFECTS & LORE]');
+                if (loreIdx >= 0) {
+                  const insertPos = updated.indexOf('\n', loreIdx) + 1;
+                  updated = updated.substring(0, insertPos) + `- Decomposition / Rot: Stage 1 - Fresh Corpse (Began: ${currentTimestamp}; Gradual biological decay based on WorldTime)\n` + updated.substring(insertPos);
+                }
+              }
+              changes.push('Unconscious duration elapsed at 0 HP: character has succumbed and died');
+            }
+          } catch {}
+        }
+      }
+
+      // Check if character is Dead and rot applies
+      const isDead = updated.toLowerCase().includes('status: dead') || updated.toLowerCase().includes('(dead)');
+      const rotMatch = updated.match(/^(\s*[-*•]?\s*Decomposition\s*\/\s*Rot\s*[:=]\s*)([^\n\r]+)$/im);
+      if (isDead) {
+        if (rotMatch) {
+          const rotBody = rotMatch[2];
+          const beganMatch = rotBody.match(/Began:\s*([^;)]+)/i);
+          const beganTime = beganMatch ? beganMatch[1].trim() : currentTimestamp;
+          const stageInfo = WeightInventoryEngine.calculateDecompositionStage(beganTime, currentTimestamp);
+          const newRotLine = `${rotMatch[1]}${stageInfo.stageName} (Began: ${beganTime}; ${stageInfo.description}; Advances with WorldTime)`;
+          if (newRotLine !== rotMatch[0]) {
+            updated = updated.replace(rotMatch[0], newRotLine);
+            changes.push(`Updated Decomposition/Rot to ${stageInfo.stageName}`);
+          }
+        } else if (!updated.toLowerCase().includes('non-biological') && !updated.toLowerCase().includes('undead') && !updated.toLowerCase().includes('construct') && !updated.toLowerCase().includes('golem') && !updated.toLowerCase().includes('ghost')) {
+          const stageInfo = WeightInventoryEngine.calculateDecompositionStage(currentTimestamp, currentTimestamp);
+          const newRotLine = `- Decomposition / Rot: ${stageInfo.stageName} (Began: ${currentTimestamp}; ${stageInfo.description}; Advances with WorldTime)\n`;
+          const loreIdx = updated.indexOf('[STATUS EFFECTS & LORE]');
+          if (loreIdx >= 0) {
+            const insertPos = updated.indexOf('\n', loreIdx) + 1;
+            updated = updated.substring(0, insertPos) + newRotLine + updated.substring(insertPos);
+          } else {
+            updated += `\n[STATUS EFFECTS & LORE]\n${newRotLine}`;
+          }
+          changes.push(`Added Decomposition/Rot: ${stageInfo.stageName}`);
+        }
+      }
     }
 
     return {

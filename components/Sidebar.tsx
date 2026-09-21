@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -38,6 +38,8 @@ interface SidebarProps {
   onNavigateWelcome?: () => void;
   onOpenAccount?: () => void;
   actionStatus?: ActionStatus;
+  onUndo?: () => void;
+  undoCount?: number;
   onOpenMarket?: (tab?: 'packs' | 'subscriptions' | 'apikey') => void;
   onOpenAdventures?: () => void;
   onOpenCommunity?: () => void;
@@ -79,6 +81,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNavigateWelcome,
   onOpenAccount,
   actionStatus,
+  onUndo,
+  undoCount = 0,
   onOpenMarket,
   onOpenAdventures,
   onOpenCommunity,
@@ -612,6 +616,21 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Settings size={12} className={debugMode ? "text-yellow-400" : ""} />
                 <span className={debugMode ? "text-yellow-400" : ""}>DEBUG</span>
               </label>
+            )}
+            {onUndo && (
+              <button
+                id="sidebar-undo-turn-btn"
+                onClick={onUndo}
+                disabled={undoCount === 0}
+                className={`transition-colors flex items-center gap-1 ${
+                  undoCount === 0
+                    ? 'text-neutral-600 cursor-not-allowed opacity-40'
+                    : 'text-amber-400 hover:text-amber-300 cursor-pointer'
+                }`}
+                title={undoCount === 0 ? "No previous turns to undo" : `Undo Turn (${undoCount} available)`}
+              >
+                <RotateCcw size={12} />
+              </button>
             )}
             {gameMode === 'singleplayer' && (
               <button onClick={onReset} className="hover:text-red-400 transition-colors" title="Delete Adventure">

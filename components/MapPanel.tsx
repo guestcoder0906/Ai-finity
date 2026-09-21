@@ -864,6 +864,22 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   />
                 )}
 
+                {/* Status/Effect glow for active elements (e.g. lit torches, fire, active magic) */}
+                {(() => {
+                  const statusText = area.status || area.condition || (Array.isArray(area.effects) && area.effects.length > 0 ? area.effects.join(', ') : '');
+                  const isLit = String(statusText || area.type || '').toLowerCase().includes('lit') || String(statusText || '').toLowerCase().includes('fire') || String(statusText || '').toLowerCase().includes('burning');
+                  if (!isLit) return null;
+                  return (
+                    <circle
+                      cx={textX}
+                      cy={textY}
+                      r={7}
+                      className="fill-amber-400/25 stroke-amber-400/50 animate-pulse pointer-events-none"
+                      strokeWidth={0.75}
+                    />
+                  );
+                })()}
+
                 {/* Highlight marker for loose items/weapons on ground */}
                 {isItemType && (
                   <polygon
@@ -874,32 +890,48 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 )}
 
                 {/* Tooltip on hover */}
-                <title>{`${parsedName}${area.type ? ` (${area.type})` : ''}`}</title>
+                {(() => {
+                  const statusText = area.status || area.condition || (Array.isArray(area.effects) && area.effects.length > 0 ? area.effects.join(', ') : '');
+                  return (
+                    <title>{`${parsedName}${area.type ? ` (${area.type})` : ''}${statusText ? ` [${statusText}]` : ''}`}</title>
+                  );
+                })()}
 
                 {/* Area Label - shows on hover over area or text, or always if showAllLabels is active; scale(textScale) keeps size constant on zoom */}
-                {parsedName && (
-                  <g
-                    transform={`translate(${textX}, ${textY}) scale(${textScale})`}
-                    className={`pointer-events-auto transition-opacity duration-150 ${
-                      showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}
-                  >
-                    <text
-                      x={0}
-                      y={0}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      className={`text-[6px] font-mono font-medium select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] ${
-                        isItemType
-                          ? 'fill-yellow-300 font-bold'
-                          : 'fill-gray-200'
+                {parsedName && (() => {
+                  const statusText = area.status || area.condition || (Array.isArray(area.effects) && area.effects.length > 0 ? area.effects.join(', ') : '');
+                  const isLit = String(statusText || area.type || '').toLowerCase().includes('lit') || String(statusText || '').toLowerCase().includes('fire');
+                  const isBroken = String(statusText || '').toLowerCase().includes('broken') || String(statusText || '').toLowerCase().includes('jammed');
+
+                  return (
+                    <g
+                      transform={`translate(${textX}, ${textY}) scale(${textScale})`}
+                      className={`pointer-events-auto transition-opacity duration-150 ${
+                        showAllLabels ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}
-                      style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                     >
-                      {parsedName}
-                    </text>
-                  </g>
-                )}
+                      <text
+                        x={0}
+                        y={0}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        className={`text-[6px] font-mono font-medium select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] ${
+                          isItemType
+                            ? 'fill-yellow-300 font-bold'
+                            : 'fill-gray-200'
+                        }`}
+                        style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
+                      >
+                        {parsedName}
+                        {statusText && (
+                          <tspan className={isLit ? "fill-amber-300 font-semibold" : isBroken ? "fill-red-300 italic" : "fill-cyan-300"}>
+                            {` [${statusText}]`}
+                          </tspan>
+                        )}
+                      </text>
+                    </g>
+                  );
+                })()}
               </g>
             );
           })}
@@ -910,14 +942,26 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const ix = Number(item.x) || 0;
             const iy = Number(item.y) || 0;
             const iName = parseName(item.name || 'Item');
+            const itemStatus = item.status || item.condition || (Array.isArray(item.effects) && item.effects.length > 0 ? item.effects.join(', ') : '');
+            const isLit = String(itemStatus || item.name || '').toLowerCase().includes('lit') || String(itemStatus || '').toLowerCase().includes('fire') || String(itemStatus || '').toLowerCase().includes('burning');
+
             return (
               <g key={`page-item-${i}`} className="group cursor-crosshair">
+                {isLit && (
+                  <circle
+                    cx={ix}
+                    cy={iy}
+                    r={6}
+                    className="fill-amber-400/30 stroke-amber-400/60 animate-pulse pointer-events-none"
+                    strokeWidth={0.75}
+                  />
+                )}
                 <polygon
                   points={`${ix},${iy - 3.5} ${ix + 3.5},${iy} ${ix},${iy + 3.5} ${ix - 3.5},${iy}`}
                   className="fill-yellow-400 stroke-yellow-200 animate-pulse"
                   strokeWidth={1}
                 />
-                <title>{`${iName} (Item: ${item.description || ''})`}</title>
+                <title>{`${iName}${itemStatus ? ` [${itemStatus}]` : ''} (Item: ${item.description || ''})`}</title>
                 <g
                   transform={`translate(${ix}, ${iy}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -933,6 +977,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
                     {iName}
+                    {itemStatus && (
+                      <tspan className={isLit ? "fill-amber-300 font-semibold" : "fill-cyan-300"}>
+                        {` [${itemStatus}]`}
+                      </tspan>
+                    )}
                   </text>
                 </g>
               </g>
@@ -945,6 +994,10 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const lx = Number(lm.x) || 0;
             const ly = Number(lm.y) || 0;
             const lName = parseName(lm.name || 'Landmark');
+            const lmStatus = lm.status || lm.condition || (Array.isArray(lm.effects) && lm.effects.length > 0 ? lm.effects.join(', ') : '');
+            const isBroken = String(lmStatus || '').toLowerCase().includes('broken') || String(lmStatus || '').toLowerCase().includes('ruined') || String(lmStatus || '').toLowerCase().includes('jammed');
+            const isLit = String(lmStatus || '').toLowerCase().includes('lit') || String(lmStatus || '').toLowerCase().includes('active');
+
             return (
               <g key={`page-lm-${i}`} className="group cursor-crosshair">
                 <circle
@@ -954,7 +1007,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   className="fill-indigo-900/80 stroke-indigo-400"
                   strokeWidth={1.5}
                 />
-                <title>{`${lName} (Landmark: ${lm.description || ''})`}</title>
+                <title>{`${lName}${lmStatus ? ` [${lmStatus}]` : ''} (Landmark: ${lm.description || ''})`}</title>
                 <g
                   transform={`translate(${lx}, ${ly}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -970,6 +1023,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
                     {lName}
+                    {lmStatus && (
+                      <tspan className={isBroken ? "fill-red-300 italic" : isLit ? "fill-amber-300 font-semibold" : "fill-cyan-300"}>
+                        {` [${lmStatus}]`}
+                      </tspan>
+                    )}
                   </text>
                 </g>
               </g>

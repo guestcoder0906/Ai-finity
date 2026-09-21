@@ -17,11 +17,16 @@ export interface HealthTransaction {
   target?: string;
   amount: number;
   operation: 'damage' | 'heal';
+  currentHealth?: number; // Can be negative (tracks even while dead/unconscious)
   damageType?: string;
   source?: string;
   bodyPart?: string;
   injury?: string;
   rawText?: string;
+  isMassiveDamage?: boolean;
+  isUnconscious?: boolean;
+  isDead?: boolean;
+  deathReason?: string;
 }
 
 export interface CurrencyTransaction {
@@ -37,9 +42,15 @@ export interface CurrencyTransaction {
 export interface InventoryTransaction {
   name: string;
   quantity?: number;
-  operation: 'add' | 'remove' | 'equip' | 'unequip' | 'transfer' | 'drop';
+  operation: 'add' | 'remove' | 'equip' | 'unequip' | 'transfer' | 'drop' | 'consume_use' | 'refill' | 'set_usage';
   container?: string;
   targetCharacter?: string;
+  usageChange?: number;
+  currentUsage?: number;
+  maxUsage?: number;
+  unit?: string;
+  isRefillable?: boolean;
+  refillResource?: string;
 }
 
 export interface UpdateItem {
@@ -70,6 +81,13 @@ export interface CheckDef {
   modifier?: number;
 }
 
+export interface TimeTravelDirective {
+  targetTime?: string;
+  turnsBack?: number;
+  preserveFiles?: string[]; // file names or entity names that should NOT be reverted (e.g. time traveler themselves)
+  reason?: string;
+}
+
 export interface AIResponse {
   narrative: string;
   updates?: UpdateItem[];
@@ -80,6 +98,7 @@ export interface AIResponse {
   currencyTransactions?: CurrencyTransaction[];
   inventoryTransactions?: InventoryTransaction[];
   healthTransactions?: HealthTransaction[];
+  timeTravel?: TimeTravelDirective;
 }
 
 export interface Message {
@@ -92,4 +111,28 @@ export interface NarrativeEntry {
   text: string;
   type: 'system' | 'user' | 'ai';
   recommendations?: string[];
+}
+
+export interface TurnSnapshot {
+  id: string;
+  timestamp: number;
+  turnNumber: number;
+  userAction?: string;
+  narrative: NarrativeEntry[];
+  updates: UpdateItem[];
+  recommendations: string[];
+  fileSystemState: {
+    files: Record<string, string>;
+    metadata: Record<string, { displayName: string }>;
+  };
+  worldTime?: string;
+  gameOver?: boolean;
+}
+
+export interface EntityEffect {
+  name: string;
+  description?: string;
+  duration?: string | number;
+  status?: string; // e.g. "Lit", "Broken", "Frozen", "Burning", "Electrified"
+  condition?: string; // e.g. "Broken until repaired", "Pristine", "Damaged"
 }

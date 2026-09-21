@@ -1,7 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { FileSystem } from "./fileSystem";
-import { AIResponse, CheckDef, UpdateItem } from "../types";
+import { AIResponse, CheckDef, UpdateItem, TimeTravelDirective } from "../types";
 import { WeightInventoryEngine } from "./weightInventoryEngine";
+import { HistoryService } from "./historyService";
 
 interface DetectedModifier {
   label: string;
@@ -51,6 +52,23 @@ TEMPORAL DISPLACEMENT RULES (CRITICAL):
   * If the party returns to their original timeline, swap "Current Active Time" back to the "Anchor Timestamp" (plus any parallel duration, if applicable) and clear or re-anchor the displaced state.
   * Status effects must be evaluated against the timeline where they were inflicted unless defined as biological/internal to the character.
 
+TIME TRAVEL & STATE REVERSION (CRITICAL MANDATE):
+- The game automatically auto-saves full snapshots of every previous turn in history.
+- When an in-story event or character action involves time travel (e.g., traveling back 10 seconds to save someone from dying, rewinding a turn, or reverting/changing a past saving because of consequences in the story), the AI can trigger state reversion by including the "timeTravel" object in the JSON response:
+  "timeTravel": {
+    "turnsBack": 1, // Number of turns to travel back (e.g. 1 turn for ~10 seconds ago, 2 turns for 30-60 seconds ago), OR "targetTime": "timestamp string"
+    "preserveFiles": ["CharacterName-Player.txt"], // Selective exclusions: list the filenames of entities (such as the time traveler themselves, their active memories, injuries, or equipped chronosphere) that DO NOT revert to their past version and retain their current state!
+    "reason": "Traveled back 10 seconds to save ally from death"
+  }
+- EXCLUSION LOGIC: The time traveler or specified preserved entities are NOT reverted, while the rest of the adventure (the world, map, NPCs, casualties, environmental hazards) reverts cleanly to the historical snapshot.
+- CONSEQUENCE REVERSALS: If the time traveler later chooses to undo or alter their time jump (e.g. returning to let events unfold naturally due to paradoxes or unforeseen horrors), output a corresponding "timeTravel" reversion directive or state update.
+
+PERSISTENT OBJECT & ENTITY EFFECTS (CRITICAL MANDATE):
+- ANY item, weapon, map element, structure, location, or file can have active, persistent effects and conditions!
+  * Examples: A torch that is lit ([Status: Lit], [Effects: Illumination, Burning]), a broken clock ([Condition: Broken until repaired, Status: Broken]) that remains stopped/broken until someone fixes it, a poisoned well, a locked rusted chest, a charged arcane battery.
+  * Always record and maintain these effects in file content ([Status: ...], [Condition: ...], [Effects: ...]) and in "CurrentMap.json" elements (using status, condition, or effects fields).
+  * Effects persist across turns until explicitly changed, repaired, extinguished, or resolved by player/world action.
+
 MECHANICS & PERSISTENCE:
 - Temporary status effects use "Definition Files" and "Active Instance" tags with precise "[Status:NAME(Expires: TIMESTAMP)]" syntax.
 - Location is tracked via coordinate/zone tags.
@@ -58,10 +76,17 @@ MECHANICS & PERSISTENCE:
 - Character files are DYNAMIC and ACCURATE (e.g., a dog does not have an iPhone).
 - NEVER forget to create/update character files for any newly introduced entity, including individual NPCs, groups of NPCs (e.g., 'Bandits.txt'), and creatures, the exact moment they enter the scene or are learned about.
 
-DEATH & TERMINATION:
-- If a player's HP reaches 0, you MUST set "gameOver": true.
-- In your "files" output, you MUST set the character file to NULL to delete it.
-- Narrate a definitive end.
+HEALTH STATE MACHINE, UNCONSCIOUSNESS & DEATH RULES:
+- NEGATIVE HEALTH TRACKING (CRITICAL MANDATE):
+  * Health CAN GO NEGATIVE and is NEVER clamped at 0! (e.g. -15 / 100, -45 / 80).
+  * Health continues tracking into negative numbers even while unconscious or dead.
+  * Taking damage while unconscious or dead reduces health further into the negatives (e.g. taking 10 damage at -5 HP brings them to -15 HP). This accurately tracks overkill, severe trauma, body mutilation, and the healing deficit required to stabilize or revive them.
+  * Healing increases health from negative back towards positive (e.g. healing 10 HP at -15 HP brings health to -5 HP).
+  * A character wakes from unconsciousness once healed above 0 HP.
+- 0 HP & UNCONSCIOUSNESS: When a character reaches 0 HP or below, living/mortal characters enter the "Unconscious" status effect (base 5 minutes duration in WorldTime). Modifiers related to living/survival (e.g. Constitution, Willpower, Survival, Endurance, medical treatment) and environmental context dynamically extend or shorten this unconscious survival window until HP is restored above 0 or stabilized.
+- LETHAL UNCONSCIOUS STRIKE: While unconscious at 0 or negative HP, if the character takes damage >= 15% of their max HP, they are INSTANTLY DEAD.
+- MASSIVE DAMAGE OVERKILL: If a character takes damage >= 1.5x their CURRENT health in a single event, they are INSTANTLY DEAD, skipping unconsciousness entirely.
+- DEAD CHARACTER RETENTION & ROT: A dead character's file is NEVER auto-deleted. It remains in the filesystem with their negative health recorded and tracked. The dead character cannot take actions unless revived, reanimated, or context allows. Biological corpses gradually decompose/rot over time based on WorldTime.txt (Stages 1 through 5). Only set "gameOver": true if the player character is confirmed DEAD (never for unconsciousness or negative HP while surviving).
 
 FILE MINIMIZATION & INITIALIZATION:
 - Only include files that are NEW, MODIFIED, or DELETED.
@@ -141,13 +166,13 @@ STAT PERSISTENCE RULE (CRITICAL):
 
 HEALTH, DAMAGE, INJURIES & HEALING RULE (ABSOLUTE CRITICAL PRIORITY):
 - Whenever ANY character (player, ally, enemy, NPC, boss, monster, animal, or creature) takes damage or receives healing:
-  1. Calculate exact new health: clamp(Current Health - Damage + Healing, 0, Max Health).
+  1. Calculate exact new health: min(Current Health - Damage + Healing, Max Health). DO NOT clamp at 0! Health CAN and MUST go negative (e.g. -15 / 100) even while unconscious or dead!
   2. You MUST include their character file (or shared group file e.g. "Goblins.txt") in the 'files' response object with their new health calculated: "- Health: NewCurrent / Max".
   3. NEVER narrate that a character was struck, hit, wounded, slashed, shot, burned, poisoned, or took damage without immediately deducting the damage from their Health in their file.
   4. If an attack or event inflicts a wound (e.g., broken arm, gash on chest, sprained leg), record it under [BODY PARTS & STATUS] or [STATUS EFFECTS & LORE].
-  5. If Health reaches 0, update their condition to Unconscious, Incapacitated, or Dead. If the active player's Health reaches 0, set "gameOver": true!
+  5. If Health reaches 0 or below, update condition to Unconscious (if alive/mortal) or Dead. If the active player is confirmed DEAD, set "gameOver": true (never set gameOver for unconsciousness while surviving).
   6. Include the health change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
-  7. Reflect the updated Health in the Guide.txt Master Stat Table.
+  7. Reflect the updated Health in the Guide.txt Master Stat Table (e.g. -15/100).
 - NEVER forget to remove health from a hurt character. Dynamic updates must be 100% accurate with no details missing.
 
 ENERGY & STAMINA MANAGEMENT RULE (CRITICAL):
@@ -292,7 +317,24 @@ All weapons, tools, containers, and items MUST include detectable weight and dim
 
 [SPECIAL PROPERTIES & LIMITATIONS]
 - List unique effects, physical limitations, and active temporary spells (with expiration and revert values).
+
+[CONDITION & ACTIVE EFFECTS]
+- Condition: (Current physical state e.g. "Pristine", "Broken (Damaged mechanism; non-functional until repaired)", "Cracked", "Jammed", "Dull", "Rust-covered")
+- Status: (Active effect state e.g. "Lit (Illuminating 15m radius, burning for 45m)", "Extinguished", "Burning", "Frozen", "Enchanted", "Activated", "Dormant", "None")
+- Effects: (List active effects that influence the character or world: e.g. [Effect:Light_Radius(15m)], [Effect:Heat(Warmth)], [Effect:Broken_Clock(Frozen hands until fixed with gears)])
 ---
+
+UNIVERSAL EFFECT & CONDITION SYSTEM (ANYTHING CAN HAVE EFFECTS):
+- ABSOLUTELY ANYTHING in the adventure can have persistent effects, conditions, and functional states:
+  * Map Elements, Fixtures & Landmarks: e.g. a campfire that is [Status: Lit] or [Status: Extinguished], a torch on a wall that is [Status: Lit (15m radius)] or [Status: Unlit], a fountain that is [Status: Frozen] or [Status: Flowing], an electrical junction that is [Status: Electrified/Live], an altar that is [Status: Glowing/Consecrated].
+  * Items, Tools & Weapons: e.g. a broken clock until it's fixed/repaired [Condition: Broken (Jammed gears, non-functional until repaired)], an oil lantern that is [Status: Lit] with oil consumption, a cracked potion vial [Condition: Leaking], an enchanted sword [Status: Frost-imbued].
+  * Files, Devices & Terminals: e.g. an ancient computer [Status: Corrupted / Locked], a generator [Status: Overheating].
+- IN "CurrentMap.json":
+  * Areas, landmarks, items, and fixtures can include "status", "condition", and "effects" fields!
+    Example: { "name": "Torch Sconce", "type": "light", "status": "Lit", "effects": ["Illuminating 15m radius", "Warmth"] }
+    Example: { "name": "Grandfather Clock", "type": "structure", "condition": "Broken (Pendulum cracked, non-functional until repaired)", "status": "Broken" }
+- IN ENTITY & ITEM FILES:
+  * Document under [CONDITION & ACTIVE EFFECTS] or [STATUS EFFECTS & LORE]. When a player repairs a broken clock, lights a torch, extinguishes a fire, or triggers an effect, update their condition/status immediately in the file and map!
 
 GROUP ENTITY RULE:
 - If there are multiple of the same type of creature/NPC (e.g., 3 Goblins), do NOT create separate files for each.
@@ -395,7 +437,7 @@ CRITICAL FILE MANAGEMENT RULES:
   * Ensure scaling and coordinates are consistent.
 - Create character files named "CharacterName-USERNAME.txt" for each player using the ENTITY FILE SCHEMA.
 - ONE CHARACTER PER PLAYER (CRITICAL): Each username MUST have exactly one character file. NEVER create a second character file for the same username. Only create a file if NO file ending in "-USERNAME.txt" exists for that player. If they describe a new character, update the existing file or ignore it if it violates the one-character-per-account rule.
-- CRITICAL: If a player's health reaches 0 or they die, DELETE their character file immediately by setting it to null in the files object.
+- CRITICAL: Even if a character's health reaches 0, negative values, or they die, NEVER delete their character file! Dead and unconscious characters remain in the filesystem with their negative health accurately recorded and tracked.
 - Create "WorldTime.txt" with ACTUAL date/time/year appropriate for the world setting.
 - Create files for EVERY entity that appears: NPCs, items, locations, vehicles, projectiles. MUST follow ENTITY FILE SCHEMA. NEVER forget to generate character files for individuals and group entity files for groups of NPCs..
 - Use hide[...] for secrets/traps/hidden info in file contents OR file names. This is hidden from player view.
@@ -485,15 +527,20 @@ Respond with JSON only:
   ],
   "files": {
     "filename.txt": {"content": "file content with hide[secrets] or target(PlayerName)[private info]", "displayName": "Display Name"},
-    "dead_player.txt": null
+    "deleted_temp_file.txt": null
   },
   "gameOver": false,
   "checks": [],
-  "recommendations": ["Action recommendation 1", "Action recommendation 2", "Action recommendation 3"]
+  "recommendations": ["Action recommendation 1", "Action recommendation 2", "Action recommendation 3"],
+  "timeTravel": {
+    "turnsBack": 1,
+    "preserveFiles": ["CharacterName-Player.txt"],
+    "reason": "Traveled back 10 seconds to alter timeline"
+  }
 }
 
 If probability checks are required, return empty narrative and fill the "checks" array.
-Set gameOver to true ONLY when player health/critical stat reaches 0.
+Set gameOver to true ONLY when the player character is confirmed DEAD (never for unconsciousness or negative HP while surviving).
 Always include 2-4 dynamic auto action recommendations for the player based on context so far in the "recommendations" array.
 For starting prompt, create initial world files with appropriate time/year and set the scene.
 
@@ -547,12 +594,13 @@ INSTRUCTIONS:
 3. AUDIT FOR MAP: Determine if the player moved, environment changed, or new entities/landmarks/items appeared. Maps must have NOTHING missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain features, etc. Always keep all observable and known elements updated correctly. Support advanced flexible shapes (oblong areas like forests via ellipse, irregular multi-point polygons, detailed architectural buildings such as market stalls and shops, paths/roads, circles, rects).
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
-6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE (DYNAMIC AI REASONING):
+6. AUDIT FOR INVENTORY, USAGE AMOUNTS, REFILLABLE ITEMS, WEIGHT & DIMENSIONS (DYNAMIC AI REASONING):
    - Dynamically detect whether ANY item, weapon, equipment, or object is picked up, found, gathered, bought, sold, dropped, given, stored, transferred to or from a container, equipped, or unequipped.
+   - DYNAMIC ITEM USAGE & REFILLABLE DETECTION: Detect when an item has usage consumed, depleted, or refilled based on what happened in context (e.g., drinking from waterskin/flask, firing arrows/quiver ammo, burning oil/torches, drinking potion doses, consuming lockpicks, casting wand charges, or refilling a waterskin at a stream/well/fountain, refueling a lantern with oil, restocking ammo).
    - Accurately determine:
-     * isInventoryAffected: true if any inventory/equipment change occurs, false otherwise.
-     * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop"), item name, container name (if inside a backpack, pouch, satchel, etc.), and target character.
-   - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
+     * isInventoryAffected: true if any inventory/equipment/usage change occurs, false otherwise.
+     * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop" | "consume_use" | "refill" | "set_usage"), item name, amount/uses, max uses, refillable status, container name, and target character.
+   - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics) are NOT penalized like standard humans.
 7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC CONTEXTUAL AI REASONING):
    - Dynamically analyze the character's physical and magical exertion based on the full scene context, character capabilities, and physical/magical requirements:
    - MENIAL & LOW-EXERTION ACTIONS: Menial, low-effort, casual, social, or everyday tasks (such as talking, speaking, conversing, standing, looking, observing, inspecting, reading, listening, waiting, idle moments, casual walking, sitting, eating, drinking, or light non-strenuous interactions) do NOT use any noticeable amount of energy or stamina.
@@ -596,8 +644,20 @@ INSTRUCTIONS:
       * If receiving currency: add exact amounts to carried balance in their file and include in 'updates' array.
       * If accessing or moving stored/remote currency or stashes: verify specific location attached to each item or cache (using hide[...] for secret/hidden stashes).
       * Add both buyer/giver and seller/recipient entity files to "filesToUpdate".
-11. AUDIT FOR HEALTH, DAMAGE, INJURIES & HEALING (DYNAMIC AI REASONING):
+11. AUDIT FOR HEALTH, DAMAGE, INJURIES, HEALING & HEALTH STATE MACHINE (DYNAMIC AI REASONING):
     - Dynamically detect if ANY character, player, ally, enemy, NPC, boss, monster, animal, or creature takes damage, is attacked, struck, shot, stabbed, burned, poisoned, falls, suffocates, or is healed.
+    - 0 HP UNCONSCIOUSNESS & SURVIVAL WINDOW RULE (CRITICAL):
+      * When a character's health reaches 0 HP, living/mortal characters enter the "Unconscious" state!
+      * The unconscious effect lasts a base of 5 minutes (300 seconds) in active WorldTime.
+      * Modifiers in context that help living/survival (e.g. Constitution, Willpower, Survival, Endurance, medical aid, or harsh environmental conditions like freezing/bleeding/drowning) dynamically influence the unconscious survival duration!
+      * LETHAL UNCONSCIOUS STRIKE: While unconscious at 0 HP, if a character takes damage equal to or exceeding 15% of their max HP, they are INSTANTLY DEAD!
+      * When health is restored above 0 HP (healing, medical stabilization), the unconscious effect is removed and they wake up!
+    - MASSIVE DAMAGE OVERKILL (INSTANT DEATH) RULE (CRITICAL):
+      * If a character takes damage equal to or greater than 1.5x their CURRENT health in a single hit or event (e.g. current HP is 20, and takes >= 30 damage), they are AUTOMATICALLY DEAD, skipping unconsciousness entirely (unless protected by death ward, immortality, or specific context)!
+    - DEAD CHARACTERS & GRADUAL ROT/DECOMPOSITION (CRITICAL):
+      * When a character dies, their file is NEVER auto-deleted. It remains in the filesystem.
+      * A dead character cannot take actions unless revived, reanimated, or context/spirit rules apply.
+      * Dead biological bodies begin gradual decomposition/rot based on WorldTime.txt (Stages 1 through 5).
     - Accurately determine:
       * isHealthAffected: true if any damage or healing occurs, false otherwise.
       * damageAndHealing: array of:
@@ -609,6 +669,8 @@ INSTRUCTIONS:
         - "source": weapon, attacker, spell, or environmental hazard
         - "bodyPart": specific body part hit (e.g. "Torso", "Left Arm", "Head", "Leg")
         - "injury": wound description (e.g. "Deep gash on chest", "Broken arm")
+        - "isMassiveDamage": boolean (true if damage dealt >= 1.5x current HP)
+        - "isLethalUnconsciousStrike": boolean (true if target was at 0 HP unconscious and took >= 15% max HP damage)
     - Every character taking damage or healing MUST have their file added to "filesToUpdate"!
    
 OUTPUT FORMAT (Strict JSON only):
@@ -971,12 +1033,15 @@ CRITICAL REMINDERS:
    - RECEIVING CURRENCY: When an NPC gives currency (e.g. 1 Gold Coin and 5 Silver Coins) or coins are found/earned, update the character's carried balance in their file and include in 'updates' array (e.g. {"type": "stat", "text": "+1 Gold Coin, +5 Silver Coins", "value": 1}).
     - STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
     - Both buyer/giver and seller/recipient entity files MUST be updated in 'files'.
-8. DYNAMIC HEALTH, DAMAGE, INJURIES & HEALING (CRITICAL - NEVER MISS OR FORGET HEALTH REDUCTIONS):
+8. DYNAMIC HEALTH, DAMAGE, INJURIES, HEALING & HEALTH STATE MACHINE (CRITICAL):
    - Whenever ANY character (player, ally, enemy, NPC, boss, monster, animal, or creature) takes damage, suffers injury, is attacked, burned, poisoned, falls, or is healed:
      * You MUST include their character file (or shared group file e.g. "Goblins.txt") in the 'files' response object!
-     * You MUST calculate and deduct the damage: "- Health: [NewCurrent] / [Max]" (clamp between 0 and Max). NEVER leave Health unchanged or at maximum when narrating that a character took damage!
+     * You MUST calculate and deduct the damage: "- Health: [NewCurrent] / [Max]". Health CAN GO NEGATIVE and is NEVER clamped to 0! It accurately tracks damage into the negative values (e.g. -15 / 100, -45 / 80) even while dead or unconscious to track overkill, trauma severity, and healing deficits. NEVER leave Health unchanged or at maximum when narrating that a character took damage!
      * If an injury is sustained (e.g. broken bone, gash, concussion), record it under [BODY PARTS & STATUS] or [STATUS EFFECTS & CONDITIONS].
-     * If Health reaches 0, update their condition to Unconscious, Incapacitated, or Dead (and if player, set "gameOver": true).
+     * 0 HP & NEGATIVE HEALTH UNCONSCIOUSNESS & SURVIVAL WINDOW: When a living character reaches 0 HP or below, they enter "Unconscious" status (base 5 minutes of WorldTime). While unconscious, taking more damage reduces health further into negative numbers (-10, -25, etc.). Taking lethal damage >= 15% of max HP while unconscious causes INSTANT DEATH. If dead, subsequent damage continues tracking into negative numbers (e.g. -30, -50). Wakes when HP > 0 or medical aid stabilizes them.
+     * MASSIVE DAMAGE OVERKILL: If damage dealt >= 1.5x their CURRENT health in a single event, they are AUTOMATICALLY DEAD, skipping unconsciousness!
+     * DEAD CHARACTER RETENTION & GRADUAL ROT: A dead character's file is NEVER deleted. They remain in files with their negative health recorded. If biological, "- Decomposition / Rot: Stage 1 - Fresh Corpse (Began: [WorldTime]; Gradual biological decay based on WorldTime)" begins and progresses based on WorldTime.txt.
+     * GAME OVER: Set "gameOver": true ONLY if the active player character is confirmed DEAD. Do NOT set gameOver for Unconscious state at 0 or negative HP, as survival/rescue is ongoing!
      * Include the stat change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
      * Keep Guide.txt Master Stat Table in 100% sync!
 9. AUTO ACTION RECOMMENDATIONS (CRITICAL):
@@ -992,7 +1057,9 @@ CRITICAL REMINDERS:
          "operation": "damage|heal",
          "damageType": "slashing|piercing|bludgeoning|fire|frost|poison",
          "bodyPart": "Torso|Arm|Head|Leg",
-         "injury": "Deep gash on chest"
+         "injury": "Deep gash on chest",
+         "isMassiveDamage": false,
+         "isLethalUnconsciousStrike": false
        }
      ]
    - "currencyTransactions": If currency, money, or coinage is affected in any way (e.g. paying, giving money from wallet/pouch, donating, buying, selling, looting, finding, tipping), return structured objects:
@@ -1007,14 +1074,19 @@ CRITICAL REMINDERS:
          "rawText": "e.g. -$20 (given from wallet to street musician)"
        }
      ]
-   - "inventoryTransactions": If items, gear, or weapons are affected (picked up, dropped, stored, equipped, unequipped, given):
+   - "inventoryTransactions": If items, gear, weapons, or item uses/refills are affected (picked up, dropped, stored, equipped, unequipped, used/consumed, or refilled):
      [
        {
          "name": "Item Name",
          "quantity": 1,
-         "operation": "add|remove|equip|unequip|transfer|drop",
+         "operation": "add|remove|equip|unequip|transfer|drop|consume_use|refill|set_usage",
          "container": "Container name if stored inside one, or null",
-         "targetCharacter": "Character name"
+         "targetCharacter": "Character name",
+         "amount": 1,
+         "max": 5,
+         "unit": "uses|doses|sips|arrows|hours",
+         "isRefillable": true,
+         "refillResource": "Water|Oil|Arrows"
        }
      ]
 11. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
@@ -1868,8 +1940,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       for (const line of lines) {
         const lowerLine = line.toLowerCase();
         if (lowerLine.includes(lowerName)) {
-          // Check for inline health e.g. - Goblin A: Health 15/15
-          const inlineMatch = line.match(/(\b(?:Health|HP|Hit\s*Points)[:=\s]+)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+          // Check for inline health e.g. - Goblin A: Health 15/15, - Goblin A: Health -10/15
+          const inlineMatch = line.match(/(\b(?:Health|HP|Hit\s*Points)[:=\s]+)([+-]?\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
           if (inlineMatch) {
             const current = parseFloat(inlineMatch[2]);
             const max = parseFloat(inlineMatch[3]);
@@ -1891,7 +1963,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           if (line.startsWith('#') || (line.startsWith('- ') && line.includes(':') && !line.toLowerCase().includes('health') && !line.toLowerCase().includes('hp') && !line.toLowerCase().includes('status') && !line.toLowerCase().includes('energy'))) {
             inCharSection = false;
           } else {
-            const secMatch = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+            const secMatch = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)([+-]?\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
             if (secMatch) {
               const current = parseFloat(secMatch[2]);
               const max = parseFloat(secMatch[3]);
@@ -1910,9 +1982,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    // 2. Standard character health parsing
+    // 2. Standard character health parsing (supports negative current health e.g. -15 / 100)
     for (const line of lines) {
-      const match = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)(\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
+      const match = line.match(/^(\s*[-*•]?\s*(?:Current\s+)?(?:Health|HP|Hit\s*Points)(?:\s*\([^)]*\))?\s*[:=]\s*)([+-]?\d+(?:\.\d+)?)\s*(?:\/|\s+of\s+)\s*(\d+(?:\.\d+)?)(.*)$/i);
       if (match) {
         const current = parseFloat(match[2]);
         const max = parseFloat(match[3]);
@@ -1932,33 +2004,192 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   }
 
   /**
-   * Replaces or inserts the Health line in character file content with new current value.
+   * Replaces or inserts the Health line in character file content with new current value,
+   * applying the full dynamic health state machine:
+   * - 0 HP Unconsciousness (5-minute duration + living modifiers like Constitution/Willpower/Survival).
+   * - Lethal unconscious strike (taking >= 15% max HP damage while at 0 HP causes instant death).
+   * - Massive damage overkill (taking >= 1.5x current HP damage causes instant death).
+   * - Dead character retention & gradual decomposition/rot based on WorldTime.txt.
+   * - Recovery back to consciousness when healed above 0 HP.
    */
-  private updateCharacterHealthInContent(content: string, newCurrent: number, injuryNote?: string, bodyPart?: string, charName?: string): string {
+  private updateCharacterHealthInContent(
+    content: string,
+    newCurrent: number,
+    injuryNote?: string,
+    bodyPart?: string,
+    charName?: string,
+    options?: {
+      damageDealt?: number;
+      previousHP?: number;
+      worldTimeStr?: string;
+      isMassiveDamage?: boolean;
+      isLethalUnconsciousStrike?: boolean;
+    }
+  ): { updatedContent: string; isUnconscious: boolean; isDead: boolean; deathReason?: string } {
     const parsed = this.parseCharacterHealth(content, charName);
     let updated = content;
-    const clamped = Math.max(0, Math.round(newCurrent));
+    // Health CAN GO NEGATIVE to track status, trauma, and overkill even while dead/unconscious!
+    const targetHP = Math.round(newCurrent);
+    const maxHP = parsed?.max || 100;
+    const previousHP = options?.previousHP !== undefined ? options.previousHP : (parsed ? parsed.current : newCurrent);
+    const damageDealt = options?.damageDealt !== undefined ? options.damageDealt : (previousHP - targetHP > 0 ? previousHP - targetHP : 0);
+
+    const lowerContent = content.toLowerCase();
+    const isImmortal = lowerContent.includes('immortal') || lowerContent.includes('undying') || lowerContent.includes('death ward');
+    const isNonBiological = lowerContent.includes('construct') || lowerContent.includes('golem') || lowerContent.includes('automaton') || lowerContent.includes('undead') || lowerContent.includes('ghost') || lowerContent.includes('skeleton');
+
+    let isDead = false;
+    let isUnconscious = false;
+    let deathReason: string | undefined;
+
+    const wasDead = lowerContent.includes('status: dead') || lowerContent.includes('(dead)');
+    const wasUnconscious = (lowerContent.includes('status: unconscious') || lowerContent.includes('(unconscious')) || previousHP <= 0;
+
+    if (wasDead) {
+      // Already dead: subsequent damage continues reducing HP into negative numbers
+      isDead = true;
+      deathReason = 'Dead (Remains deceased)';
+    }
+    // A) Massive damage overkill threshold: damage >= 1.5x previous/current HP (skips unconscious, automatically dead)
+    else if (!isImmortal && (options?.isMassiveDamage || (damageDealt > 0 && previousHP > 0 && damageDealt >= (1.5 * previousHP)))) {
+      isDead = true;
+      deathReason = `Instant death: Massive trauma / overkill of ${damageDealt} damage dealt vs ${previousHP} current HP (exceeds 1.5x current HP threshold)`;
+    }
+    // B) Lethal strike while Unconscious at <= 0 HP: damage >= 15% of max HP
+    else if (!isImmortal && (options?.isLethalUnconsciousStrike || (wasUnconscious && damageDealt > 0 && damageDealt >= (maxHP * 0.15)))) {
+      const lethalThreshold = Math.round(maxHP * 0.15 * 10) / 10;
+      isDead = true;
+      deathReason = `Instant death: Lethal damage of ${damageDealt} dealt while unconscious at ${previousHP} HP (exceeds 15% max HP threshold [${lethalThreshold}])`;
+    }
+    // C) Health reaches 0 or negative without instant overkill
+    else if (targetHP <= 0) {
+      if (isNonBiological) {
+        isDead = true;
+        deathReason = 'Deactivated / destroyed at 0 or negative HP';
+      } else {
+        isUnconscious = true;
+      }
+    }
+
+    // Determine current active WorldTime string
+    const worldTimeStr = options?.worldTimeStr || this.fs.read('WorldTime.txt') || '';
+
+    // Calculate effective unconscious duration (base 5 minutes + context modifiers)
+    let effectiveDurationMinutes = 5;
+    let unconsciousExpirationTimestamp = '';
+
+    if (isUnconscious) {
+      let conMod = 0;
+      const conM = content.match(/(?:Constitution|CON|Endurance|Toughness)[:=\s]+([+-]?\d+)/i);
+      if (conM) {
+        const v = parseInt(conM[1], 10);
+        conMod = v > 20 ? Math.floor((v - 10) / 2) : v;
+      }
+      let willMod = 0;
+      const willM = content.match(/(?:Willpower|WILL)[:=\s]+([+-]?\d+)/i);
+      if (willM) {
+        const v = parseInt(willM[1], 10);
+        willMod = v > 20 ? Math.floor((v - 10) / 2) : v;
+      }
+      let survMod = 0;
+      const survM = content.match(/(?:Survival)[:=\s]+([+-]?\d+)/i);
+      if (survM) {
+        const v = parseInt(survM[1], 10);
+        survMod = v > 20 ? Math.floor((v - 10) / 2) : v;
+      }
+      let penaltyMinutes = 0;
+      if (lowerContent.includes('bleeding') || lowerContent.includes('severe hemorrhage') || lowerContent.includes('venom') || lowerContent.includes('hypothermia') || lowerContent.includes('drowning')) {
+        penaltyMinutes = 1.5;
+      }
+
+      const totalBonus = (conMod * 1.0) + (willMod * 0.5) + (survMod * 0.5) - penaltyMinutes;
+      effectiveDurationMinutes = Math.max(1, Math.round((5 + totalBonus) * 10) / 10);
+
+      // Compute expiration timestamp
+      if (worldTimeStr) {
+        try {
+          const cleanTime = worldTimeStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
+          const parts = cleanTime.split(' - ');
+          const baseDate = parts.length === 2 ? new Date(`${parts[1]} ${parts[0]}`) : new Date(cleanTime);
+          if (!isNaN(baseDate.getTime())) {
+            const expDate = new Date(baseDate.getTime() + effectiveDurationMinutes * 60 * 1000);
+            const timePart = expDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+            const datePart = expDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            unconsciousExpirationTimestamp = `${timePart} - ${datePart}`;
+          }
+        } catch {}
+      }
+      if (!unconsciousExpirationTimestamp) {
+        unconsciousExpirationTimestamp = `+${effectiveDurationMinutes}m from current WorldTime`;
+      }
+    }
+
+    // Format health line and status
+    let healthSuffix = '';
+    if (isDead) {
+      healthSuffix = ' (Dead)';
+    } else if (isUnconscious) {
+      healthSuffix = ` (Unconscious - ${effectiveDurationMinutes}m survival window)`;
+    } else if (targetHP > 0 && injuryNote) {
+      healthSuffix = ` (Injured: ${injuryNote})`;
+    }
 
     if (parsed) {
-      const finalVal = Math.min(parsed.max, clamped);
-      const isDead = finalVal === 0;
-      let suffix = parsed.suffix;
-      if (isDead) {
-        suffix = ' (Incapacitated / Slain)';
-      } else if (injuryNote && !suffix.toLowerCase().includes(injuryNote.toLowerCase())) {
-        suffix = ` (Injured: ${injuryNote})`;
-      }
-      const updatedLine = `${parsed.prefix}${finalVal} / ${parsed.max}${suffix}`;
+      const updatedLine = `${parsed.prefix}${targetHP} / ${parsed.max}${healthSuffix}`;
       updated = updated.replace(parsed.rawLine, updatedLine);
     } else {
       const statsHeaderIdx = updated.indexOf('[STATS & MODIFIERS]');
-      const healthLine = `\n- Health: ${clamped} / 100${injuryNote ? ` (Injured: ${injuryNote})` : ''}`;
+      const healthLine = `\n- Health: ${targetHP} / 100${healthSuffix}`;
       if (statsHeaderIdx >= 0) {
         const insertPos = statsHeaderIdx + '[STATS & MODIFIERS]'.length;
         updated = updated.slice(0, insertPos) + healthLine + updated.slice(insertPos);
       } else {
         updated = healthLine + '\n' + updated;
       }
+    }
+
+    // Status line management
+    if (isDead) {
+      updated = updated.replace(/Status:\s*Unconscious[^\n\r]*/i, `Status: Dead (${deathReason || 'Slain'})`);
+      if (!updated.toLowerCase().includes('status: dead')) {
+        const statusHeader = updated.search(/\[STATUS EFFECTS/i);
+        const statusEntry = `- Status: Dead (${deathReason || 'Slain'}; Incapacitated; Inactive)\n`;
+        if (statusHeader >= 0) {
+          const insertIdx = updated.indexOf('\n', statusHeader) + 1;
+          updated = updated.slice(0, insertIdx) + statusEntry + updated.slice(insertIdx);
+        } else {
+          updated += `\n[STATUS EFFECTS & LORE]\n${statusEntry}`;
+        }
+      }
+
+      // Add decomposition/rot if biological and not already present
+      if (!isNonBiological && !updated.includes('Decomposition / Rot:')) {
+        const stageInfo = WeightInventoryEngine.calculateDecompositionStage(worldTimeStr, worldTimeStr);
+        const rotEntry = `- Decomposition / Rot: ${stageInfo.stageName} (Began: ${worldTimeStr || 'Death'}; ${stageInfo.description}; Advances with WorldTime)\n`;
+        const statusHeader = updated.search(/\[STATUS EFFECTS/i);
+        if (statusHeader >= 0) {
+          const insertIdx = updated.indexOf('\n', statusHeader) + 1;
+          updated = updated.slice(0, insertIdx) + rotEntry + updated.slice(insertIdx);
+        } else {
+          updated += rotEntry;
+        }
+      }
+    } else if (isUnconscious) {
+      const lethalThreshold = Math.round(maxHP * 0.15 * 10) / 10;
+      const unconsciousLine = `- Status: Unconscious (Expires: ${unconsciousExpirationTimestamp}; Duration: ${effectiveDurationMinutes}m [Base 5m + Modifiers]; Trigger: HP reached 0 or below; Incapacitated; In lethal danger: taking >= 15% max HP [${lethalThreshold} damage] causes instant death; Wakes when HP > 0 or stabilized)\n`;
+      if (updated.match(/Status:\s*Unconscious[^\n\r]*/i)) {
+        updated = updated.replace(/Status:\s*Unconscious[^\n\r]*/i, unconsciousLine.trim());
+      } else {
+        const statusHeader = updated.search(/\[STATUS EFFECTS/i);
+        if (statusHeader >= 0) {
+          const insertIdx = updated.indexOf('\n', statusHeader) + 1;
+          updated = updated.slice(0, insertIdx) + unconsciousLine + updated.slice(insertIdx);
+        } else {
+          updated += `\n[STATUS EFFECTS & LORE]\n${unconsciousLine}`;
+        }
+      }
+    } else if (targetHP > 0 && wasUnconscious) {
+      updated = updated.replace(/Status:\s*Unconscious[^\n\r]*/i, `- Status: Conscious (Recovered from unconscious state; Wounded)`);
     }
 
     // Dynamic wound / injury record in body parts or status
@@ -1984,7 +2215,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         const statusHeader = updated.search(/\[STATUS EFFECTS/i);
         if (statusHeader >= 0) {
           const insertIdx = updated.indexOf('\n', statusHeader) + 1;
-          const effectEntry = `- Injury: ${injuryText} (${clamped === 0 ? 'Lethal' : 'Active'})\n`;
+          const effectEntry = `- Injury: ${injuryText} (${isDead ? 'Lethal' : isUnconscious ? 'Critical' : 'Active'})\n`;
           if (!updated.includes(injuryText)) {
             updated = updated.slice(0, insertIdx) + effectEntry + updated.slice(insertIdx);
           }
@@ -1992,7 +2223,12 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    return updated;
+    return {
+      updatedContent: updated,
+      isUnconscious,
+      isDead,
+      deathReason
+    };
   }
 
   /**
@@ -2393,7 +2629,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             type: ev.type || 'damage',
             damageType: ev.damageType,
             bodyPart: ev.bodyPart,
-            injury: ev.injury
+            injury: ev.injury,
+            isMassiveDamage: (ev as any).isMassiveDamage,
+            isLethalUnconsciousStrike: (ev as any).isLethalUnconsciousStrike
           });
         }
       }
@@ -2410,7 +2648,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             type: tx.operation || 'damage',
             damageType: tx.damageType,
             bodyPart: tx.bodyPart,
-            injury: tx.injury
+            injury: tx.injury,
+            isMassiveDamage: (tx as any).isMassiveDamage,
+            isLethalUnconsciousStrike: (tx as any).isLethalUnconsciousStrike
           });
         }
       }
@@ -2474,28 +2714,45 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
       }
 
-      if (!alreadyUpdated) {
-        // The AI forgot to update health or omitted the file! Auto-correct it!
-        newCurrent = Math.max(0, Math.min(existingHealth.max, Math.round(existingHealth.current + event.delta)));
-        const updatedContent = this.updateCharacterHealthInContent(
-          incomingRaw || existingContent,
-          newCurrent,
-          event.injury || (event.delta < 0 ? `${Math.abs(event.delta)} damage taken` : undefined),
-          event.bodyPart,
-          event.target
-        );
+      const previousHP = existingHealth.current;
+      const damageDealt = event.delta < 0 ? Math.abs(event.delta) : 0;
 
-        if (!data.files || typeof data.files !== 'object') data.files = {};
-        if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
-          (data.files[targetFile] as any).content = updatedContent;
-        } else {
-          data.files[targetFile] = updatedContent;
-        }
+      if (!alreadyUpdated) {
+        // The AI forgot to update health or omitted the file! Auto-correct it without clamping to 0 (supports negative HP)
+        newCurrent = Math.min(existingHealth.max, Math.round(existingHealth.current + event.delta));
       }
 
-      // Check if player died -> gameOver
-      if (newCurrent === 0 && (targetFile === playerFile || (username && targetFile.toLowerCase().includes(username.toLowerCase())))) {
-        data.gameOver = true;
+      const activeWorldTime = this.fs.read('WorldTime.txt') || undefined;
+      const healthRes = this.updateCharacterHealthInContent(
+        incomingRaw || existingContent,
+        newCurrent,
+        event.injury || (event.delta < 0 ? `${Math.abs(event.delta)} damage taken` : undefined),
+        event.bodyPart,
+        event.target,
+        {
+          damageDealt,
+          previousHP,
+          worldTimeStr: activeWorldTime,
+          isMassiveDamage: event.isMassiveDamage,
+          isLethalUnconsciousStrike: event.isLethalUnconsciousStrike
+        }
+      );
+
+      if (!data.files || typeof data.files !== 'object') data.files = {};
+      if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+        (data.files[targetFile] as any).content = healthRes.updatedContent;
+      } else {
+        data.files[targetFile] = healthRes.updatedContent;
+      }
+
+      // Check if player died -> gameOver (CRITICAL: Only if confirmed DEAD, not unconscious!)
+      const isTargetPlayer = targetFile === playerFile || (username && targetFile.toLowerCase().includes(username.toLowerCase()));
+      if (isTargetPlayer) {
+        if (healthRes.isDead) {
+          data.gameOver = true;
+        } else if (data.gameOver && !healthRes.isDead) {
+          data.gameOver = false;
+        }
       }
 
       // Ensure data.updates has a stat change entry
@@ -2529,7 +2786,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             for (let i = 0; i < lines.length; i++) {
               const line = lines[i];
               if (line.includes(charBaseName) && (line.includes('|') || line.toLowerCase().includes('health'))) {
-                const hpPattern = /(\b\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\b)/g;
+                const hpPattern = /([+-]?\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?)/g;
                 const matches = Array.from(line.matchAll(hpPattern));
                 if (matches.length >= 1) {
                   const firstMatch = matches[0];
@@ -2538,7 +2795,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
                   lines[i] = line.replace(oldHpStr, `${newCurrent}/${maxVal}`);
                   modifiedGuide = true;
                 } else if (line.toLowerCase().includes('health') || line.toLowerCase().includes('hp')) {
-                  const singleMatch = line.match(/((?:health|hp)[:=\s]+)(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?/i);
+                  const singleMatch = line.match(/((?:health|hp)[:=\s]+)([+-]?\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?/i);
                   if (singleMatch) {
                     const maxVal = singleMatch[3] || existingHealth.max;
                     lines[i] = line.replace(singleMatch[0], `Health: ${newCurrent}/${maxVal}`);
@@ -2682,6 +2939,44 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         });
         if (filteredLines.length !== lines.length) {
           updatedContent = filteredLines.join('\n');
+        }
+      } else if (tx.operation === 'consume_use' || tx.operation === 'refill' || tx.operation === 'set_usage') {
+        const lines = updatedContent.split('\n');
+        const itemNameLower = tx.name.toLowerCase();
+        let changed = false;
+
+        const newLines = lines.map(line => {
+          if (changed) return line;
+          const lower = line.toLowerCase();
+          if (lower.includes(itemNameLower) && (line.trim().startsWith('-') || line.trim().startsWith('*'))) {
+            const parsedUsage = WeightInventoryEngine.parseItemUsage(line, tx.name);
+            let current = parsedUsage?.current ?? (tx.currentUsage ?? (tx.maxUsage || 5));
+            const max = tx.maxUsage ?? parsedUsage?.max ?? current;
+
+            if (tx.operation === 'consume_use') {
+              const delta = typeof tx.usageChange === 'number' ? Math.abs(tx.usageChange) : (typeof (tx as any).amount === 'number' ? Math.abs((tx as any).amount) : 1);
+              current = Math.max(0, current - delta);
+            } else if (tx.operation === 'refill') {
+              const delta = typeof tx.usageChange === 'number' ? Math.abs(tx.usageChange) : (typeof (tx as any).amount === 'number' ? Math.abs((tx as any).amount) : max);
+              current = Math.min(max, current + delta);
+            } else if (tx.operation === 'set_usage') {
+              const targetVal = typeof tx.currentUsage === 'number' ? tx.currentUsage : (typeof (tx as any).amount === 'number' ? (tx as any).amount : current);
+              current = Math.max(0, Math.min(max, targetVal));
+            }
+
+            changed = true;
+            return WeightInventoryEngine.updateItemUsageInLine(
+              line,
+              current,
+              max,
+              tx.refillResource || parsedUsage?.refillResource
+            );
+          }
+          return line;
+        });
+
+        if (changed) {
+          updatedContent = newLines.join('\n');
         }
       }
 
@@ -2888,8 +3183,42 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
+  private handleTimeTravelReversion(timeTravel: TimeTravelDirective, username?: string) {
+    try {
+      const targetSnapshot = HistoryService.findClosestSnapshot({
+        targetTime: timeTravel.targetTime,
+        turnsBack: timeTravel.turnsBack || 1
+      });
+
+      if (targetSnapshot && targetSnapshot.fileSystemState) {
+        const currentState = this.fs.exportState();
+        const preserveTargets = [...(timeTravel.preserveFiles || [])];
+        if (username && preserveTargets.length === 0) {
+          const charFile = this.findPlayerCharacterFile(username);
+          if (charFile) preserveTargets.push(charFile);
+        }
+
+        const mergedState = HistoryService.applyStateWithExclusions(
+          targetSnapshot.fileSystemState,
+          currentState,
+          preserveTargets
+        );
+
+        this.fs.importState(mergedState);
+        console.log(`[Time Travel Engine] Restored state to turn snapshot (${targetSnapshot.worldTime || targetSnapshot.id}) preserving:`, preserveTargets);
+      }
+    } catch (err) {
+      console.error('[Time Travel Engine Error]', err);
+    }
+  }
+
   private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
+
+    // Handle Time Travel & selective state reversion before applying this turn's new/modified files
+    if (data.timeTravel) {
+      this.handleTimeTravelReversion(data.timeTravel, username);
+    }
 
     // Dynamically reconcile health, damage, and healing when detected
     this.syncCharacterHealth(data, username, auditContext);

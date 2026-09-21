@@ -19,6 +19,8 @@ import GuestWelcomeModal from './components/GuestWelcomeModal';
 import AdventuresModal from './components/AdventuresModal';
 import CommunityAdventuresModal from './components/CommunityAdventuresModal';
 import AccountModal from './components/AccountModal';
+import UndoModal from './components/UndoModal';
+import { HistoryService } from './services/historyService';
 import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
@@ -61,7 +63,8 @@ import {
   CheckCircle2,
   Sparkles,
   PanelLeftOpen,
-  PanelLeftClose
+  PanelLeftClose,
+  RotateCcw
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -109,6 +112,8 @@ function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isUndoModalOpen, setIsUndoModalOpen] = useState(false);
+  const [undoCount, setUndoCount] = useState<number>(() => HistoryService.getCount());
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [worldTime, setWorldTime] = useState<string>('');
   const [gameOver, setGameOver] = useState(false);
@@ -859,6 +864,21 @@ function App() {
           .map(([user, action]) => `${user} does: ${action}`)
           .join('\n');
 
+        // Record turn snapshot before host executes turn
+        HistoryService.pushSnapshot({
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          turnNumber: HistoryService.getCount() + 1,
+          userAction: combinedInput,
+          narrative: [...(roomStateRef.current?.narrative || [])],
+          updates: [...(roomStateRef.current?.updates || [])],
+          recommendations: [...(roomStateRef.current?.recommendations || [])],
+          fileSystemState: fileSystem.exportState(),
+          worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
+          gameOver: false
+        });
+        setUndoCount(HistoryService.getCount());
+
         try {
           const result = await aiEngine.processAction(combinedInput);
           if (result) {
@@ -921,6 +941,27 @@ function App() {
         clearSession();
       }
     );
+
+    // Synchronize state when host reverts or undos a turn
+    ms.setOnUndoTurn((snapshotData) => {
+      if (snapshotData.fileSystemState) {
+        fileSystem.importState(snapshotData.fileSystemState);
+        syncFiles();
+      }
+      if (snapshotData.narrative) {
+        setNarrative(snapshotData.narrative);
+      }
+      if (snapshotData.updates) {
+        setUpdates(snapshotData.updates);
+      }
+      if (snapshotData.recommendations) {
+        setRecommendations(snapshotData.recommendations);
+      }
+      if (snapshotData.worldTime) {
+        setWorldTime(snapshotData.worldTime);
+      }
+    });
+
     setMultiplayerService(ms);
     return ms;
   };
@@ -1045,6 +1086,8 @@ function App() {
 
   const handleLoadAdventure = (adv: SavedAdventure) => {
     fileSystem.clear();
+    HistoryService.clearHistory();
+    setUndoCount(0);
     if (adv.files) {
       Object.entries(adv.files).forEach(([k, v]) => fileSystem.write(k, v));
     }
@@ -1057,6 +1100,8 @@ function App() {
   };
 
   const handlePlayCommunityAdventure = async (adv: CommunityAdventure) => {
+    HistoryService.clearHistory();
+    setUndoCount(0);
     if (adv.shareType === 'full' && adv.files && adv.narrative) {
       fileSystem.clear();
       Object.entries(adv.files).forEach(([k, v]) => fileSystem.write(k, v));
@@ -1101,6 +1146,23 @@ function App() {
     refreshActionStatus();
 
     if (gameMode === 'singleplayer') {
+      // Auto save previous turn snapshot before this action executes
+      if (isInitialized) {
+        HistoryService.pushSnapshot({
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          turnNumber: HistoryService.getCount() + 1,
+          userAction: text,
+          narrative: [...narrative],
+          updates: [...updates],
+          recommendations: [...recommendations],
+          fileSystemState: fileSystem.exportState(),
+          worldTime: worldTime,
+          gameOver: gameOver
+        });
+        setUndoCount(HistoryService.getCount());
+      }
+
       updateProcessing(1);
       const userActionId = Date.now().toString();
       setNarrative(prev => [...prev, { id: userActionId, text: text, type: 'user' }]);
@@ -1199,6 +1261,8 @@ function App() {
   };
 
   const handleReset = async () => {
+    HistoryService.clearHistory();
+    setUndoCount(0);
     if (gameMode === 'multiplayer' && multiplayerService) {
       await multiplayerService.deleteAdventure();
     } else {
@@ -1219,6 +1283,74 @@ function App() {
       localStorage.removeItem('aimud_recommendations');
     }
     setIsResetModalOpen(false);
+  };
+
+  const handleUndoConfirm = async () => {
+    if (gameMode === 'multiplayer') {
+      if (!isHost || !multiplayerService) {
+        setIsUndoModalOpen(false);
+        return;
+      }
+      const snapshot = HistoryService.popSnapshot();
+      if (!snapshot) {
+        setIsUndoModalOpen(false);
+        return;
+      }
+
+      fileSystem.importState(snapshot.fileSystemState);
+      syncFiles();
+
+      const restoredNarrative: NarrativeEntry[] = [
+        ...snapshot.narrative,
+        {
+          id: Date.now().toString() + 'system',
+          text: `[SYSTEM: The host has reverted the adventure to Turn #${snapshot.turnNumber || 1}]`,
+          type: 'system' as const
+        }
+      ];
+
+      setNarrative(restoredNarrative);
+      setUpdates(snapshot.updates || []);
+      setRecommendations(snapshot.recommendations || []);
+      setGameOver(Boolean(snapshot.gameOver));
+      if (snapshot.worldTime) setWorldTime(snapshot.worldTime);
+
+      await multiplayerService.undoTurn({
+        fileSystemState: snapshot.fileSystemState,
+        narrative: restoredNarrative,
+        updates: snapshot.updates || [],
+        recommendations: snapshot.recommendations || [],
+        worldTime: snapshot.worldTime || '',
+        turnNumber: snapshot.turnNumber
+      });
+
+      setUndoCount(HistoryService.getCount());
+      setIsUndoModalOpen(false);
+      return;
+    }
+
+    // Singleplayer undo
+    const snapshot = HistoryService.popSnapshot();
+    if (!snapshot) {
+      setIsUndoModalOpen(false);
+      return;
+    }
+
+    fileSystem.importState(snapshot.fileSystemState);
+    syncFiles();
+
+    setNarrative(snapshot.narrative);
+    setUpdates(snapshot.updates || []);
+    setRecommendations(snapshot.recommendations || []);
+    setGameOver(Boolean(snapshot.gameOver));
+    if (snapshot.worldTime) setWorldTime(snapshot.worldTime);
+
+    localStorage.setItem('aimud_narrative', JSON.stringify(snapshot.narrative));
+    localStorage.setItem('aimud_updates', JSON.stringify(snapshot.updates || []));
+    localStorage.setItem('aimud_recommendations', JSON.stringify(snapshot.recommendations || []));
+
+    setUndoCount(HistoryService.getCount());
+    setIsUndoModalOpen(false);
   };
 
   // While application systems, auth, and state are initializing, display the loading screen
@@ -1334,6 +1466,11 @@ function App() {
           if (gameMode === 'multiplayer' && !isHost) return;
           setIsResetModalOpen(true);
         }}
+        onUndo={() => {
+          if (gameMode === 'multiplayer' && !isHost) return;
+          setIsUndoModalOpen(true);
+        }}
+        undoCount={undoCount}
         expandedFile={expandedFile}
         setExpandedFile={setExpandedFile}
         gameMode={gameMode}
@@ -1484,6 +1621,31 @@ function App() {
                 )}
               </button>
 
+              {/* Undo Turn Button with Confirmation */}
+              <button
+                id="top-undo-turn-btn"
+                onClick={() => {
+                  if (gameMode === 'multiplayer' && !isHost) return;
+                  setIsUndoModalOpen(true);
+                }}
+                disabled={isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)}
+                className={`px-2.5 py-1 rounded border text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)
+                    ? 'opacity-40 bg-neutral-900 border-neutral-800 text-neutral-500 cursor-not-allowed'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-amber-300 hover:text-amber-200 border-neutral-700'
+                }`}
+                title={
+                  gameMode === 'multiplayer' && !isHost
+                    ? "Only the host can undo a turn in multiplayer"
+                    : undoCount === 0
+                    ? "No previous turns to undo"
+                    : `Revert to previous turn (${undoCount} available)`
+                }
+              >
+                <RotateCcw size={13} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
+                <span>Undo Turn{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+              </button>
+
               <span className="text-neutral-600">|</span>
               <span className="text-blue-400 tracking-widest">{worldTime || "TIME: UNKNOWN"}</span>
             </div>
@@ -1627,6 +1789,25 @@ function App() {
                 )}
               </button>
 
+              {/* Mobile Undo Button */}
+              <button
+                id="mobile-undo-btn"
+                onClick={() => {
+                  if (gameMode === 'multiplayer' && !isHost) return;
+                  setIsUndoModalOpen(true);
+                }}
+                disabled={isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)}
+                className={`px-2 py-0.5 rounded border text-[10px] flex items-center gap-1 transition-colors ${
+                  isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)
+                    ? 'opacity-40 bg-neutral-900 border-neutral-800 text-neutral-500'
+                    : 'bg-neutral-800 text-amber-300 border-neutral-700 active:bg-neutral-700'
+                }`}
+                title="Undo Turn"
+              >
+                <RotateCcw size={10} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
+                <span>Undo{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+              </button>
+
               {/* Expandable Menu Toggle */}
               <button
                 onClick={() => setIsMobileTopMenuOpen(!isMobileTopMenuOpen)}
@@ -1709,6 +1890,24 @@ function App() {
                   <span>Interactive Map</span>
                 </button>
               </div>
+
+              {/* Undo Turn Action in Mobile Drawer */}
+              <button
+                onClick={() => {
+                  setIsMobileTopMenuOpen(false);
+                  if (gameMode === 'multiplayer' && !isHost) return;
+                  setIsUndoModalOpen(true);
+                }}
+                disabled={isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)}
+                className={`p-1.5 rounded border text-[11px] font-mono flex items-center justify-center gap-1.5 transition-colors ${
+                  isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)
+                    ? 'opacity-40 bg-neutral-900 border-neutral-800 text-neutral-500 cursor-not-allowed'
+                    : 'bg-neutral-900 hover:bg-neutral-800 text-amber-300 border-neutral-800'
+                }`}
+              >
+                <RotateCcw size={12} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
+                <span>Undo Turn{undoCount > 0 ? ` (${undoCount} available)` : ''}</span>
+              </button>
 
               {/* User / Account Section in Mobile Menu */}
               <div className="bg-neutral-900/80 p-2 rounded border border-neutral-800 flex items-center justify-between gap-2">
@@ -1830,6 +2029,14 @@ function App() {
         isOpen={isResetModalOpen}
         onConfirm={handleReset}
         onCancel={() => setIsResetModalOpen(false)}
+      />
+
+      <UndoModal
+        isOpen={isUndoModalOpen}
+        onConfirm={handleUndoConfirm}
+        onCancel={() => setIsUndoModalOpen(false)}
+        previousSnapshot={HistoryService.peekSnapshot()}
+        isMultiplayer={gameMode === 'multiplayer'}
       />
 
       <AuthModal

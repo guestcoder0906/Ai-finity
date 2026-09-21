@@ -16,6 +16,7 @@ export class MultiplayerService {
   private onHostCreateCharacter: (data: { username: string; description: string }) => void;
   private onKicked: () => void;
   private onAdventureDeleted: () => void;
+  private onUndoTurn?: (data: any) => void;
 
   constructor(
     fileSystem: FileSystem,
@@ -166,6 +167,14 @@ export class MultiplayerService {
       .on('broadcast', { event: 'adventure_deleted' }, () => {
         this.leaveRoom();
         this.onAdventureDeleted();
+      })
+      .on('broadcast', { event: 'undo_turn' }, (payload: any) => {
+        if (payload?.payload?.fileSystemState) {
+          this.fileSystem.importState(payload.payload.fileSystemState);
+        }
+        if (this.onUndoTurn) {
+          this.onUndoTurn(payload.payload);
+        }
       });
 
     this.channel.on('presence', { event: 'sync' }, () => {
@@ -424,6 +433,28 @@ export class MultiplayerService {
       type: 'broadcast',
       event: 'kick_player',
       payload: { username }
+    });
+  }
+
+  setOnUndoTurn(cb: (data: any) => void) {
+    this.onUndoTurn = cb;
+  }
+
+  async undoTurn(snapshotData: any) {
+    if (!this.roomId) return;
+    this.channel?.send({
+      type: 'broadcast',
+      event: 'undo_turn',
+      payload: snapshotData
+    });
+    await this.syncState({
+      fileSystemState: snapshotData.fileSystemState,
+      narrative: snapshotData.narrative,
+      updates: snapshotData.updates || [],
+      recommendations: snapshotData.recommendations || [],
+      worldTime: snapshotData.worldTime || '',
+      gameState: 'playing',
+      turnProcessed: true
     });
   }
 
