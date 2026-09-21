@@ -52,11 +52,14 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 font-sans">
-      <div className="bg-neutral-900 border border-amber-500/40 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden relative text-neutral-200 flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 font-sans overflow-y-auto"
+      style={{ WebkitOverflowScrolling: 'touch' }}
+    >
+      <div className="bg-neutral-900 border border-amber-500/40 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden relative text-neutral-200 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] my-auto shrink-0">
         
         {/* Decorative Top Accent Bar */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600"></div>
+        <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 shrink-0"></div>
 
         {/* Close Button */}
         <button
@@ -67,7 +70,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
           <X size={18} />
         </button>
 
-        <div className="p-6 space-y-5">
+        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto max-h-full font-sans">
           {/* Header */}
           <div className="flex items-start gap-3.5">
             <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500/20 to-yellow-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 shadow-inner">
