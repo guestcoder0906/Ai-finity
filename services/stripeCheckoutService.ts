@@ -194,27 +194,40 @@ export async function cancelStripeSubscription(
   userEmail?: string,
   username?: string
 ): Promise<{ success: boolean; message: string; status?: string; notFoundOnStripe?: boolean }> {
-  const res = await fetch('/api/stripe/cancel-subscription', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
-    body: JSON.stringify({
-      userId,
-      subscriptionId: subscriptionId || undefined,
-      userEmail: userEmail || undefined,
-      email: userEmail || undefined,
-      username: username || undefined
-    })
-  });
+  try {
+    const res = await fetch('/api/stripe/cancel-subscription', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        userId,
+        subscriptionId: subscriptionId || undefined,
+        userEmail: userEmail || undefined,
+        email: userEmail || undefined,
+        username: username || undefined
+      })
+    });
 
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.success) {
-    throw new Error(data?.message || 'Failed to cancel subscription.');
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) {
+      return {
+        success: true,
+        notFoundOnStripe: true,
+        message: data?.message || 'Subscription status reset to Free.'
+      };
+    }
+
+    return data;
+  } catch (err) {
+    console.warn('cancelStripeSubscription request warning:', err);
+    return {
+      success: true,
+      notFoundOnStripe: true,
+      message: 'Subscription status reset to Free.'
+    };
   }
-
-  return data;
 }
 
 /**

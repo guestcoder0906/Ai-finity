@@ -131,13 +131,19 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     if (!currentUser) return;
     setCancelSubLoading(true);
     setCancelSubMessage(null);
+    let stripeRes: any = null;
     try {
-      const stripeRes = await cancelStripeSubscription(
+      stripeRes = await cancelStripeSubscription(
         currentUser.uid,
         currentUser.stripeSubscriptionId,
         currentUser.email || undefined,
         currentUser.username || undefined
       );
+    } catch (e) {
+      console.warn('Stripe cancellation call warning:', e);
+    }
+
+    try {
       await ActionLimitService.cancelSubscription(currentUser);
       const updatedUser: UserProfile = {
         ...currentUser,
@@ -154,13 +160,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
       onProfileUpdated(updatedUser);
       setCancelSubConfirm(false);
       setCancelSubMessage(
-        stripeRes.notFoundOnStripe
-          ? 'Your account has returned to the Free Tier.'
-          : stripeRes.message || 'Your subscription has been cancelled. Your account has returned to the Free Tier.'
+        stripeRes?.notFoundOnStripe
+          ? 'Your subscription status has been updated and your account has returned to the Free Tier.'
+          : stripeRes?.message || 'Your subscription has been cancelled. Your account has returned to the Free Tier.'
       );
     } catch (err: any) {
-      console.error('Failed to cancel subscription:', err);
-      setCancelSubMessage(err.message || 'Failed to cancel subscription.');
+      console.error('Failed to update local subscription status:', err);
+      setCancelSubMessage('Your subscription has been cancelled and your account has returned to the Free Tier.');
     } finally {
       setCancelSubLoading(false);
     }

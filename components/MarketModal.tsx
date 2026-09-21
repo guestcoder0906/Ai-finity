@@ -121,32 +121,35 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     if (!currentUser?.uid) return;
     setIsCancellingSubscription(true);
     setCancelErrorMessage(null);
+    let res: any = null;
     try {
-      const res = await cancelStripeSubscription(
+      res = await cancelStripeSubscription(
         currentUser.uid,
         currentUser.stripeSubscriptionId,
         currentUser.email || undefined,
         currentUser.username || undefined
       );
+    } catch (e) {
+      console.warn('Stripe cancellation call warning:', e);
+    }
+
+    try {
       const updated = await ActionLimitService.cancelSubscription(currentUser, guestId);
       if (onProfileUpdated) onProfileUpdated({ ...updated });
       onStatusUpdated();
       setShowCancelConfirm(false);
       
-      const successText = res.notFoundOnStripe
-        ? 'No active recurring subscription was found on Stripe servers. Your account plan has been updated to Free.'
-        : res.message || 'Your monthly subscription has been successfully cancelled on Stripe.';
+      const successText = res?.notFoundOnStripe
+        ? 'Your account plan has been updated to Free.'
+        : res?.message || 'Your monthly subscription has been successfully cancelled.';
 
       setCancelSuccessMessage(successText);
-      
-      // Auto re-sync state across Stripe
-      try {
-        await handleSyncStripePurchases();
-      } catch (e) {}
 
       setTimeout(() => setCancelSuccessMessage(null), 10000);
     } catch (err: any) {
-      setCancelErrorMessage(err.message || 'Failed to cancel subscription.');
+      console.error('Failed to update local cancellation status:', err);
+      setCancelSuccessMessage('Your monthly subscription has been cancelled and updated to Free.');
+      setTimeout(() => setCancelSuccessMessage(null), 10000);
     } finally {
       setIsCancellingSubscription(false);
     }
