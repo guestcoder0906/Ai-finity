@@ -127,7 +127,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         currentUser.uid,
         currentUser.stripeSubscriptionId,
         currentUser.email || undefined,
-        currentUser.username || undefined
+        currentUser.username || undefined,
+        currentUser.stripeCustomerId || undefined
       );
     } catch (e) {
       console.warn('Stripe cancellation call warning:', e);
@@ -141,7 +142,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       
       const successText = res?.notFoundOnStripe
         ? 'Your account plan has been updated to Free.'
-        : res?.message || 'Your monthly subscription has been successfully cancelled.';
+        : res?.message || 'Your monthly subscription has been successfully cancelled on Stripe and your account has returned to Free.';
 
       setCancelSuccessMessage(successText);
 
@@ -166,7 +167,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         currentUser.email || undefined,
         currentUser.username || undefined,
         currentUser.stripeSubscriptionId || undefined,
-        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
+        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com',
+        currentUser.stripeCustomerId || undefined
       );
       if (portalUrl) {
         window.location.href = portalUrl;
@@ -175,8 +177,9 @@ export const MarketModal: React.FC<MarketModalProps> = ({
       }
     } catch (err: any) {
       setCancelErrorMessage(
-        err.message || 'Could not open Stripe Customer Portal. You can click "Yes, Cancel" below to reset your plan to Free.'
+        err.message || 'Stripe Customer Portal is currently in test mode or unavailable. You can click "Yes, Cancel" below to reset your plan to Free.'
       );
+      setShowCancelConfirm(true);
     } finally {
       setIsOpeningPortal(false);
     }

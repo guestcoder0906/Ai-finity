@@ -52,6 +52,7 @@ interface AccountModalProps {
   currentUser: UserProfile | null;
   actionStatus: ActionStatus;
   onProfileUpdated: (updatedUser: UserProfile) => void;
+  onStatusUpdated?: () => void;
 }
 
 export const AccountModal: React.FC<AccountModalProps> = ({
@@ -59,7 +60,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   onClose,
   currentUser,
   actionStatus,
-  onProfileUpdated
+  onProfileUpdated,
+  onStatusUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'billing' | 'staff'>('profile');
   const [selectedReceiptForInvoice, setSelectedReceiptForInvoice] = useState<PaymentTransactionRecord | null>(null);
@@ -137,15 +139,26 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         currentUser.uid,
         currentUser.stripeSubscriptionId,
         currentUser.email || undefined,
-        currentUser.username || undefined
+        currentUser.username || undefined,
+        currentUser.stripeCustomerId || undefined
       );
     } catch (e) {
       console.warn('Stripe cancellation call warning:', e);
     }
 
     try {
-      await ActionLimitService.cancelSubscription(currentUser);
-      const updatedUser: UserProfile = {
+      const updatedUser = await ActionLimitService.cancelSubscription(currentUser);
+      onProfileUpdated(updatedUser);
+      if (onStatusUpdated) onStatusUpdated();
+      setCancelSubConfirm(false);
+      setCancelSubMessage(
+        stripeRes?.notFoundOnStripe
+          ? 'Your subscription has been cancelled and your account has returned to the Free Tier.'
+          : stripeRes?.message || 'Your subscription has been cancelled successfully. Your account has returned to the Free Tier.'
+      );
+    } catch (err: any) {
+      console.error('Failed to update local subscription status:', err);
+      const fallbackUser: UserProfile = {
         ...currentUser,
         tier: 'free',
         subscriptionExpiresAt: undefined,
@@ -157,15 +170,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
           showGlowingName: false
         } : {})
       };
-      onProfileUpdated(updatedUser);
+      onProfileUpdated(fallbackUser);
+      if (onStatusUpdated) onStatusUpdated();
       setCancelSubConfirm(false);
-      setCancelSubMessage(
-        stripeRes?.notFoundOnStripe
-          ? 'Your subscription status has been updated and your account has returned to the Free Tier.'
-          : stripeRes?.message || 'Your subscription has been cancelled. Your account has returned to the Free Tier.'
-      );
-    } catch (err: any) {
-      console.error('Failed to update local subscription status:', err);
       setCancelSubMessage('Your subscription has been cancelled and your account has returned to the Free Tier.');
     } finally {
       setCancelSubLoading(false);
@@ -182,7 +189,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         currentUser.email || undefined,
         currentUser.username || undefined,
         currentUser.stripeSubscriptionId || undefined,
-        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
+        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com',
+        currentUser.stripeCustomerId || undefined
       );
       if (portalUrl) {
         window.location.href = portalUrl;
@@ -190,7 +198,11 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         throw new Error('Stripe did not return a valid customer portal link.');
       }
     } catch (err: any) {
-      setCancelSubMessage(err.message || 'Could not open Stripe Customer Portal.');
+      setCancelSubMessage(
+        err.message || 'Stripe Customer Portal could not be opened. You can click "Cancel Subscription" below to reset your plan to Free.'
+      );
+      // Automatically prompt cancel confirmation for instant convenience
+      setCancelSubConfirm(true);
     } finally {
       setIsOpeningPortal(false);
     }
@@ -465,9 +477,24 @@ export const AccountModal: React.FC<AccountModalProps> = ({
             <>
               {/* Status message after cancellation */}
               {cancelSubMessage && (
-                <div className="p-3 bg-emerald-950/80 border border-emerald-700 text-emerald-300 rounded-xl text-xs flex items-center gap-2">
-                  <CheckCircle2 size={16} className="shrink-0" />
-                  <span>{cancelSubMessage}</span>
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 shadow-sm ${
+                    cancelSubMessage.toLowerCase().includes('cancel') && !cancelSubMessage.toLowerCase().includes('not') && !cancelSubMessage.toLowerCase().includes('could not')
+                      ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                      : 'bg-amber-950/70 border border-amber-700/80 text-amber-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={16} className="shrink-0" />
+                    <span>{cancelSubMessage}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCancelSubMessage(null)}
+                    className="text-xs opacity-70 hover:opacity-100 hover:text-white cursor-pointer px-1 font-bold"
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
 

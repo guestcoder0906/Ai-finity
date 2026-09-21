@@ -788,12 +788,10 @@ export class ActionLimitService {
       });
     } else if (
       !activeSub &&
-      user.subscriptionStatus === 'canceled' &&
-      user.subscriptionExpiresAt &&
-      new Date(user.subscriptionExpiresAt).getTime() < Date.now() &&
+      (user.subscriptionStatus === 'canceled' || user.stripeSubscriptionId || (user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt).getTime() < Date.now())) &&
       !isAdminOrMod
     ) {
-      // Only downgrade if the subscription was explicitly canceled AND the expiration date has passed
+      // Downgrade to Free if the subscription was canceled or no active Stripe subscription exists
       user.tier = 'free';
       user.subscriptionStatus = 'canceled';
       user.subscriptionExpiresAt = undefined;

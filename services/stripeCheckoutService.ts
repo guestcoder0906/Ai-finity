@@ -192,7 +192,8 @@ export async function cancelStripeSubscription(
   userId: string,
   subscriptionId?: string | null,
   userEmail?: string,
-  username?: string
+  username?: string,
+  stripeCustomerId?: string | null
 ): Promise<{ success: boolean; message: string; status?: string; notFoundOnStripe?: boolean }> {
   try {
     const res = await fetch('/api/stripe/cancel-subscription', {
@@ -206,7 +207,9 @@ export async function cancelStripeSubscription(
         subscriptionId: subscriptionId || undefined,
         userEmail: userEmail || undefined,
         email: userEmail || undefined,
-        username: username || undefined
+        username: username || undefined,
+        stripeCustomerId: stripeCustomerId || undefined,
+        customerId: stripeCustomerId || undefined
       })
     });
 
@@ -238,7 +241,8 @@ export async function createStripeCustomerPortalSession(
   userEmail?: string,
   username?: string,
   stripeSubscriptionId?: string,
-  origin?: string
+  origin?: string,
+  stripeCustomerId?: string | null
 ): Promise<string> {
   const clientOrigin =
     origin ||
@@ -255,6 +259,8 @@ export async function createStripeCustomerPortalSession(
       userEmail: userEmail || undefined,
       username: username || undefined,
       stripeSubscriptionId: stripeSubscriptionId || undefined,
+      stripeCustomerId: stripeCustomerId || undefined,
+      customerId: stripeCustomerId || undefined,
       origin: clientOrigin
     })
   });

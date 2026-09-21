@@ -1884,6 +1884,11 @@ function App() {
           setCurrentUser(updatedUser);
           setActionStatus(ActionLimitService.getActionStatus(updatedUser, guestId));
         }}
+        onStatusUpdated={() => {
+          if (currentUser) {
+            setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
+          }
+        }}
       />
 
       {/* Official Digital Tax Invoice & Receipt Modal */}

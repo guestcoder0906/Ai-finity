@@ -489,11 +489,13 @@ async function startServer() {
   // Cancel an active monthly subscription
   app.post('/api/stripe/cancel-subscription', async (req, res) => {
     try {
-      const { userId, subscriptionId, userEmail, email, username } = req.body || {};
-      const searchEmail = (userEmail || email || '').trim().toLowerCase();
-      const searchUsername = (username || '').trim().toLowerCase();
+      const { userId, subscriptionId, userEmail, email, username, stripeCustomerId, customerId: bodyCustId } = req.body || {};
+      const cleanEmail = (userEmail || email || '').toLowerCase().trim();
+      const cleanUsername = (username || '').toLowerCase().trim();
+      const cleanUid = (userId || '').trim();
+      const explicitCustId = stripeCustomerId || bodyCustId;
 
-      if (!userId && !subscriptionId && !searchEmail && !searchUsername) {
+      if (!cleanUid && !subscriptionId && !cleanEmail && !cleanUsername && !explicitCustId) {
         return res.status(400).json({ error: 'MISSING_PARAMS', message: 'User ID, Email, or Subscription ID is required.' });
       }
 
@@ -502,75 +504,92 @@ async function startServer() {
         return res.json({ success: true, message: 'Subscription status reset in test mode.' });
       }
 
-      let subToCancelId = subscriptionId;
+      // Fast parallel search across sessions and subscriptions
+      const [sessions, subs] = await Promise.all([
+        stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] })),
+        stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }))
+      ]);
 
-      // Search active subscriptions by userId, username, or email
-      if (!subToCancelId) {
-        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' });
-        for (const s of subs.data) {
-          const isLive = s.status === 'active' || s.status === 'trialing';
-          if (!isLive) continue;
+      const userCustomerIds = new Set<string>();
+      if (explicitCustId) userCustomerIds.add(explicitCustId);
+      const subsToCancel = new Set<string>();
+      if (subscriptionId) subsToCancel.add(subscriptionId);
 
-          const subUid = (s.metadata?.userId || '').trim();
-          const subEmail = (s.metadata?.userEmail || '').toLowerCase().trim();
-          const subUsername = (s.metadata?.username || '').toLowerCase().trim();
+      // 1. Gather all customer IDs and subscription IDs attached to this user from checkout sessions
+      for (const s of sessions.data) {
+        const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
+        const sUid = (s.metadata?.userId || '').trim();
+        const sUsername = (s.metadata?.username || '').toLowerCase().trim();
 
-          if (
-            (userId && subUid === userId) ||
-            (searchUsername && subUsername === searchUsername) ||
-            (searchEmail && subEmail === searchEmail)
-          ) {
-            subToCancelId = s.id;
-            break;
+        const isMatch =
+          (cleanUid && sUid === cleanUid) ||
+          (cleanUsername && sUsername === cleanUsername) ||
+          (cleanEmail && sEmail === cleanEmail);
+
+        if (isMatch) {
+          if (s.customer) {
+            userCustomerIds.add(typeof s.customer === 'string' ? s.customer : s.customer.id);
+          }
+          if (s.subscription) {
+            subsToCancel.add(typeof s.subscription === 'string' ? s.subscription : s.subscription.id);
           }
         }
       }
 
-      if (!subToCancelId) {
-        if (searchEmail) {
-          try {
-            const custs = await stripe.customers.list({ email: searchEmail, limit: 10 });
-            for (const c of custs.data) {
-              const customerSubs = await stripe.subscriptions.list({ customer: c.id, limit: 10, status: 'all' });
-              for (const cs of customerSubs.data) {
-                if (cs.status === 'active' || cs.status === 'trialing') {
-                  subToCancelId = cs.id;
-                  break;
-                }
+      // 2. Identify active subscriptions in Stripe matching this account or customer
+      for (const s of subs.data) {
+        const subUid = (s.metadata?.userId || '').trim();
+        const subEmail = (s.metadata?.userEmail || '').toLowerCase().trim();
+        const subUsername = (s.metadata?.username || '').toLowerCase().trim();
+        const subCustomer = typeof s.customer === 'string' ? s.customer : s.customer?.id;
+
+        const isMatch =
+          (subscriptionId && s.id === subscriptionId) ||
+          (cleanUid && subUid === cleanUid) ||
+          (cleanUsername && subUsername === cleanUsername) ||
+          (cleanEmail && subEmail === cleanEmail) ||
+          (subCustomer && userCustomerIds.has(subCustomer));
+
+        if (isMatch && (s.status === 'active' || s.status === 'trialing' || s.status === 'past_due')) {
+          subsToCancel.add(s.id);
+        }
+      }
+
+      // 3. Check customer records directly if searchEmail is provided and nothing was matched yet
+      if (subsToCancel.size === 0 && cleanEmail && cleanEmail.includes('@')) {
+        try {
+          const custs = await stripe.customers.list({ email: cleanEmail, limit: 10 }).catch(() => ({ data: [] }));
+          for (const c of custs.data) {
+            userCustomerIds.add(c.id);
+            for (const s of subs.data) {
+              const subCustomer = typeof s.customer === 'string' ? s.customer : s.customer?.id;
+              if (subCustomer === c.id && (s.status === 'active' || s.status === 'trialing')) {
+                subsToCancel.add(s.id);
               }
-              if (subToCancelId) break;
             }
-          } catch (e) {
-            // Non-blocking
           }
+        } catch (e) {
+          // Non-blocking
         }
       }
 
-      if (!subToCancelId) {
-        return res.json({
-          success: true,
-          notFoundOnStripe: true,
-          message: 'No active recurring subscription was found on Stripe servers for this account. Account plan has been updated to Free.'
-        });
-      }
-
-      let cancelledSub: any;
-      try {
-        cancelledSub = await stripe.subscriptions.cancel(subToCancelId);
-      } catch (cancelErr: any) {
-        console.warn('Stripe subscription cancel warning:', cancelErr?.message);
-        return res.json({
-          success: true,
-          notFoundOnStripe: true,
-          message: 'Subscription was already cancelled or not found on Stripe. Account plan has been updated to Free.'
-        });
+      // 4. Cancel all identified active subscriptions on Stripe
+      let cancelledCount = 0;
+      for (const subId of Array.from(subsToCancel)) {
+        try {
+          await stripe.subscriptions.cancel(subId);
+          cancelledCount++;
+        } catch (cancelErr: any) {
+          console.warn('Stripe subscription cancel warning for', subId, cancelErr?.message);
+        }
       }
 
       res.json({
         success: true,
-        message: 'Monthly subscription successfully cancelled.',
-        status: cancelledSub?.status || 'canceled',
-        subscriptionId: subToCancelId
+        message: cancelledCount > 0
+          ? 'Monthly subscription cancelled successfully on Stripe.'
+          : 'Subscription status reset to Free.',
+        cancelledCount
       });
     } catch (err: any) {
       console.error('Failed to cancel Stripe subscription:', err);
@@ -585,7 +604,16 @@ async function startServer() {
   // Create Stripe Customer Portal session for subscription/billing management
   app.post('/api/stripe/create-portal-session', async (req, res) => {
     try {
-      const { userId, userEmail, username, stripeSubscriptionId, origin: clientOrigin } = req.body || {};
+      const {
+        customerId: bodyCustomerId,
+        stripeCustomerId,
+        userId,
+        userEmail,
+        username,
+        stripeSubscriptionId,
+        origin: clientOrigin
+      } = req.body || {};
+
       let origin = String(clientOrigin || req.headers?.referer || req.headers?.origin || '').trim();
       if (origin.endsWith('/')) origin = origin.slice(0, -1);
       if (!origin || origin === 'null') {
@@ -603,86 +631,104 @@ async function startServer() {
         return res.status(400).json({ error: 'STRIPE_NOT_CONFIGURED', message: 'Stripe is not configured.' });
       }
 
-      let customerId: string | undefined;
+      const cleanEmail = (userEmail || '').trim().toLowerCase();
+      const cleanUsername = (username || '').trim().toLowerCase();
+      const cleanUid = (userId || '').trim();
 
-      // 1. Direct subscription ID lookup
-      if (stripeSubscriptionId) {
-        try {
-          const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
-          if (sub && sub.customer) {
-            customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
-          }
-        } catch (err) {
-          // Subscription ID might be stale or not found directly
-        }
-      }
+      let customerId: string | undefined = bodyCustomerId || stripeCustomerId;
 
-      // 2. Search customers by email
-      if (!customerId && userEmail && userEmail.includes('@')) {
-        const customers = await stripe.customers.list({ email: userEmail, limit: 10 }).catch(() => ({ data: [] }));
-        if (customers.data.length > 0) {
-          customerId = customers.data[0].id;
-        }
-      }
-
-      // 3. Search subscriptions list for customer ID
+      // If customerId was not passed directly, run fast parallel lookup
       if (!customerId) {
-        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }));
-        for (const sub of subs.data) {
-          const subUid = (sub.metadata?.userId || '').trim();
-          const subEmail = (sub.metadata?.userEmail || '').toLowerCase().trim();
-          const subUsername = (sub.metadata?.username || '').toLowerCase().trim();
+        const [sessionsRes, subsRes, customersRes] = await Promise.all([
+          stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] })),
+          stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] })),
+          cleanEmail.includes('@')
+            ? stripe.customers.list({ email: cleanEmail, limit: 10 }).catch(() => ({ data: [] }))
+            : Promise.resolve({ data: [] })
+        ]);
 
-          if (
-            (stripeSubscriptionId && sub.id === stripeSubscriptionId) ||
-            (userId && subUid === userId) ||
-            (userEmail && subEmail === userEmail.toLowerCase().trim()) ||
-            (username && subUsername === username.toLowerCase().trim())
-          ) {
-            if (sub.customer) {
-              customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
-              break;
-            }
-          }
+        // A. Direct customer match by email
+        if (customersRes.data.length > 0) {
+          customerId = customersRes.data[0].id;
         }
-      }
 
-      // 4. Search checkout sessions for customer ID if not found yet
-      if (!customerId) {
-        const sessions = await stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] }));
-        for (const s of sessions.data) {
+        // B. Match checkout sessions
+        const matchedCustomerIds = new Set<string>();
+        for (const s of sessionsRes.data) {
           const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
           const sUid = (s.metadata?.userId || '').trim();
           const sUsername = (s.metadata?.username || '').toLowerCase().trim();
 
           if (
-            (userId && sUid === userId) ||
-            (userEmail && sEmail === userEmail.toLowerCase()) ||
-            (username && sUsername === username.toLowerCase())
+            (cleanUid && sUid === cleanUid) ||
+            (cleanEmail && sEmail === cleanEmail) ||
+            (cleanUsername && sUsername === cleanUsername)
           ) {
             if (s.customer) {
-              customerId = typeof s.customer === 'string' ? s.customer : s.customer.id;
+              const cId = typeof s.customer === 'string' ? s.customer : s.customer.id;
+              matchedCustomerIds.add(cId);
+              if (!customerId) customerId = cId;
+            }
+          }
+        }
+
+        // C. Match subscriptions
+        if (!customerId) {
+          for (const sub of subsRes.data) {
+            const subUid = (sub.metadata?.userId || '').trim();
+            const subEmail = (sub.metadata?.userEmail || '').toLowerCase().trim();
+            const subUsername = (sub.metadata?.username || '').toLowerCase().trim();
+            const subCust = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+            if (
+              (stripeSubscriptionId && sub.id === stripeSubscriptionId) ||
+              (cleanUid && subUid === cleanUid) ||
+              (cleanEmail && subEmail === cleanEmail) ||
+              (cleanUsername && subUsername === cleanUsername) ||
+              (subCust && matchedCustomerIds.has(subCust))
+            ) {
+              if (sub.customer) {
+                customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+                break;
+              }
+            }
+          }
+        }
+
+        // D. Broad customer scan if still missing
+        if (!customerId) {
+          const allCustomers = await stripe.customers.list({ limit: 50 }).catch(() => ({ data: [] }));
+          for (const c of allCustomers.data) {
+            const cEmail = (c.email || c.metadata?.userEmail || '').toLowerCase().trim();
+            const cUid = (c.metadata?.userId || '').trim();
+            const cUsername = (c.metadata?.username || '').toLowerCase().trim();
+
+            if (
+              (cleanEmail && cEmail === cleanEmail) ||
+              (cleanUid && cUid === cleanUid) ||
+              (cleanUsername && cUsername === cleanUsername)
+            ) {
+              customerId = c.id;
               break;
             }
           }
         }
-      }
 
-      // 5. Broad customer list scan
-      if (!customerId) {
-        const allCustomers = await stripe.customers.list({ limit: 100 }).catch(() => ({ data: [] }));
-        for (const c of allCustomers.data) {
-          const cEmail = (c.email || c.metadata?.userEmail || '').toLowerCase().trim();
-          const cUid = (c.metadata?.userId || '').trim();
-          const cUsername = (c.metadata?.username || '').toLowerCase().trim();
-
-          if (
-            (userEmail && cEmail === userEmail.toLowerCase().trim()) ||
-            (userId && cUid === userId) ||
-            (username && cUsername === username.toLowerCase().trim())
-          ) {
-            customerId = c.id;
-            break;
+        // E. If no customer exists on Stripe yet, auto-create one so the portal can open
+        if (!customerId) {
+          try {
+            const newCust = await stripe.customers.create({
+              email: cleanEmail || undefined,
+              name: username || undefined,
+              metadata: {
+                userId: cleanUid,
+                username: cleanUsername,
+                autoCreated: 'true'
+              }
+            });
+            customerId = newCust.id;
+          } catch (createCustErr: any) {
+            console.warn('Auto-create Stripe customer note:', createCustErr?.message);
           }
         }
       }
@@ -690,19 +736,28 @@ async function startServer() {
       if (!customerId) {
         return res.status(404).json({
           error: 'CUSTOMER_NOT_FOUND',
-          message: 'No Stripe customer account was found for your user profile. If you subscribed using a different email or guest checkout, you can click "Cancel Subscription" below to reset your plan to Free.'
+          message: 'No Stripe customer account was found for your user profile. You can click "Cancel Subscription" below to reset your plan to Free.'
         });
       }
 
-      const portalSession = await stripe.billingPortal.sessions.create({
-        customer: customerId,
-        return_url: `${origin}/?stripe_portal_return=true`
-      });
+      try {
+        const portalSession = await stripe.billingPortal.sessions.create({
+          customer: customerId,
+          return_url: `${origin}/?stripe_portal_return=true`
+        });
 
-      res.json({
-        success: true,
-        url: portalSession.url
-      });
+        return res.json({
+          success: true,
+          url: portalSession.url
+        });
+      } catch (portalErr: any) {
+        console.warn('Stripe customer portal session error:', portalErr?.message);
+        return res.status(200).json({
+          success: false,
+          portalNotConfigured: true,
+          message: 'Stripe Customer Portal is currently in test mode or not activated in the Stripe Dashboard. You can cancel your subscription directly here with one click.'
+        });
+      }
     } catch (err: any) {
       console.error('Failed to create Stripe portal session:', err);
       res.status(500).json({ error: 'PORTAL_ERROR', message: err.message });
