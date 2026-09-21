@@ -268,7 +268,7 @@ export async function registerWithEmail(
   email: string,
   pass: string,
   username: string
-): Promise<{ user?: UserProfile; error?: string }> {
+): Promise<{ user?: UserProfile; error?: string; operationNotAllowed?: boolean }> {
   const validation = validateUsernameFormat(username);
   if (!validation.valid) {
     return { error: validation.error };
@@ -322,14 +322,18 @@ export async function registerWithEmail(
     return { user: profile };
   } catch (err: any) {
     let msg = err.message || 'Registration failed.';
-    if (err.code === 'auth/email-already-in-use') {
+    let operationNotAllowed = false;
+    if (err.code === 'auth/operation-not-allowed') {
+      msg = 'Email/Password sign-in is not enabled in your Firebase Console. Please enable Email/Password provider in the Firebase Console.';
+      operationNotAllowed = true;
+    } else if (err.code === 'auth/email-already-in-use') {
       msg = 'An account with this email already exists.';
     } else if (err.code === 'auth/weak-password') {
       msg = 'Password should be at least 6 characters.';
     } else if (err.code === 'auth/invalid-email') {
       msg = 'Please enter a valid email address.';
     }
-    return { error: msg };
+    return { error: msg, operationNotAllowed };
   }
 }
 
@@ -337,7 +341,7 @@ export async function registerWithEmail(
 export async function loginWithEmail(
   email: string,
   pass: string
-): Promise<{ user?: UserProfile; error?: string; accountNotFound?: boolean }> {
+): Promise<{ user?: UserProfile; error?: string; accountNotFound?: boolean; operationNotAllowed?: boolean; isGoogleAccount?: boolean }> {
   try {
     const cleanEmail = email.trim();
     if (!cleanEmail) {
@@ -351,20 +355,34 @@ export async function loginWithEmail(
 
     // Check if account exists first in Firestore emails or users collection
     let accountExists = false;
+    let isGoogleAccount = false;
     try {
       const emailDoc = await getDoc(doc(db, 'emails', emailLower));
       if (emailDoc.exists()) {
         accountExists = true;
+        const uid = emailDoc.data()?.uid;
+        if (uid) {
+          const uDoc = await getDoc(doc(db, 'users', uid));
+          if (uDoc.exists() && uDoc.data()?.authProvider === 'google') {
+            isGoogleAccount = true;
+          }
+        }
       } else {
         const q1 = query(collection(db, 'users'), where('email', '==', cleanEmail));
         const snap1 = await getDocs(q1);
         if (!snap1.empty) {
           accountExists = true;
+          if (snap1.docs[0].data()?.authProvider === 'google') {
+            isGoogleAccount = true;
+          }
         } else {
           const q2 = query(collection(db, 'users'), where('email', '==', emailLower));
           const snap2 = await getDocs(q2);
           if (!snap2.empty) {
             accountExists = true;
+            if (snap2.docs[0].data()?.authProvider === 'google') {
+              isGoogleAccount = true;
+            }
           }
         }
       }
@@ -392,6 +410,19 @@ export async function loginWithEmail(
       activeProfileCache[cred.user.uid] = fallbackProfile;
       return { user: fallbackProfile };
     } catch (authErr: any) {
+      if (authErr.code === 'auth/operation-not-allowed') {
+        if (isGoogleAccount) {
+          return {
+            error: `This email (${cleanEmail}) was registered using Google Sign-In, and Email/Password sign-in is disabled in Firebase. Please sign in with Google below.`,
+            operationNotAllowed: true,
+            isGoogleAccount: true
+          };
+        }
+        return {
+          error: 'Email/Password sign-in is disabled in the Firebase Console for this project.',
+          operationNotAllowed: true
+        };
+      }
       // If Firebase explicitly reports user-not-found, OR if our lookup showed account does not exist:
       if (
         authErr.code === 'auth/user-not-found' ||

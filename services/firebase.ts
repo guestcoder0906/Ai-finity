@@ -22,4 +22,6 @@ googleProvider.setCustomParameters({
 // Firestore instance targeting the configured database ID
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
 
+export { firebaseConfig };
+
 export default app;

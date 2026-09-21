@@ -7,8 +7,23 @@ import {
   generateRandomUsername,
   UserProfile
 } from '../services/authService';
-import { X, Mail, Lock, User, Dices, AlertCircle, LogIn, UserPlus, Sparkles, CheckCircle2 } from 'lucide-react';
+import {
+  X,
+  Mail,
+  Lock,
+  User,
+  Dices,
+  AlertCircle,
+  LogIn,
+  UserPlus,
+  Sparkles,
+  CheckCircle2,
+  ExternalLink,
+  Copy,
+  Check
+} from 'lucide-react';
 import { User as FirebaseUser } from 'firebase/auth';
+import { firebaseConfig } from '../services/firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -24,6 +39,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
   const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [operationNotAllowed, setOperationNotAllowed] = useState(false);
+  const [isGoogleAccountError, setIsGoogleAccountError] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [accountNotFoundNotice, setAccountNotFoundNotice] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -35,10 +53,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
   const usernameInputRef = useRef<HTMLInputElement>(null);
 
+  const consoleAuthUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
+
   useEffect(() => {
     if (isOpen) {
       setTab(initialTab);
       setError(null);
+      setOperationNotAllowed(false);
+      setIsGoogleAccountError(false);
+      setCopiedLink(false);
       setAccountNotFoundNotice(false);
       setPendingGoogleUser(null);
       setGoogleUsername('');
@@ -63,6 +86,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setOperationNotAllowed(false);
+    setIsGoogleAccountError(false);
     setLoading(true);
 
     try {
@@ -87,7 +112,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
         }
 
         const res = await registerWithEmail(email, password, username);
-        if (res.error) {
+        if (res.operationNotAllowed) {
+          setOperationNotAllowed(true);
+          setError(res.error || 'Email/Password sign-in is disabled in Firebase.');
+        } else if (res.error) {
           setError(res.error);
         } else if (res.user) {
           onAuthSuccess(res.user);
@@ -95,7 +123,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
         }
       } else {
         const res = await loginWithEmail(email, password);
-        if (res.accountNotFound) {
+        if (res.operationNotAllowed) {
+          setOperationNotAllowed(true);
+          setIsGoogleAccountError(!!res.isGoogleAccount);
+          setError(res.error || 'Email/Password sign-in is disabled in Firebase.');
+        } else if (res.accountNotFound) {
           // Immediately switch to manual setup mode so user can set their username and password
           setTab('signup');
           setAccountNotFoundNotice(true);
@@ -112,7 +144,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
         }
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication error.');
+      if (err?.code === 'auth/operation-not-allowed' || err?.message?.includes('operation-not-allowed')) {
+        setOperationNotAllowed(true);
+        setError('Email/Password sign-in is disabled in your Firebase project.');
+      } else {
+        setError(err.message || 'Authentication error.');
+      }
     } finally {
       setLoading(false);
     }
@@ -307,6 +344,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                 onClick={() => {
                   setTab('login');
                   setError(null);
+                  setOperationNotAllowed(false);
+                  setIsGoogleAccountError(false);
                   setAccountNotFoundNotice(false);
                 }}
                 className={`flex-1 pb-2.5 text-xs font-semibold tracking-wider flex items-center justify-center gap-1.5 transition-colors border-b-2 cursor-pointer ${
@@ -324,6 +363,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                 onClick={() => {
                   setTab('signup');
                   setError(null);
+                  setOperationNotAllowed(false);
+                  setIsGoogleAccountError(false);
                   setAccountNotFoundNotice(false);
                 }}
                 className={`flex-1 pb-2.5 text-xs font-semibold tracking-wider flex items-center justify-center gap-1.5 transition-colors border-b-2 cursor-pointer ${
@@ -347,6 +388,88 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                 <p className="text-[11px] text-amber-200/90 leading-relaxed">
                   No existing account was found for <strong>{email}</strong>. Please enter your desired username and password below to create your account!
                 </p>
+              </div>
+            )}
+
+            {/* Firebase auth/operation-not-allowed Helper Box */}
+            {operationNotAllowed && (
+              <div className="mb-3 p-3.5 bg-amber-950/80 border border-amber-500/70 rounded-xl text-xs text-amber-200 space-y-2.5 shadow-lg shadow-amber-950/40 animate-in fade-in duration-200">
+                <div className="flex items-center gap-2 font-bold text-amber-300">
+                  <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                  <span>Firebase: Email/Password Sign-In Disabled</span>
+                </div>
+
+                {isGoogleAccountError ? (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      The email <strong className="text-white">{email}</strong> is associated with a <strong>Google Sign-In</strong> account.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-md"
+                    >
+                      <span>Sign In With Google</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      Firebase Authentication has <strong>Email/Password</strong> disabled by default. To enable email login & signup:
+                    </p>
+                    <ol className="text-[11px] list-decimal list-inside space-y-1.5 text-neutral-300 bg-black/50 p-2.5 rounded-lg border border-amber-900/60 font-sans">
+                      <li>
+                        Open{' '}
+                        <a
+                          href={consoleAuthUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-amber-400 underline hover:text-amber-300 font-semibold inline-flex items-center gap-1"
+                        >
+                          <span>Firebase Console Auth Providers</span>
+                          <ExternalLink size={11} />
+                        </a>
+                      </li>
+                      <li>Click on <strong className="text-white">Email/Password</strong> provider</li>
+                      <li>Toggle <strong className="text-emerald-400">Enable</strong> to ON and click <strong className="text-white">Save</strong></li>
+                    </ol>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <a
+                        href={consoleAuthUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 py-1.5 px-2.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg text-[11px] flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <span>Open Firebase Console</span>
+                        <ExternalLink size={12} />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(consoleAuthUrl);
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2500);
+                        }}
+                        className="py-1.5 px-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-[11px] transition-colors border border-neutral-700 flex items-center gap-1 cursor-pointer shrink-0"
+                      >
+                        {copiedLink ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        <span>{copiedLink ? 'Copied' : 'Copy Link'}</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-amber-900/60 flex flex-col gap-1.5">
+                      <span className="text-[10px] uppercase text-neutral-400 font-bold">Or log in immediately with Google (Active):</span>
+                      <button
+                        type="button"
+                        onClick={handleGoogleSignIn}
+                        className="w-full py-2 px-3 bg-neutral-900 hover:bg-neutral-800 text-white font-medium rounded-lg text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer border border-neutral-700"
+                      >
+                        <span>Continue with Google Sign-In</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -439,7 +562,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                 </div>
               )}
 
-              {error && (
+              {error && !operationNotAllowed && (
                 <div className="p-2.5 bg-red-950/70 border border-red-800 text-red-300 text-xs rounded-lg flex items-start gap-2">
                   <AlertCircle size={14} className="shrink-0 mt-0.5" />
                   <span>{error}</span>
