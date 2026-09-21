@@ -584,7 +584,7 @@ export class WeightInventoryEngine {
    */
   public static findMatchingContainer(containers: ContainerInfo[], targetName?: string): ContainerInfo | undefined {
     if (!containers || containers.length === 0) return undefined;
-    if (!targetName || !targetName.trim()) return containers[0];
+    if (!targetName || !targetName.trim()) return undefined;
 
     const target = targetName.trim().toLowerCase();
 
@@ -607,8 +607,7 @@ export class WeightInventoryEngine {
       if (keyMatch) return keyMatch;
     }
 
-    // 4. Default to first container
-    return containers[0];
+    return undefined;
   }
 
   /**
@@ -637,7 +636,17 @@ export class WeightInventoryEngine {
       lower === '0 lbs' ||
       lower.startsWith('0 lbs (none') ||
       lower.startsWith('0 lbs (none)') ||
-      lower.startsWith('(none)')
+      lower.startsWith('(none)') ||
+      lower.startsWith('created character file') ||
+      lower.startsWith('created file') ||
+      lower.startsWith('updated file') ||
+      lower.startsWith('saved file') ||
+      lower.startsWith('tool result') ||
+      lower.includes('created character file') ||
+      lower.startsWith('holding anatomy') ||
+      lower.startsWith('holding capacity') ||
+      lower.startsWith('items currently held') ||
+      lower.startsWith('currently holding')
     ) {
       return null;
     }
@@ -797,10 +806,81 @@ export class WeightInventoryEngine {
       const line = lines[i].trim();
       if (!line) continue;
 
-      // Detect Section Headers
-      const secMatch = line.match(/^\[(.*?)\]$/);
-      if (secMatch) {
-        currentSection = secMatch[1].toUpperCase();
+      // Detect Section Headers (with or without brackets, markdown `#`, asterisks `**`, colons)
+      let detectedSection: string | null = null;
+      const bracketMatch = line.match(/^\[(.*?)\]:?$/);
+      if (bracketMatch) {
+        detectedSection = bracketMatch[1].toUpperCase();
+      } else if (!/^[-*•>]\s+[a-zA-Z]/.test(line)) {
+        const cleanHeader = line
+          .replace(/^#+\s*/, '')
+          .replace(/^\*+\s*/, '')
+          .replace(/^-+\s*/, '')
+          .replace(/^\[+/, '')
+          .replace(/\]+:?$/, '')
+          .replace(/\*+$/, '')
+          .replace(/:$/, '')
+          .trim()
+          .toUpperCase();
+
+        const canonicalSections: { [k: string]: string } = {
+          'NAME & DESCRIPTION': 'NAME & DESCRIPTION',
+          'NAME AND DESCRIPTION': 'NAME & DESCRIPTION',
+          'CHARACTER PROFILE': 'NAME & DESCRIPTION',
+          'PROFILE': 'NAME & DESCRIPTION',
+          'BIO': 'NAME & DESCRIPTION',
+          'BIOGRAPHY': 'NAME & DESCRIPTION',
+
+          'STATS & MODIFIERS': 'STATS & MODIFIERS',
+          'STATS AND MODIFIERS': 'STATS & MODIFIERS',
+          'CHARACTER STATS': 'STATS & MODIFIERS',
+          'ATTRIBUTES': 'STATS & MODIFIERS',
+          'STATS': 'STATS & MODIFIERS',
+
+          'ATTACKS & COMBAT ACTIONS': 'ATTACKS & COMBAT ACTIONS',
+          'ATTACKS AND COMBAT ACTIONS': 'ATTACKS & COMBAT ACTIONS',
+          'ATTACKS': 'ATTACKS & COMBAT ACTIONS',
+          'COMBAT ACTIONS': 'ATTACKS & COMBAT ACTIONS',
+          'COMBAT': 'ATTACKS & COMBAT ACTIONS',
+
+          'ABILITIES & MAGIC': 'ABILITIES & MAGIC',
+          'ABILITIES AND MAGIC': 'ABILITIES & MAGIC',
+          'ABILITIES': 'ABILITIES & MAGIC',
+          'MAGIC': 'ABILITIES & MAGIC',
+          'SPELLS': 'ABILITIES & MAGIC',
+
+          'INVENTORY & EQUIPMENT': 'INVENTORY & EQUIPMENT',
+          'INVENTORY AND EQUIPMENT': 'INVENTORY & EQUIPMENT',
+          'INVENTORY': 'INVENTORY & EQUIPMENT',
+          'EQUIPMENT': 'INVENTORY & EQUIPMENT',
+          'CONTAINERS & CARRIED GEAR': 'INVENTORY & EQUIPMENT',
+          'CARRIED GEAR': 'INVENTORY & EQUIPMENT',
+
+          'CURRENTLY HOLDING': 'CURRENTLY HOLDING',
+          'ITEMS CURRENTLY HELD': 'CURRENTLY HOLDING',
+          'HELD ITEMS': 'CURRENTLY HOLDING',
+
+          'OWNED / STORED ITEMS (NOT ON PERSON)': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+          'OWNED / STORED ITEMS': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+          'STORED ITEMS (NOT ON PERSON)': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+          'STORED ITEMS': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+          'OWNED ITEMS': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+          'STORAGE': 'OWNED / STORED ITEMS (NOT ON PERSON)',
+
+          'STATUS EFFECTS & LORE': 'STATUS EFFECTS & LORE',
+          'STATUS EFFECTS AND LORE': 'STATUS EFFECTS & LORE',
+          'STATUS EFFECTS': 'STATUS EFFECTS & LORE',
+          'EFFECTS & LORE': 'STATUS EFFECTS & LORE',
+          'LORE': 'STATUS EFFECTS & LORE'
+        };
+
+        if (canonicalSections[cleanHeader]) {
+          detectedSection = canonicalSections[cleanHeader];
+        }
+      }
+
+      if (detectedSection) {
+        currentSection = detectedSection;
         activeContainerName = '';
         activeSubsection = (currentSection.includes('HOLDING') || currentSection.includes('HELD')) ? 'holding' : 'general';
         continue;
@@ -964,8 +1044,11 @@ export class WeightInventoryEngine {
         currentSection.includes('EQUIPMENT') ||
         currentSection.includes('GEAR')
       ) {
+        // A subsection header line cannot have item stats (weight:, dimensions:, or lbs with a weight definition)
+        const hasItemStat = lower.includes('weight:') || lower.includes('dimensions:') || /\b[0-9]+(?:\.[0-9]+)?\s*lbs?\b/i.test(lower);
+
         // Check for subsection headers
-        const isContainersHeader = (
+        const isContainersHeader = !hasItemStat && (
           (lower.startsWith('- containers') || lower.startsWith('* containers') || lower.startsWith('containers') || lower.includes('equipped containers') || lower.includes('containers carried') || lower.includes('containers equipped')) &&
           !lower.includes('inside') && !lower.includes('content') && !lower.includes('inventory')
         );
@@ -976,7 +1059,39 @@ export class WeightInventoryEngine {
           continue;
         }
 
-        const isHoldingHeader = (
+        // Holding anatomy line
+        if (lower.startsWith('- holding anatomy') || lower.startsWith('holding anatomy') || lower.startsWith('* holding anatomy')) {
+          customHoldingAnatomy = line.split(/[:=]/).slice(1).join(':').trim();
+          const cLower = customHoldingAnatomy.toLowerCase();
+          if (cLower.includes('none') || cLower.includes('limbless') || cLower.includes('amorphous') || cLower.includes('spectral')) {
+            customHoldingApplies = false;
+            customHoldingMax = 0;
+          } else if (cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('1 item') || cLower.includes('1 hand')) {
+            customHoldingApplies = true;
+            customHoldingMax = 1;
+          } else if (cLower.includes('4') || cLower.includes('four')) {
+            customHoldingApplies = true;
+            customHoldingMax = 4;
+          } else if (cLower.includes('3') || cLower.includes('three')) {
+            customHoldingApplies = true;
+            customHoldingMax = 3;
+          } else {
+            customHoldingApplies = true;
+            customHoldingMax = 2;
+          }
+          continue;
+        }
+
+        // Holding capacity line
+        if (lower.startsWith('- holding capacity') || lower.startsWith('holding capacity') || lower.startsWith('* holding capacity') || lower.includes('capacity & status')) {
+          const countMatch = line.match(/(\d+)\s*\/\s*(\d+)/);
+          if (countMatch) {
+            customHoldingMax = parseInt(countMatch[2]);
+          }
+          continue;
+        }
+
+        const isHoldingHeader = !hasItemStat && (
           lower.includes('currently holding') ||
           lower.includes('held items') ||
           lower.includes('items being held') ||
@@ -992,15 +1107,17 @@ export class WeightInventoryEngine {
           continue;
         }
 
-        const isEquippedHeader = (
+        const isEquippedHeader = !hasItemStat && (
           lower.includes('equipped gear') ||
           lower.includes('equipped armor') ||
           lower.includes('equipped items') ||
           lower.includes('worn gear') ||
-          lower.includes('worn armor') ||
           lower.startsWith('- equipped:') ||
           lower.startsWith('* equipped:') ||
-          lower.startsWith('equipped:')
+          lower.startsWith('equipped:') ||
+          lower.startsWith('- worn:') ||
+          lower.startsWith('* worn:') ||
+          lower.startsWith('worn:')
         );
 
         if (isEquippedHeader) {
@@ -1009,7 +1126,7 @@ export class WeightInventoryEngine {
           continue;
         }
 
-        const isInsideContainersHeader = (
+        const isInsideContainersHeader = !hasItemStat && (
           lower.includes('inside container') ||
           lower.includes('inside containers') ||
           lower.includes('in container') ||
@@ -1038,12 +1155,13 @@ export class WeightInventoryEngine {
           continue;
         }
 
-        // Check if line switches active container (e.g. "- Backpack:" or "- Inside Leather Satchel:")
-        if (containers.length > 0) {
-          const strippedName = line.replace(/^[-*•>\s]+/, '').replace(/[:=\(\[\)].*$/, '').trim();
+        // Check if line switches active container (e.g. "- Backpack:" or "- Inside Leather Satchel:" or "Small Leather Backpack:")
+        // It must NOT be in container definition mode, must not have item stats, and must match a known container.
+        if (activeSubsection !== 'containers' && containers.length > 0 && !hasItemStat) {
+          const strippedName = line.replace(/^[-*•>\s]+/, '').replace(/^(?:inside|in(?:\s*container)?|stored in)\s+/i, '').replace(/[:=\(\[\)].*$/, '').trim();
           if (strippedName) {
             const matching = this.findMatchingContainer(containers, strippedName);
-            if (matching && (line.includes(':') || lower.includes('contents') || lower.includes('inside'))) {
+            if (matching && (line.endsWith(':') || line.includes(':') || lower.includes('contents') || lower.includes('inside'))) {
               activeSubsection = 'inside_containers';
               activeContainerName = matching.name;
               continue;
@@ -1172,8 +1290,14 @@ export class WeightInventoryEngine {
             // Put in targeted or active container
             let cont = this.findMatchingContainer(containers, item.containerName || activeContainerName);
 
+            // If an item has no matching container found by name:
+            // Check if any container exists in containers
+            if (!cont && containers.length > 0 && !item.containerName) {
+              cont = containers[0];
+            }
+
             // Auto-recovery: If items in container were written without an explicit container header/definition,
-            // auto-create a container so items are NEVER lost into loose items!
+            // or a named container was specified that doesn't exist yet, auto-create it so items are NEVER lost!
             if (!cont) {
               const defaultName = item.containerName || activeContainerName || 'Backpack';
               const defaultDim = this.parseDimensions('18x12x8 inches');
