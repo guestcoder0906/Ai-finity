@@ -40,7 +40,8 @@ import {
   createRealStripeCheckoutSession,
   checkStripeSessionStatus,
   syncUserPurchasesFromStripe,
-  cancelStripeSubscription
+  cancelStripeSubscription,
+  createStripeCustomerPortalSession
 } from '../services/stripeCheckoutService';
 import { ReceiptModal } from './ReceiptModal';
 import { ReceiptsList } from './ReceiptsList';
