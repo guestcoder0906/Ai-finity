@@ -229,11 +229,32 @@ export class WeightInventoryEngine {
         .replace(/:?\s*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, '');
     }
 
-    const currencyRegex = /(\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|shillings?|pence|penny)\b|[a-zA-Z]+)/gi;
+    // Dollar sign pattern: e.g. "$50", "-$20", "+$100", "$50 Cash", "-$20 (from wallet)"
+    const dollarRegex = /[-+]?\s*[$]\s*(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(cash|dollars?|bucks?|cents?|bills?))?/gi;
+    let dMatch;
+    while ((dMatch = dollarRegex.exec(contentToScan)) !== null) {
+      const dAmt = parseFloat(dMatch[1].replace(/,/g, ''));
+      if (!isNaN(dAmt) && dAmt > 0) {
+        const subName = dMatch[2] ? (/cash/i.test(dMatch[2]) ? 'Cash' : 'Dollars') : 'Dollars';
+        if (!entries.some(e => e.amount === dAmt)) {
+          entries.push({
+            name: subName,
+            amount: dAmt,
+            weight: entryWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: dMatch[0].trim()
+          });
+        }
+      }
+    }
+
+    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|shillings?|pence|penny)\b)/gi;
 
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
-      const rawNum = match[1].replace(/[$,\s]/g, '');
+      const rawNum = match[1].replace(/[$,\s+-]/g, '');
       const amt = parseFloat(rawNum);
       const name = match[2].trim();
       if (!isNaN(amt) && amt > 0 && name) {
@@ -262,15 +283,39 @@ export class WeightInventoryEngine {
 
         const cleanName = name.replace(/^of\s+/i, '').trim();
 
-        entries.push({
-          name: cleanName,
-          amount: amt,
-          weight: entryWeight,
-          container,
-          location,
-          isHiddenLocation,
-          rawText: match[0].trim()
-        });
+        if (!entries.some(e => e.amount === amt && (e.name.toLowerCase() === cleanName.toLowerCase() || (e.name === 'Dollars' && /dollar/i.test(cleanName))))) {
+          entries.push({
+            name: cleanName,
+            amount: amt,
+            weight: entryWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: match[0].trim()
+          });
+        }
+      }
+    }
+
+    // Also support prefix currency format: e.g. "Cash: $50" or "Gold Coins: 25" or "Money: $100"
+    const prefixRegex = /\b(cash|money|dollars?|coins?|gold\s+coins?|silver\s+coins?|copper\s+coins?|credits?|funds?)\s*[:=]\s*\$?\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
+    let pMatch;
+    while ((pMatch = prefixRegex.exec(contentToScan)) !== null) {
+      const pName = pMatch[1].trim();
+      const pAmt = parseFloat(pMatch[2].replace(/,/g, ''));
+      if (!isNaN(pAmt) && pAmt > 0) {
+        const cleanName = /cash|money/i.test(pName) ? 'Cash' : pName;
+        if (!entries.some(e => e.amount === pAmt && e.name.toLowerCase() === cleanName.toLowerCase())) {
+          entries.push({
+            name: cleanName,
+            amount: pAmt,
+            weight: entryWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: pMatch[0].trim()
+          });
+        }
       }
     }
 
@@ -1011,6 +1056,8 @@ export class WeightInventoryEngine {
     const carriedCurrencies: CurrencyEntry[] = [];
     const storedCurrencies: CurrencyEntry[] = [];
     let activeCurrencySub: 'carried' | 'stored' | 'general' = 'carried';
+    const hasDedicatedCurrencySection = fileContent.includes('[CURRENCY & FINANCIAL BALANCE]') || fileContent.includes('[CURRENCY');
+    let explicitCarriedNone = false;
 
     let isMounted = false;
     let mountedEntityName: string | undefined;
@@ -1790,10 +1837,15 @@ export class WeightInventoryEngine {
           currencyType = line.split(/[:=]/)[1]?.trim() || currencyType;
           continue;
         }
-        if (lower.includes('carried balance') || lower.includes('carried currency') || lower.includes('on person') || lower.includes('pouch') || lower.includes('wallet')) {
-          activeCurrencySub = 'carried';
-        } else if (lower.includes('stored') || lower.includes('remote balance') || lower.includes('not on person') || lower.includes('vault') || lower.includes('cache') || lower.includes('chest') || lower.includes('bank')) {
+        if (lower.includes('stored') || lower.includes('remote balance') || lower.includes('not on person') || lower.includes('vault') || lower.includes('cache') || lower.includes('chest') || lower.includes('bank')) {
           activeCurrencySub = 'stored';
+        } else if (lower.includes('carried balance') || lower.includes('carried currency') || (lower.includes('on person') && !lower.includes('not on person')) || lower.includes('pouch') || lower.includes('wallet')) {
+          activeCurrencySub = 'carried';
+        }
+
+        if (activeCurrencySub === 'carried' && (lower.includes('none') || lower.includes('(0)') || lower === '* 0' || lower === '- 0' || lower.endsWith(': 0'))) {
+          explicitCarriedNone = true;
+          continue;
         }
 
         const entries = WeightInventoryEngine.parseCurrencyEntries(line);
@@ -1807,8 +1859,8 @@ export class WeightInventoryEngine {
         }
       }
 
-      // Check for carried currency inside Inventory / Containers section
-      if (currentSection.includes('INVENTORY') || currentSection.includes('CONTAINER') || currentSection.includes('CARRIED')) {
+      // Check for carried currency inside Inventory / Containers section ONLY if character file does not have an authoritative currency section
+      if (!hasDedicatedCurrencySection && (currentSection.includes('INVENTORY') || currentSection.includes('CONTAINER') || currentSection.includes('CARRIED'))) {
         const cEntries = WeightInventoryEngine.parseCurrencyEntries(line, undefined, activeContainerName);
         if (cEntries.length > 0) {
           for (const ce of cEntries) {
@@ -1932,6 +1984,10 @@ export class WeightInventoryEngine {
         totalCarriedWeight += hItem.weight;
       }
     }
+    if (explicitCarriedNone) {
+      carriedCurrencies.length = 0;
+    }
+
     // Add carried currency physical weight (if coins or physical money)
     for (const c of carriedCurrencies) {
       if (c.weight !== undefined && c.weight > 0) {
@@ -2025,15 +2081,44 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Helper to find the index of the next top-level section header like `\n[HEADER]`
+   */
+  public static findNextSectionHeaderIndex(text: string, fromIndex: number): number {
+    const sub = text.substring(fromIndex);
+    const m = sub.match(/\n\s*\[[A-Z0-9_\s&/'-]+\]/);
+    if (m && m.index !== undefined) {
+      const bracketOffset = m[0].indexOf('[');
+      return fromIndex + m.index + bracketOffset;
+    }
+    return -1;
+  }
+
+  /**
    * Synchronizes and writes the exact calculated weight, dimensions, container overflow,
    * encumbrance status, and adjusted speed directly back into the character file text.
    * This guarantees that the code automatically adds all weight and applies dynamic encumbrance.
    */
   public static syncCharacterFileContent(
     content: string,
-    currentTimestamp?: string
+    currentTimestamp?: string,
+    currencyOverride?: { carried?: CurrencyEntry[]; stored?: CurrencyEntry[] }
   ): { updatedContent: string; stats: CharacterPhysicalStats; changes: string[] } {
     const stats = this.parseCharacterStatsAndInventory(content, currentTimestamp);
+    if (currencyOverride?.carried !== undefined) {
+      stats.currency.carriedCurrencies = currencyOverride.carried;
+      stats.currency.carriedSummary = WeightInventoryEngine.formatCurrencySummary(stats.currency.carriedCurrencies);
+    }
+    if (currencyOverride?.stored !== undefined) {
+      stats.currency.storedCurrencies = currencyOverride.stored;
+      stats.currency.storedSummary = WeightInventoryEngine.formatCurrencySummary(stats.currency.storedCurrencies);
+    }
+    if (currencyOverride?.carried !== undefined || currencyOverride?.stored !== undefined) {
+      stats.currency.totalNetWorthSummary = WeightInventoryEngine.formatCurrencySummary([
+        ...stats.currency.carriedCurrencies,
+        ...stats.currency.storedCurrencies
+      ]);
+      stats.currency.hasCurrency = stats.currency.carriedCurrencies.length > 0 || stats.currency.storedCurrencies.length > 0;
+    }
     const changes: string[] = [];
 
     let updated = content;
@@ -2042,7 +2127,7 @@ export class WeightInventoryEngine {
     if (!updated.includes('Physical Dimensions:') && !updated.includes('Dimensions:') && !updated.includes('Body Dimensions:')) {
       const nameDescIdx = updated.indexOf('[NAME & DESCRIPTION]');
       if (nameDescIdx >= 0) {
-        const nextHeader = updated.indexOf('[', nameDescIdx + 20);
+        const nextHeader = WeightInventoryEngine.findNextSectionHeaderIndex(updated, nameDescIdx + 20);
         const insertPos = nextHeader > 0 ? nextHeader : updated.length;
         let dimStr = '';
         if (stats.dimensionsApply && stats.dimensionsRaw && !stats.dimensionsRaw.includes("5'11\"")) {
@@ -2095,7 +2180,7 @@ export class WeightInventoryEngine {
     } else {
       const statsIdx = updated.indexOf('[STATS & MODIFIERS]');
       if (statsIdx >= 0) {
-        const nextHeader = updated.indexOf('[', statsIdx + 20);
+        const nextHeader = WeightInventoryEngine.findNextSectionHeaderIndex(updated, statsIdx + 20);
         const insertPos = nextHeader > 0 ? nextHeader : updated.length;
         updated = updated.substring(0, insertPos) + `${maxLiftLine}\n` + updated.substring(insertPos);
       }
@@ -2157,7 +2242,7 @@ export class WeightInventoryEngine {
 
       if (updated.includes('[CURRENTLY HOLDING]')) {
         const holdIdx = updated.indexOf('[CURRENTLY HOLDING]');
-        const nextH = updated.indexOf('[', holdIdx + 19);
+        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, holdIdx + 19);
         const replaceEnd = nextH > 0 ? nextH : updated.length;
         updated = updated.substring(0, holdIdx) + holdingBlock + updated.substring(replaceEnd);
       } else {
@@ -2170,6 +2255,82 @@ export class WeightInventoryEngine {
         }
       }
       changes.push('Synchronized Currently Holding section');
+    }
+
+    // Synchronize container item lines with carried currencies:
+    // If currency was removed from a container (e.g. given away or spent from wallet), remove or update the line under Carried Inventory (Inside Containers)
+    const carriedInvIdx = updated.search(/^[-\s]*carried inventory.*:$/im);
+    if (carriedInvIdx >= 0) {
+      const lineEnd = updated.indexOf('\n', carriedInvIdx);
+      const startPos = lineEnd >= 0 ? lineEnd + 1 : updated.length;
+      const nextHeaderIdx = WeightInventoryEngine.findNextSectionHeaderIndex(updated, startPos);
+      const endPos = nextHeaderIdx >= 0 ? nextHeaderIdx : updated.length;
+
+      const invBlock = updated.substring(startPos, endPos);
+      const invLines = invBlock.split('\n');
+      let invModified = false;
+      const newInvLines: string[] = [];
+
+      for (const invLine of invLines) {
+        const trimmed = invLine.trim();
+        if (!trimmed) {
+          newInvLines.push(invLine);
+          continue;
+        }
+
+        const cEntries = WeightInventoryEngine.parseCurrencyEntries(invLine);
+        if (cEntries.length > 0) {
+          const contMatch = invLine.match(/container[:=\s]+\[?([a-zA-Z0-9_\s'-]+)\]?/i);
+          const targetContName = (contMatch ? contMatch[1].trim() : (cEntries[0].container || '')).toLowerCase();
+
+          // Check if any carried currency remains for this container/currency
+          const matchingCarried = stats.currency.carriedCurrencies.find(cc => {
+            const ccCont = (cc.container || '').toLowerCase();
+            const containerMatches = !targetContName || !ccCont ||
+              ccCont.includes(targetContName) ||
+              targetContName.includes(ccCont);
+
+            if (containerMatches) {
+              const ccName = cc.name.toLowerCase();
+              const entryName = cEntries[0].name.toLowerCase();
+              return (
+                ccName === entryName ||
+                (ccName.length > 2 && entryName.includes(ccName)) ||
+                (entryName.length > 2 && ccName.includes(entryName))
+              );
+            }
+            return false;
+          });
+
+          if (!matchingCarried || matchingCarried.amount <= 0) {
+            // Currency was given away or spent from this container!
+            invModified = true;
+            changes.push(`Removed spent/given currency (${cEntries[0].amount} ${cEntries[0].name}) from container ${targetContName || 'gear'}`);
+            continue;
+          } else if (matchingCarried.amount !== cEntries[0].amount) {
+            // Currency amount changed; update line with new accurate amount
+            const oldAmtStr = cEntries[0].amount.toString();
+            const newAmtStr = matchingCarried.amount.toString();
+            const updatedInvLine = invLine
+              .replace(new RegExp(`\\$${oldAmtStr}\\b`), `$${newAmtStr}`)
+              .replace(new RegExp(`\\b${oldAmtStr}\\b`), newAmtStr);
+            newInvLines.push(updatedInvLine);
+            invModified = true;
+            changes.push(`Updated currency in container ${targetContName} from ${cEntries[0].amount} to ${matchingCarried.amount}`);
+            continue;
+          }
+        }
+        newInvLines.push(invLine);
+      }
+
+      if (invModified) {
+        const nonBlank = newInvLines.filter(l => l.trim() && !l.trim().startsWith('#'));
+        if (nonBlank.length === 0) {
+          newInvLines.length = 0;
+          newInvLines.push('  * (None)');
+        }
+        updated = updated.substring(0, startPos) + newInvLines.join('\n') + (endPos < updated.length ? '\n\n' : '') + updated.substring(endPos);
+      }
     }
 
     // 6. Ensure [CURRENCY & FINANCIAL BALANCE] section is present and accurate if currency exists or section was present
@@ -2201,12 +2362,12 @@ export class WeightInventoryEngine {
 
       if (updated.includes('[CURRENCY & FINANCIAL BALANCE]')) {
         const currIdx = updated.indexOf('[CURRENCY & FINANCIAL BALANCE]');
-        const nextH = updated.indexOf('[', currIdx + 28);
+        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, currIdx + 28);
         const replaceEnd = nextH > 0 ? nextH : updated.length;
         updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
       } else if (updated.includes('[CURRENCY')) {
         const currIdx = updated.indexOf('[CURRENCY');
-        const nextH = updated.indexOf('[', currIdx + 10);
+        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, currIdx + 10);
         const replaceEnd = nextH > 0 ? nextH : updated.length;
         updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
       } else {

@@ -530,10 +530,17 @@ INSTRUCTIONS:
 3. AUDIT FOR MAP: Determine if the player moved, environment changed, or new entities/landmarks/items appeared. Maps must have NOTHING missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain features, etc. Always keep all observable and known elements updated correctly. Support advanced flexible shapes (oblong areas like forests via ellipse, irregular multi-point polygons, detailed architectural buildings such as market stalls and shops, paths/roads, circles, rects).
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
-6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
-7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY: Check if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana. If energy/stamina changes, you MUST add the character's file ("CharacterName-USERNAME.txt") to "filesToUpdate" and specify the expected energy change.
-8. AUDIT FOR RIDING, MOUNTING, VEHICLES & ENTERABLE ENTITIES (CRITICAL):
-   - Check if the player or an NPC mounts, rides, boards, pilots, enters, dismounts, or exits a mount, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g., horse, skateboard, bicycle, carriage).
+6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE (DYNAMIC AI REASONING):
+   - Dynamically detect whether ANY item, weapon, equipment, or object is picked up, found, gathered, bought, sold, dropped, given, stored, transferred to or from a container, equipped, or unequipped.
+   - Accurately determine:
+     * isInventoryAffected: true if any inventory/equipment change occurs, false otherwise.
+     * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop"), item name, container name (if inside a backpack, pouch, satchel, etc.), and target character.
+   - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
+7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC AI REASONING):
+   - Dynamically detect if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana.
+   - Specify isEnergyAffected: true/false, character name, expectedChange (negative for spent, positive for recovered), and reason. If energy/stamina changes, add character's file to "filesToUpdate".
+8. AUDIT FOR RIDING, MOUNTING, VEHICLES & ENTERABLE ENTITIES (DYNAMIC AI REASONING):
+   - Dynamically detect if the player or an NPC mounts, rides, boards, pilots, enters, dismounts, or exits a mount, animal, creature, vehicle, carriage, wagon, boat, mech, or rideable item (e.g., horse, skateboard, bicycle, carriage).
    - If mounting/entering:
      * BOTH files (the rider/occupant and the mount/vehicle/item) MUST be added to "filesToUpdate".
      * Rider's file must record their mounted status and adopt the mount's speed (e.g. "- Speed: Walking: 3.5 m/s, Running: 12.0 m/s (Mounted on [MountName]; Unmounted base: 1.5 m/s / 4.5 m/s)").
@@ -543,16 +550,27 @@ INSTRUCTIONS:
    - If dismounting/exiting:
      * Add BOTH files to "filesToUpdate" to clear mounting status, remove rider weight from the mount, restore the rider's unmounted speed, and allow separate map movement.
 9. PLAYER ACTION INTEGRITY: Accurately capture what the player is attempting in 'intent' without changing, softening, or rationalizing it. The player is free to attempt ANY action within their context that is not physically/magically impossible, even if it does not make sense. Only audit for actual physical/magical impossibility, never common sense.
-10. AUDIT FOR CURRENCY, BALANCES, TRANSACTIONS & COMMERCE (CRITICAL):
-    - Check if the action involves shopping, buying, selling, trading, receiving currency (e.g. NPC giving 1 Gold Coin and 5 Silver Coins, quest pay, wages, loot), finding treasure, or accessing stored wealth.
-    - DYNAMIC PRICING: Calculate realistic prices dynamically based on world context and setting.
+10. AUDIT FOR CURRENCY, BALANCES, TRANSACTIONS & COMMERCE (DYNAMIC AI REASONING):
+    - Dynamically detect if ANY currency, money, coinage, credits, wealth, or financial transaction is affected in ANY way (including shopping, buying, selling, trading, receiving currency like NPC giving 1 Gold Coin and 5 Silver Coins, quest pay, wages, loot, finding treasure, accessing stored wealth, or GIVING/PAYING/TIPPING/DONATING money from their wallet, coin pouch, money belt, or on-person funds).
+    - Accurately determine:
+      * isCurrencyAffected: true if any currency change occurs, false otherwise.
+      * transactions: array of transactions with:
+        - "name": currency denomination/name (e.g. "Dollars", "Gold Coins", "Silver Coins", "Credits")
+        - "amount": positive number (e.g. 20, 50, 5)
+        - "operation": "deduct" | "add" | "transfer"
+        - "container": specific container name (e.g. "Leather Wallet", "Coin Pouch", "Money Belt", or null)
+        - "giver": character/entity giving or paying
+        - "recipient": character/entity receiving
+        - "rawText": description of transaction
+    - DYNAMIC PRICING & ACCURATE TRANSACTIONS: Calculate realistic prices dynamically based on world context and setting.
     - CODE MATH & AFFORDABILITY CHECK:
       * Check the buyer's Carried Balance against the total price.
       * If they CAN afford it: deduct total price from carried balance (and add to seller if NPC). Add item to buyer's carried inventory/containers (or equip under [Equipped Gear & Armor] if wearable gear/armor).
       * If they CANNOT afford it (code math doesn't add up / insufficient carried balance): DO NOT give the item for free or allow negative balance! The player can do anything they want if they want it (e.g. bargain/haggle for a lower price, buy fewer items, offer to barter other items from inventory, ask for credit/loan, beg or plead, offer service, or walk away). The AI dynamically and accurately resolves their chosen approach!
+      * If giving, handing over, donating, or paying money (e.g. giving money from wallet to someone): accurately determine the transaction, deduct the given amount from the giver's carried balance and wallet/container, add the giver's file to "filesToUpdate", and if given to an NPC or another character, add recipient's file to "filesToUpdate" to receive the money.
       * If receiving currency: add exact amounts to carried balance in their file and include in 'updates' array.
       * If accessing or moving stored/remote currency or stashes: verify specific location attached to each item or cache (using hide[...] for secret/hidden stashes).
-      * Add both buyer and seller entity files to "filesToUpdate".
+      * Add both buyer/giver and seller/recipient entity files to "filesToUpdate".
    
 OUTPUT FORMAT (Strict JSON only):
 {
@@ -568,6 +586,31 @@ OUTPUT FORMAT (Strict JSON only):
       ]
     }
   ],
+  "currencyAudit": {
+    "isCurrencyAffected": true,
+    "transactions": [
+      {
+        "name": "Dollars",
+        "amount": 20,
+        "operation": "deduct",
+        "container": "Leather Wallet",
+        "giver": "PlayerName",
+        "recipient": "NPCName",
+        "rawText": "-$20 (given from wallet to NPC)"
+      }
+    ]
+  },
+  "inventoryAudit": {
+    "isInventoryAffected": true,
+    "items": [
+      {
+        "name": "ItemName",
+        "operation": "add|remove|equip|unequip|transfer|drop",
+        "container": "ContainerName",
+        "targetCharacter": "CharacterName"
+      }
+    ]
+  },
   "commerceAudit": {
     "isCommerceAction": true,
     "buyer": "PlayerName",
@@ -600,6 +643,7 @@ OUTPUT FORMAT (Strict JSON only):
     "spatialNotes": "Player_B entered dungeon; must create new page while preserving surface page for Player_A."
   },
   "energyAudit": {
+    "isEnergyAffected": true,
     "character": "CharacterName",
     "expectedChange": -10,
     "reason": "Attack / spell / physical exertion / rest"
@@ -760,61 +804,27 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
-          // Auto-include player character file in filesToUpdate if energy, stats, inventory/containers, or mounting/riding are affected
+          // Auto-include player character file in filesToUpdate if energy, stats, inventory/containers, currency, or mounting/riding are affected (dynamic AI reasoning)
           if (playerFile) {
-            const isEnergyAffected = audit.energyAudit && audit.energyAudit.expectedChange !== 0;
-            const actionLower = (action || '').toLowerCase();
-            const intentLower = (audit.intent || '').toLowerCase();
-            const isInventoryAffected = (
-              actionLower.includes('put') ||
-              actionLower.includes('place') ||
-              actionLower.includes('store') ||
-              actionLower.includes('stash') ||
-              actionLower.includes('pack') ||
-              actionLower.includes('pick up') ||
-              actionLower.includes('take') ||
-              actionLower.includes('grab') ||
-              actionLower.includes('loot') ||
-              actionLower.includes('collect') ||
-              actionLower.includes('gather') ||
-              actionLower.includes('backpack') ||
-              actionLower.includes('pouch') ||
-              actionLower.includes('satchel') ||
-              actionLower.includes('bag') ||
-              actionLower.includes('container') ||
-              actionLower.includes('item') ||
-              actionLower.includes('drop') ||
-              intentLower.includes('item') ||
-              intentLower.includes('inventory') ||
-              intentLower.includes('container') ||
-              intentLower.includes('backpack') ||
-              intentLower.includes('loot') ||
-              intentLower.includes('pick up') ||
-              intentLower.includes('store')
+            const isEnergyAffected = Boolean(
+              audit.energyAudit?.isEnergyAffected ||
+              (audit.energyAudit && typeof audit.energyAudit.expectedChange === 'number' && audit.energyAudit.expectedChange !== 0)
             );
-            const isMountingAffected = (
-              actionLower.includes('mount') ||
-              actionLower.includes('ride') ||
-              actionLower.includes('riding') ||
-              actionLower.includes('dismount') ||
-              actionLower.includes('board') ||
-              actionLower.includes('enter') ||
-              actionLower.includes('exit') ||
-              actionLower.includes('horse') ||
-              actionLower.includes('carriage') ||
-              actionLower.includes('wagon') ||
-              actionLower.includes('skateboard') ||
-              actionLower.includes('vehicle') ||
-              actionLower.includes('drive') ||
-              actionLower.includes('pilot') ||
-              intentLower.includes('mount') ||
-              intentLower.includes('ride') ||
-              intentLower.includes('dismount') ||
-              intentLower.includes('vehicle') ||
-              (audit.mountingAudit && audit.mountingAudit.isMountingAction)
+            const isInventoryAffected = Boolean(
+              audit.inventoryAudit?.isInventoryAffected ||
+              (audit.inventoryAudit?.items && audit.inventoryAudit.items.length > 0)
+            );
+            const isMountingAffected = Boolean(
+              audit.mountingAudit?.isMountingAction ||
+              (audit.mountingAudit?.actionType && audit.mountingAudit.actionType !== 'none')
+            );
+            const isCurrencyAffected = Boolean(
+              audit.currencyAudit?.isCurrencyAffected ||
+              (audit.currencyAudit?.transactions && audit.currencyAudit.transactions.length > 0) ||
+              (audit.commerceAudit && audit.commerceAudit.isCommerceAction)
             );
 
-            if (isEnergyAffected || isInventoryAffected || isMountingAffected) {
+            if (isEnergyAffected || isInventoryAffected || isMountingAffected || isCurrencyAffected) {
               if (!audit.filesToUpdate) audit.filesToUpdate = [];
               if (!audit.filesToUpdate.includes(playerFile)) {
                 audit.filesToUpdate.push(playerFile);
@@ -822,7 +832,21 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             }
           }
 
-          const executionPrompt = `Current Files Context:\n${worldContext}\n\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}\n\nTECHNICAL PLAN (Follow strictly):\n1. Resolve these checks: ${resolvedCheckReport || "None"}\n2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}\n3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}\n4. Temporal Shift: ${timeShiftNotice}\n5. Map Update Required: ${mapReq}\n\nProcess this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
+          const executionPrompt = `Current Files Context:
+${worldContext}
+
+${spatialContext}
+${playerCharacterContext}
+${userHeader}Player action: ${action}
+
+TECHNICAL PLAN (Follow strictly):
+1. Resolve these checks: ${resolvedCheckReport || "None"}
+2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}
+3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}
+4. Temporal Shift: ${timeShiftNotice}
+5. Map Update Required: ${mapReq}
+
+Process this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
 
 CRITICAL REMINDERS:
 1. You MUST fulfill Every file creation/update listed in the plan above.
@@ -853,17 +877,47 @@ CRITICAL REMINDERS:
        - If buying, check total price against buyer's Carried Balance.
        - If they can afford it: deduct total price from carried balance (and add to seller if NPC). Add item to buyer's file (or equip under [Equipped Gear & Armor] if wearable gear/armor). Add stat update to 'updates' array (e.g. {"type": "stat", "text": "-5 Silver Coins", "value": -5}).
        - If they CANNOT afford it (code math doesn't add up / insufficient carried funds): DO NOT give the item for free or allow negative balance! The player can do anything they want if they want it (e.g. bargain or haggle for a discount, buy fewer items, offer other items from inventory to barter/trade, ask for credit/loan, beg or plead, offer labor/service, or walk away). The AI dynamically and authentically resolves their chosen approach and consequences!
-     * RECEIVING CURRENCY: When an NPC gives currency (e.g. 1 Gold Coin and 5 Silver Coins) or coins are found/earned, update the character's carried balance in their file and include in 'updates' array (e.g. {"type": "stat", "text": "+1 Gold Coin, +5 Silver Coins", "value": 1}).
-     * STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
-     * Both buyer and seller entity files MUST be updated in 'files'.
+   - GIVING, HANDING OVER, PAYING, OR TIPPING MONEY (CRITICAL):
+     * If the player gives, hands, pays, tips, or donates money (such as from their wallet, coin pouch, or pockets) to an NPC or another character:
+     * The AI dynamically and accurately determines the transaction and gets rid of the given money in the character's file.
+     * Deduct or remove the given money from [CURRENCY & FINANCIAL BALANCE] (- Carried Balance (On Person)) AND from inside the container (e.g. Wallet, Coin Pouch) under [CONTAINERS & CARRIED GEAR] (- Carried Inventory (Inside Containers)). If all money in the wallet or pouch was given, remove it completely or set to None (0).
+     * If given to an NPC or recipient, update their character file under [CURRENCY & FINANCIAL BALANCE] to add the received money.
+     * Include the deduction in the 'updates' array (e.g. {"type": "stat", "text": "-$50 (given from wallet)", "value": -50}).
+     * Always update both giver's and recipient's entity files in 'files'.
+   - RECEIVING CURRENCY: When an NPC gives currency (e.g. 1 Gold Coin and 5 Silver Coins) or coins are found/earned, update the character's carried balance in their file and include in 'updates' array (e.g. {"type": "stat", "text": "+1 Gold Coin, +5 Silver Coins", "value": 1}).
+   - STORED WEALTH & ITEMS (NOT ON PERSON): Stored items or remote funds (e.g. treasure chest in cottage, bank vault, secret cache) must have a specific location attached! For secret, buried, or lost stashes/items, use hide[...] syntax for location so they remain hidden from others until discovered.
+   - Both buyer/giver and seller/recipient entity files MUST be updated in 'files'.
 8. AUTO ACTION RECOMMENDATIONS (CRITICAL):
    - The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
    - DO NOT generate suggestions for other NPCs or adversaries.
    - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, carried/stored wealth, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, shopping/bargaining if near a vendor, or mounting nearby rides).
-9. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
-10. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
+9. DYNAMIC STRUCTURED TRANSACTIONS (CRITICAL - ALWAYS POPULATE ACCURATELY):
+   - "currencyTransactions": If currency, money, or coinage is affected in any way (e.g. paying, giving money from wallet/pouch, donating, buying, selling, looting, finding, tipping), return structured objects:
+     [
+       {
+         "name": "Currency denomination name (e.g. Dollars, Gold Coins, Silver, Credits)",
+         "amount": 20,
+         "operation": "deduct|add|transfer",
+         "container": "Name of container if from wallet, coin pouch, pocket, etc., or null",
+         "giver": "Character name who gave or spent",
+         "recipient": "Character name who received or null",
+         "rawText": "e.g. -$20 (given from wallet to street musician)"
+       }
+     ]
+   - "inventoryTransactions": If items, gear, or weapons are affected (picked up, dropped, stored, equipped, unequipped, given):
+     [
+       {
+         "name": "Item Name",
+         "quantity": 1,
+         "operation": "add|remove|equip|unequip|transfer|drop",
+         "container": "Container name if stored inside one, or null",
+         "targetCharacter": "Character name"
+       }
+     ]
+10. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
+11. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
 
-          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite');
+          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite', audit);
           
           // Post-process spatial consistency (Old map state already captured via fs.read in handleRequest/enforceSpatialConsistency)
           const latestMapRaw = this.fs.read('CurrentMap.json');
@@ -1285,7 +1339,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     return null;
   }
 
-  private async handleRequest(userPrompt: string, mapScreenshot?: string, username?: string, modelName?: string): Promise<AIResponse | null> {
+  private async handleRequest(userPrompt: string, mapScreenshot?: string, username?: string, modelName?: string, auditContext?: any): Promise<AIResponse | null> {
     // Phase 1: Analyze/Execute
     let responseText = await this.callAI(userPrompt, mapScreenshot, modelName);
     let data: AIResponse;
@@ -1300,7 +1354,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // Phase 2: If checks are required
     if (data.checks && Array.isArray(data.checks) && data.checks.length > 0) {
       // 0. Also process any file updates from Phase 1 so they aren't lost
-      this.processResponseData(data, username);
+      this.processResponseData(data, username, auditContext);
 
       const worldState = this.getWorldContextForAI(username, userPrompt);
 
@@ -1395,7 +1449,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    this.processResponseData(data, username);
+    this.processResponseData(data, username, auditContext);
     return data;
   }
 
@@ -1911,247 +1965,343 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
-  private syncPlayerInventory(data: AIResponse, username?: string) {
+  private syncPlayerInventory(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
-    const targetFile = this.findPlayerCharacterFile(username, data.files);
-    if (!targetFile) return;
+    // Collect structured transactions dynamically determined by AI
+    const transactions: InventoryTransaction[] = [];
 
-    // Get current file content (incoming file from AI, or existing from disk)
-    let incomingFileData = data.files ? data.files[targetFile] : null;
-    let content: string | null = null;
-    if (incomingFileData) {
-      content = typeof incomingFileData === 'string'
-        ? incomingFileData
-        : (typeof incomingFileData === 'object' && incomingFileData.content ? incomingFileData.content : null);
+    // 1. From structured data.inventoryTransactions
+    if (Array.isArray(data.inventoryTransactions)) {
+      transactions.push(...data.inventoryTransactions);
     }
-    if (!content) {
-      content = this.fs.read(targetFile);
-    }
-    if (!content) return;
 
-    // Extract items mentioned in updates or narrative
-    const itemsToAdd: Array<{ name: string; container?: string }> = [];
-
-    // 1. From data.updates
-    if (data.updates && Array.isArray(data.updates)) {
+    // 2. From data.updates with inventory object or inventory category
+    if (Array.isArray(data.updates)) {
       for (const u of data.updates) {
-        if (!u.text) continue;
-        const text = u.text;
-        const lower = text.toLowerCase();
-        if (
-          u.type === 'item' ||
-          u.type === 'loot' ||
-          lower.includes('added') ||
-          lower.includes('acquired') ||
-          lower.includes('picked up') ||
-          lower.includes('placed') ||
-          lower.includes('stored') ||
-          lower.includes('looted')
-        ) {
-          const containerMatch = text.match(/(?:to|in|into)\s+(?:the\s+)?([A-Za-z0-9\s'-]+(?:backpack|pouch|satchel|bag|chest|sack|quiver))/i);
-          const targetCont = containerMatch ? containerMatch[1].trim() : undefined;
-
-          let itemName = text
-            .replace(/^(?:added|acquired|picked up|placed|stored|looted|found)\s+/i, '')
-            .replace(/\s+(?:to|in|into)\s+(?:the\s+)?(?:backpack|pouch|satchel|bag|chest|sack|quiver).*$/i, '')
-            .replace(/[:=].*$/, '')
-            .trim();
-
-          if (itemName.length > 1 && itemName.length < 40 && !itemName.toLowerCase().includes('energy') && !itemName.toLowerCase().includes('damage')) {
-            itemsToAdd.push({ name: itemName, container: targetCont });
+        if (u.inventory) {
+          transactions.push(u.inventory);
+        } else if (u.type === 'item' || u.category === 'inventory') {
+          const isRemove = (u.value !== undefined && u.value < 0) || (u.text && u.text.trim().startsWith('-'));
+          const cleanName = (u.text || '').replace(/^[-+]\s*/, '').replace(/[:=].*$/, '').trim();
+          if (cleanName) {
+            transactions.push({
+              name: cleanName,
+              operation: isRemove ? 'remove' : 'add',
+              quantity: Math.abs(u.value || 1)
+            });
           }
         }
       }
     }
 
-    // 2. From narrative
-    if (data.narrative) {
-      const placedMatches = Array.from(data.narrative.matchAll(/(?:place|places|placed|stow|stows|stowed|put|puts|store|stores|stored|pack|packs|packed)\s+(?:the|a|an)?\s+([A-Za-z0-9\s'-]{2,30}?)\s+(?:in|into|inside)\s+(?:your|their|his|her)?\s*([A-Za-z0-9\s'-]*(?:backpack|pouch|satchel|bag|chest|sack|quiver))/gi));
-      for (const m of placedMatches) {
-        const itemName = m[1].trim();
-        const contName = m[2].trim();
-        if (itemName && itemName.length > 1 && !itemName.toLowerCase().includes('hand') && !itemName.toLowerCase().includes('foot')) {
-          if (!itemsToAdd.some(it => it.name.toLowerCase() === itemName.toLowerCase())) {
-            itemsToAdd.push({ name: itemName, container: contName });
-          }
+    // 3. From dynamic AI audit from Phase 1
+    if (auditContext?.inventoryAudit?.isInventoryAffected && Array.isArray(auditContext.inventoryAudit.items)) {
+      for (const item of auditContext.inventoryAudit.items) {
+        const exists = transactions.some(t =>
+          t.name.toLowerCase() === item.name.toLowerCase() &&
+          t.operation === item.operation
+        );
+        if (!exists) {
+          transactions.push(item);
         }
       }
     }
 
-    if (itemsToAdd.length === 0) return;
+    if (transactions.length === 0) return;
 
-    // Check if character already has each item
-    const stats = WeightInventoryEngine.parseCharacterStatsAndInventory(content);
-    const existingNames = new Set([
-      ...stats.containers.flatMap(c => c.items.map(i => i.name.toLowerCase())),
-      ...stats.equippedGear.map(i => i.name.toLowerCase()),
-      ...stats.carriedItems.map(i => i.name.toLowerCase()),
-      ...stats.storedItems.map(i => i.name.toLowerCase()),
-    ]);
+    for (const tx of transactions) {
+      const charName = tx.targetCharacter || username;
+      const targetFile = this.findPlayerCharacterFile(charName, data.files) ||
+        this.findPlayerCharacterFile(username, data.files) ||
+        (charName ? `${charName}.txt` : null) ||
+        (username ? `${username}.txt` : null);
 
-    const genuinelyNewItems = itemsToAdd.filter(it => !existingNames.has(it.name.toLowerCase()));
-    if (genuinelyNewItems.length === 0) return;
+      if (!targetFile) continue;
 
-    // Format new items to append to character's container
-    let updatedContent = content;
+      let content: string | null = null;
+      if (data.files && data.files[targetFile]) {
+        const fd = data.files[targetFile];
+        content = typeof fd === 'string' ? fd : (fd as any)?.content;
+      }
+      if (!content) {
+        content = this.fs.read(targetFile);
+      }
+      if (!content) continue;
 
-    // Ensure [CONTAINERS & CARRIED GEAR] section exists
-    if (!updatedContent.includes('[CONTAINERS & CARRIED GEAR]') && !updatedContent.includes('[INVENTORY')) {
-      const insertPos = updatedContent.indexOf('[OWNED / STORED') >= 0
-        ? updatedContent.indexOf('[OWNED / STORED')
-        : (updatedContent.indexOf('[STATUS EFFECTS') >= 0 ? updatedContent.indexOf('[STATUS EFFECTS') : updatedContent.length);
+      let updatedContent = content;
+      const stats = WeightInventoryEngine.parseCharacterStatsAndInventory(content);
 
-      const newSection = `\n[CONTAINERS & CARRIED GEAR]\n- Total Carried Weight on Person: 2.0 lbs / ${stats.bodyWeight || 150} lbs (GOOD: Unencumbered) | Max Lift: ${stats.maxLiftStrength || 150} lbs\n- Containers Equipped/Carried:\n  * Backpack: Dimensions 18x12x8 inches, Max Capacity: 40 lbs, Weight: 2 lbs\n- Carried Inventory (Inside Containers):\n`;
-      updatedContent = updatedContent.substring(0, insertPos) + newSection + updatedContent.substring(insertPos);
-    }
+      if (tx.operation === 'add') {
+        const existingNames = new Set([
+          ...stats.containers.flatMap(c => c.items.map(i => i.name.toLowerCase())),
+          ...stats.equippedGear.map(i => i.name.toLowerCase()),
+          ...stats.carriedItems.map(i => i.name.toLowerCase()),
+          ...stats.storedItems.map(i => i.name.toLowerCase()),
+        ]);
 
-    // Find the insertion point: under "- Carried Inventory (Inside Containers):" or at the end of [CONTAINERS & CARRIED GEAR]
-    for (const item of genuinelyNewItems) {
-      const containerLabel = item.container || (stats.containers.length > 0 ? stats.containers[0].name : 'Backpack');
-      const itemLine = `  - ${item.name}: 1.0 lbs, 8x4x2 inches. Container: [${containerLabel}]\n`;
+        if (!existingNames.has(tx.name.toLowerCase())) {
+          // Ensure [CONTAINERS & CARRIED GEAR] section exists
+          if (!updatedContent.includes('[CONTAINERS & CARRIED GEAR]') && !updatedContent.includes('[INVENTORY')) {
+            const insertPos = updatedContent.indexOf('[OWNED / STORED') >= 0
+              ? updatedContent.indexOf('[OWNED / STORED')
+              : (updatedContent.indexOf('[STATUS EFFECTS') >= 0 ? updatedContent.indexOf('[STATUS EFFECTS') : updatedContent.length);
 
-      const carriedIdx = updatedContent.search(/^[-\s]*carried inventory.*:$/im);
-      if (carriedIdx >= 0) {
-        const lineEnd = updatedContent.indexOf('\n', carriedIdx);
-        const insertAt = lineEnd >= 0 ? lineEnd + 1 : updatedContent.length;
-        const afterHeader = updatedContent.substring(insertAt);
-        if (afterHeader.trim().startsWith('* (none)') || afterHeader.trim().startsWith('- (none)')) {
-          const noneEnd = updatedContent.indexOf('\n', insertAt);
-          updatedContent = updatedContent.substring(0, insertAt) + itemLine + (noneEnd >= 0 ? updatedContent.substring(noneEnd + 1) : '');
-        } else {
-          updatedContent = updatedContent.substring(0, insertAt) + itemLine + updatedContent.substring(insertAt);
+            const newSection = `\n[CONTAINERS & CARRIED GEAR]\n- Total Carried Weight on Person: 2.0 lbs / ${stats.bodyWeight || 150} lbs (GOOD: Unencumbered) | Max Lift: ${stats.maxLiftStrength || 150} lbs\n- Containers Equipped/Carried:\n  * Backpack: Dimensions 18x12x8 inches, Max Capacity: 40 lbs, Weight: 2 lbs\n- Carried Inventory (Inside Containers):\n`;
+            updatedContent = updatedContent.substring(0, insertPos) + newSection + updatedContent.substring(insertPos);
+          }
+
+          const containerLabel = tx.container || (stats.containers.length > 0 ? stats.containers[0].name : 'Backpack');
+          const itemLine = `  - ${tx.name}: 1.0 lbs, 8x4x2 inches. Container: [${containerLabel}]\n`;
+
+          const carriedIdx = updatedContent.search(/^[-\s]*carried inventory.*:$/im);
+          if (carriedIdx >= 0) {
+            const lineEnd = updatedContent.indexOf('\n', carriedIdx);
+            const insertAt = lineEnd >= 0 ? lineEnd + 1 : updatedContent.length;
+            const afterHeader = updatedContent.substring(insertAt);
+            if (afterHeader.trim().startsWith('* (none)') || afterHeader.trim().startsWith('- (none)')) {
+              const noneEnd = updatedContent.indexOf('\n', insertAt);
+              updatedContent = updatedContent.substring(0, insertAt) + itemLine + (noneEnd >= 0 ? updatedContent.substring(noneEnd + 1) : '');
+            } else {
+              updatedContent = updatedContent.substring(0, insertAt) + itemLine + updatedContent.substring(insertAt);
+            }
+          } else {
+            const containersHeaderIdx = updatedContent.indexOf('[CONTAINERS & CARRIED GEAR]');
+            if (containersHeaderIdx >= 0) {
+              const nextHeader = updatedContent.indexOf('[', containersHeaderIdx + 25);
+              const insertAt = nextHeader > 0 ? nextHeader : updatedContent.length;
+              updatedContent = updatedContent.substring(0, insertAt) + `- Carried Inventory (Inside Containers):\n${itemLine}\n` + updatedContent.substring(insertAt);
+            } else {
+              updatedContent += `\n- Carried Inventory (Inside Containers):\n${itemLine}`;
+            }
+          }
         }
+      } else if (tx.operation === 'remove' || tx.operation === 'drop' || tx.operation === 'transfer') {
+        const lines = updatedContent.split('\n');
+        const itemNameLower = tx.name.toLowerCase();
+        const filteredLines = lines.filter(l => {
+          const lower = l.toLowerCase();
+          return !lower.includes(itemNameLower);
+        });
+        if (filteredLines.length !== lines.length) {
+          updatedContent = filteredLines.join('\n');
+        }
+      }
+
+      // Re-sync file through WeightInventoryEngine
+      try {
+        const activeTime = this.fs.read('WorldTime.txt') || undefined;
+        const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime);
+        updatedContent = res.updatedContent;
+      } catch (e) {
+        console.warn("Inventory sync engine error", e);
+      }
+
+      if (!data.files || typeof data.files !== 'object') data.files = {};
+      if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+        (data.files[targetFile] as any).content = updatedContent;
       } else {
-        const containersHeaderIdx = updatedContent.indexOf('[CONTAINERS & CARRIED GEAR]');
-        if (containersHeaderIdx >= 0) {
-          const nextHeader = updatedContent.indexOf('[', containersHeaderIdx + 25);
-          const insertAt = nextHeader > 0 ? nextHeader : updatedContent.length;
-          updatedContent = updatedContent.substring(0, insertAt) + `- Carried Inventory (Inside Containers):\n${itemLine}\n` + updatedContent.substring(insertAt);
-        } else {
-          updatedContent += `\n- Carried Inventory (Inside Containers):\n${itemLine}`;
-        }
+        data.files[targetFile] = updatedContent;
       }
-    }
-
-    // Re-sync file through WeightInventoryEngine
-    try {
-      const activeTime = this.fs.read('WorldTime.txt') || undefined;
-      const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime);
-      updatedContent = res.updatedContent;
-    } catch (e) {
-      console.warn("Inventory sync engine error", e);
-    }
-
-    if (!data.files || typeof data.files !== 'object') data.files = {};
-    if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
-      (data.files[targetFile] as any).content = updatedContent;
-    } else {
-      data.files[targetFile] = updatedContent;
     }
   }
 
-  private syncPlayerCurrency(data: AIResponse, username?: string) {
-    if (!data.updates || !Array.isArray(data.updates)) return;
+  private syncPlayerCurrency(data: AIResponse, username?: string, auditContext?: any) {
+    if (!data) return;
 
-    // Detect currency updates in data.updates
-    const currencyUpdates = data.updates.filter(u => {
-      if (!u.text) return false;
-      const t = u.text.toLowerCase();
-      return (
-        t.includes('coin') ||
-        t.includes('gold') ||
-        t.includes('silver') ||
-        t.includes('copper') ||
-        t.includes('credit') ||
-        t.includes('dollar') ||
-        t.includes('currency') ||
-        t.includes('balance') ||
-        t.includes('price')
-      );
-    });
+    // 1. Collect all structured currency transactions dynamically determined by AI
+    const transactions: CurrencyTransaction[] = [];
 
-    if (currencyUpdates.length === 0) return;
-
-    const targetFile = this.findPlayerCharacterFile(username) ||
-      (username ? `${username}.txt` : null) ||
-      Object.keys(data.files || {}).find(f => f.endsWith('.txt') && (f.includes('-') || f.includes('_')));
-
-    if (!targetFile) return;
-
-    let content: string | null = null;
-    if (data.files && data.files[targetFile]) {
-      const fd = data.files[targetFile];
-      content = typeof fd === 'string' ? fd : (fd as any)?.content;
+    if (Array.isArray(data.currencyTransactions)) {
+      transactions.push(...data.currencyTransactions);
     }
-    if (!content) {
-      content = this.fs.read(targetFile);
+
+    if (Array.isArray(data.updates)) {
+      for (const u of data.updates) {
+        if (u.currency) {
+          transactions.push(u.currency);
+        } else if (u.type === 'currency' || u.category === 'currency') {
+          const parsed = WeightInventoryEngine.parseCurrencyEntries(u.text || '');
+          const isDeduction = (u.value !== undefined && u.value < 0) || (u.text && u.text.trim().startsWith('-'));
+          for (const p of parsed) {
+            transactions.push({
+              name: p.name,
+              amount: Math.abs(p.amount),
+              operation: isDeduction ? 'deduct' : 'add',
+              container: p.container,
+              rawText: u.text
+            });
+          }
+        }
+      }
     }
-    if (!content) return;
 
-    let updatedContent = content;
+    if (auditContext?.currencyAudit?.isCurrencyAffected && Array.isArray(auditContext.currencyAudit.transactions)) {
+      for (const t of auditContext.currencyAudit.transactions) {
+        const exists = transactions.some(existing =>
+          existing.name.toLowerCase() === t.name.toLowerCase() &&
+          existing.amount === t.amount &&
+          existing.operation === t.operation
+        );
+        if (!exists) {
+          transactions.push(t);
+        }
+      }
+    }
 
-    for (const update of currencyUpdates) {
-      const parsed = WeightInventoryEngine.parseCurrencyEntries(update.text);
-      if (parsed.length === 0) continue;
+    if (transactions.length === 0) return;
 
+    for (const tx of transactions) {
+      const isDeduction = tx.operation === 'deduct' || tx.operation === 'transfer';
+      const actorName = isDeduction ? (tx.giver || username) : (tx.recipient || username);
+
+      const targetFile = this.findPlayerCharacterFile(actorName, data.files) ||
+        this.findPlayerCharacterFile(username, data.files) ||
+        (actorName ? `${actorName}.txt` : null) ||
+        (username ? `${username}.txt` : null);
+
+      if (!targetFile) continue;
+
+      let content: string | null = null;
+      if (data.files && data.files[targetFile]) {
+        const fd = data.files[targetFile];
+        content = typeof fd === 'string' ? fd : (fd as any)?.content;
+      }
+      if (!content) {
+        content = this.fs.read(targetFile);
+      }
+      if (!content) continue;
+
+      let updatedContent = content;
       const pStats = WeightInventoryEngine.parseCharacterStatsAndInventory(updatedContent);
       let changed = false;
 
-      for (const entry of parsed) {
-        const isDeduction = update.text.includes('-') || (update.value !== undefined && update.value < 0);
-        const signedAmount = isDeduction ? -Math.abs(entry.amount) : Math.abs(entry.amount);
-
-        const existingIdx = pStats.currency.carriedCurrencies.findIndex(
-          c => c.name.toLowerCase() === entry.name.toLowerCase()
-        );
-
-        if (existingIdx >= 0) {
-          pStats.currency.carriedCurrencies[existingIdx].amount = Math.max(
-            0,
-            pStats.currency.carriedCurrencies[existingIdx].amount + signedAmount
-          );
-          changed = true;
-        } else if (!isDeduction) {
-          pStats.currency.carriedCurrencies.push({
-            name: entry.name,
-            amount: entry.amount,
-            container: entry.container || (pStats.containers.length > 0 ? pStats.containers[0].name : 'Coin Pouch')
+      if (isDeduction) {
+        // Find matching carried currency by container and/or denomination
+        let matchIdx = -1;
+        if (tx.container) {
+          const tCont = tx.container.toLowerCase();
+          matchIdx = pStats.currency.carriedCurrencies.findIndex(c => {
+            const cCont = (c.container || '').toLowerCase();
+            return (cCont.includes(tCont) || tCont.includes(cCont)) &&
+              (c.name.toLowerCase() === tx.name.toLowerCase() ||
+               c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
+               tx.name.toLowerCase().includes(c.name.toLowerCase()));
           });
+          if (matchIdx < 0) {
+            matchIdx = pStats.currency.carriedCurrencies.findIndex(c => {
+              const cCont = (c.container || '').toLowerCase();
+              return cCont.includes(tCont) || tCont.includes(cCont);
+            });
+          }
+        }
+        if (matchIdx < 0) {
+          matchIdx = pStats.currency.carriedCurrencies.findIndex(c =>
+            c.name.toLowerCase() === tx.name.toLowerCase() ||
+            c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
+            tx.name.toLowerCase().includes(c.name.toLowerCase())
+          );
+        }
+        if (matchIdx < 0 && pStats.currency.carriedCurrencies.length > 0) {
+          matchIdx = 0;
+        }
+
+        if (matchIdx >= 0) {
+          const currentAmt = pStats.currency.carriedCurrencies[matchIdx].amount;
+          const newAmt = Math.max(0, currentAmt - tx.amount);
+          if (newAmt === 0) {
+            pStats.currency.carriedCurrencies.splice(matchIdx, 1);
+          } else {
+            pStats.currency.carriedCurrencies[matchIdx].amount = newAmt;
+          }
           changed = true;
         }
+      } else {
+        // Addition
+        let matchIdx = pStats.currency.carriedCurrencies.findIndex(c =>
+          c.name.toLowerCase() === tx.name.toLowerCase() &&
+          (!tx.container || (c.container && c.container.toLowerCase().includes(tx.container.toLowerCase())))
+        );
+        if (matchIdx >= 0) {
+          pStats.currency.carriedCurrencies[matchIdx].amount += tx.amount;
+        } else {
+          pStats.currency.carriedCurrencies.push({
+            name: tx.name,
+            amount: tx.amount,
+            container: tx.container || (pStats.containers.length > 0 ? pStats.containers[0].name : undefined)
+          });
+        }
+        changed = true;
       }
 
       if (changed) {
         try {
           const activeTime = this.fs.read('WorldTime.txt') || undefined;
-          const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime);
+          const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime, { carried: pStats.currency.carriedCurrencies });
           updatedContent = res.updatedContent;
         } catch (e) {
           console.warn("Currency sync error", e);
         }
-      }
-    }
 
-    if (!data.files || typeof data.files !== 'object') data.files = {};
-    if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
-      (data.files[targetFile] as any).content = updatedContent;
-    } else {
-      data.files[targetFile] = updatedContent;
+        if (!data.files || typeof data.files !== 'object') data.files = {};
+        if (typeof data.files[targetFile] === 'object' && (data.files[targetFile] as any).content !== undefined) {
+          (data.files[targetFile] as any).content = updatedContent;
+        } else {
+          data.files[targetFile] = updatedContent;
+        }
+      }
+
+      // If currency was transferred or given to a recipient, update the recipient character file as well
+      if (isDeduction && tx.recipient && tx.recipient.toLowerCase() !== (username || '').toLowerCase()) {
+        const recipFile = this.findPlayerCharacterFile(tx.recipient, data.files) ||
+          Object.keys(this.fs.getAll()).find(f => f.toLowerCase().includes(tx.recipient!.toLowerCase()) && f.endsWith('.txt'));
+
+        if (recipFile) {
+          let recipContent = (data.files && data.files[recipFile])
+            ? (typeof data.files[recipFile] === 'string' ? data.files[recipFile] as string : (data.files[recipFile] as any)?.content)
+            : this.fs.read(recipFile);
+
+          if (recipContent) {
+            const rStats = WeightInventoryEngine.parseCharacterStatsAndInventory(recipContent);
+            const rMatchIdx = rStats.currency.carriedCurrencies.findIndex(c => c.name.toLowerCase() === tx.name.toLowerCase());
+            if (rMatchIdx >= 0) {
+              rStats.currency.carriedCurrencies[rMatchIdx].amount += tx.amount;
+            } else {
+              rStats.currency.carriedCurrencies.push({
+                name: tx.name,
+                amount: tx.amount,
+                container: rStats.containers.length > 0 ? rStats.containers[0].name : undefined
+              });
+            }
+            try {
+              const activeTime = this.fs.read('WorldTime.txt') || undefined;
+              const res = WeightInventoryEngine.syncCharacterFileContent(recipContent, activeTime, { carried: rStats.currency.carriedCurrencies });
+              recipContent = res.updatedContent;
+            } catch (e) {
+              console.warn("Recipient currency sync error", e);
+            }
+            if (typeof data.files[recipFile] === 'object' && (data.files[recipFile] as any).content !== undefined) {
+              (data.files[recipFile] as any).content = recipContent;
+            } else {
+              data.files[recipFile] = recipContent;
+            }
+          }
+        }
+      }
     }
   }
 
-  private processResponseData(data: AIResponse, username?: string) {
+  private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
     // Ensure character energy is always properly updated and in sync
     this.syncPlayerEnergy(data, username);
 
     // Ensure items added or placed in containers are properly reflected
-    this.syncPlayerInventory(data, username);
+    this.syncPlayerInventory(data, username, auditContext);
 
     // Ensure currency transactions and balance changes are synchronized
-    this.syncPlayerCurrency(data, username);
+    this.syncPlayerCurrency(data, username, auditContext);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username
