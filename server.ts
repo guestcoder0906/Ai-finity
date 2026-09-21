@@ -551,8 +551,18 @@ async function startServer() {
   // Create Stripe Customer Portal session for subscription/billing management
   app.post('/api/stripe/create-portal-session', async (req, res) => {
     try {
-      const { userId, userEmail, username, origin } = req.body || {};
-      const clientOrigin = origin || 'https://www.aifinity-rpg.com';
+      const { userId, userEmail, username, origin: clientOrigin } = req.body || {};
+      let origin = String(clientOrigin || req.headers?.referer || req.headers?.origin || '').trim();
+      if (origin.endsWith('/')) origin = origin.slice(0, -1);
+      if (!origin || origin === 'null') {
+        const proto = (req.headers['x-forwarded-proto'] as string) || 'https';
+        const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'www.aifinity-rpg.com';
+        origin = `${proto}://${host}`;
+      }
+      if (!origin.startsWith('http://') && !origin.startsWith('https://')) {
+        origin = `https://${origin}`;
+      }
+      origin = origin.replace(/\/+$/, '');
 
       const stripe = getStripe();
       if (!stripe) {
@@ -612,7 +622,7 @@ async function startServer() {
 
       const portalSession = await stripe.billingPortal.sessions.create({
         customer: customerId,
-        return_url: `${clientOrigin}/?stripe_portal_return=true`
+        return_url: `${origin}/?stripe_portal_return=true`
       });
 
       res.json({

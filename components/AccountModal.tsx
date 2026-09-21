@@ -16,6 +16,10 @@ import {
   setGlowingNamePreference
 } from '../services/adminService';
 import ActionLimitService, { ActionStatus } from '../services/actionLimitService';
+import {
+  cancelStripeSubscription,
+  createStripeCustomerPortalSession
+} from '../services/stripeCheckoutService';
 import GoldenName from './GoldenName';
 import { ReceiptModal } from './ReceiptModal';
 import { ReceiptsList } from './ReceiptsList';
@@ -68,6 +72,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   // Subscription cancellation state
   const [cancelSubConfirm, setCancelSubConfirm] = useState(false);
   const [cancelSubLoading, setCancelSubLoading] = useState(false);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [cancelSubMessage, setCancelSubMessage] = useState<string | null>(null);
 
   // Staff search & target state
@@ -127,11 +132,19 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     setCancelSubLoading(true);
     setCancelSubMessage(null);
     try {
+      const stripeRes = await cancelStripeSubscription(
+        currentUser.uid,
+        currentUser.stripeSubscriptionId,
+        currentUser.email || undefined,
+        currentUser.username || undefined
+      );
       await ActionLimitService.cancelSubscription(currentUser);
       const updatedUser: UserProfile = {
         ...currentUser,
         tier: 'free',
         subscriptionExpiresAt: undefined,
+        stripeSubscriptionId: null,
+        subscriptionStatus: 'canceled',
         ...(currentUser.role !== 'admin' && currentUser.role !== 'mod' ? {
           canSaveMultipleAdventures: false,
           canPostCommunityAdventures: false,
@@ -140,11 +153,39 @@ export const AccountModal: React.FC<AccountModalProps> = ({
       };
       onProfileUpdated(updatedUser);
       setCancelSubConfirm(false);
-      setCancelSubMessage('Your subscription has been cancelled. Your account has returned to the Free Tier.');
+      setCancelSubMessage(
+        stripeRes.notFoundOnStripe
+          ? 'Your account has returned to the Free Tier.'
+          : stripeRes.message || 'Your subscription has been cancelled. Your account has returned to the Free Tier.'
+      );
     } catch (err: any) {
       console.error('Failed to cancel subscription:', err);
+      setCancelSubMessage(err.message || 'Failed to cancel subscription.');
     } finally {
       setCancelSubLoading(false);
+    }
+  };
+
+  const handleOpenStripePortal = async () => {
+    if (!currentUser?.uid) return;
+    setIsOpeningPortal(true);
+    setCancelSubMessage(null);
+    try {
+      const portalUrl = await createStripeCustomerPortalSession(
+        currentUser.uid,
+        currentUser.email || undefined,
+        currentUser.username || undefined,
+        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
+      );
+      if (portalUrl) {
+        window.location.href = portalUrl;
+      } else {
+        throw new Error('Stripe did not return a valid customer portal link.');
+      }
+    } catch (err: any) {
+      setCancelSubMessage(err.message || 'Could not open Stripe Customer Portal.');
+    } finally {
+      setIsOpeningPortal(false);
     }
   };
 
@@ -504,7 +545,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </div>
                   )}
 
-                  {/* Cancel Subscription Option */}
+                  {/* Cancel Subscription & Portal Options */}
                   {cancelSubConfirm ? (
                     <div className="p-3 bg-red-950/80 border border-red-800 rounded-lg space-y-2">
                       <p className="text-xs text-red-200">
@@ -530,7 +571,16 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="pt-2 border-t border-neutral-800/80 flex justify-end">
+                    <div className="pt-2 border-t border-neutral-800/80 flex items-center justify-between flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenStripePortal}
+                        disabled={isOpeningPortal}
+                        className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer font-semibold py-1 flex items-center gap-1 disabled:opacity-50"
+                        title="Redirect to Stripe's Customer Portal to manage subscription and billing"
+                      >
+                        <span>{isOpeningPortal ? 'Opening Stripe...' : 'Manage on Stripe'}</span>
+                      </button>
                       <button
                         id="cancel-subscription-btn"
                         type="button"
