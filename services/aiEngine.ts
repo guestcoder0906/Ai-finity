@@ -1514,9 +1514,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
       const followUpPrompt = `PREVIOUS CONTEXT: ${userPrompt}\n\n[SYSTEM: Probability Engine Results]\n\n${resultReport}\n\nBased on these FAIR and FINAL results, generate the highly detailed narrative and extensive file updates. Calculate exact dynamic outcomes (e.g., damage = base * probability result) WITHOUT using dice notation. 
       CRITICAL: You MUST include the exact text "${fullDetailsHtml}" at the very beginning or end of your narrative so the player can click to see the full mathematical details. Do not alter the formatting of that string. Include the Check Name and Result (e.g. "[Jump: Failure]") natively in the narrative text as well.
-      CRITICAL HEALTH, DAMAGE, & ENERGY UPDATE:
-      - If this action inflicts or takes damage or heals, you MUST include the affected character file(s) in 'files' with their new Health calculated: "- Health: [NewCurrent] / [Max]" and populate "healthTransactions": [{"target": "...", "amount": X, "operation": "damage|heal"}]. Include stat update in 'updates' array: {"type": "stat", "text": "Health -X", "value": -X}. NEVER forget to deduct damage from character health!
-      - If this action consumes or restores stamina, mana, or energy, you MUST include the updated "CharacterName-USERNAME.txt" in your 'files' object with the exact updated Energy/Mana/Stamina value in [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the stat change in the 'updates' array.`;
+      DYNAMIC STAT & HEALTH UPDATES (WHEN APPLICABLE):
+      - If this action results in damage, injury, or healing, dynamically update the affected character/entity file(s) in 'files' with their new Health calculated in [STATS & MODIFIERS] and include the stat change in the 'updates' array.
+      - If this action consumes or restores stamina, mana, or energy, dynamically update the character's file with their new Energy/Mana/Stamina value in [STATS & MODIFIERS] and include the stat change in the 'updates' array.`;
 
       // We make a fresh call with the context combined, as we don't maintain a full chat history object here 
       // (The FS is the history source of truth).
@@ -2290,119 +2290,13 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   }
 
   /**
-   * Extracts explicit damage and healing events from narrative text.
-   */
-  private extractHealthDeltasFromNarrative(text: string, activePlayerName?: string): { target?: string; delta: number; type: 'damage' | 'heal'; damageType?: string; bodyPart?: string; injury?: string }[] {
-    if (!text) return [];
-    const results: { target?: string; delta: number; type: 'damage' | 'heal'; damageType?: string; bodyPart?: string; injury?: string }[] = [];
-
-    // 1. Bracketed combat / damage / health tags:
-    const bracketRegex = /\[(?:Damage|Combat|Health|HP)[:\s]*([^\]]+)\]/gi;
-    let bMatch;
-    while ((bMatch = bracketRegex.exec(text)) !== null) {
-      const inner = bMatch[1];
-      const numMatch = inner.match(/([+-]?\s*\d+(?:\.\d+)?)/);
-      if (numMatch) {
-        const val = parseFloat(numMatch[1].replace(/\s+/g, ''));
-        if (!isNaN(val) && val !== 0) {
-          const isHeal = inner.toLowerCase().includes('heal') || inner.toLowerCase().includes('recov') || (val > 0 && !inner.toLowerCase().includes('damage'));
-          const delta = isHeal ? Math.abs(val) : -Math.abs(val);
-          let target: string | undefined;
-          const tMatch = inner.match(/^([A-Za-z0-9\s'-]+?)\s*[:\-–]/i) || inner.match(/(?:to|against|on)\s+([A-Za-z0-9\s'-]+)/i);
-          if (tMatch) target = tMatch[1].trim();
-          results.push({
-            target: target || activePlayerName,
-            delta,
-            type: delta < 0 ? 'damage' : 'heal'
-          });
-        }
-      }
-    }
-
-    // 2. Pattern: "[Target] takes/suffers/is hit for/is struck for X points of [type] damage"
-    const takesDamageRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:takes?|suffers?|is struck for|is hit for)\s+(\d+(?:\.\d+)?)\s*(?:points of\s+)?(?:([a-zA-Z]+)\s+)?damage(?:\s+(?:to|across|in)\s+(?:his|her|their|the)\s+([a-zA-Z\s]+?)(?:[,.\n]|$))?/gi;
-    let tdMatch;
-    while ((tdMatch = takesDamageRegex.exec(text)) !== null) {
-      const rawTarget = tdMatch[1] ? tdMatch[1].trim() : undefined;
-      const amount = parseFloat(tdMatch[2]);
-      const damageType = tdMatch[3] || undefined;
-      const bodyPart = tdMatch[4] ? tdMatch[4].trim() : undefined;
-
-      const cleanedTarget = (rawTarget && !['he', 'she', 'it', 'they', 'you', 'who', 'which', 'and', 'then'].includes(rawTarget.toLowerCase()))
-        ? rawTarget
-        : activePlayerName;
-
-      if (!isNaN(amount) && amount > 0) {
-        results.push({
-          target: cleanedTarget,
-          delta: -amount,
-          type: 'damage',
-          damageType,
-          bodyPart,
-          injury: bodyPart ? `${damageType || ''} wound to ${bodyPart}`.trim() : undefined
-        });
-      }
-    }
-
-    // 3. Pattern: "deals/inflicts X points of [type] damage to [Target]"
-    const dealsDamageRegex = /(?:deals?|dealt?|inflicts?|inflicted)\s+(\d+(?:\.\d+)?)\s*(?:points of\s+)?(?:([a-zA-Z]+)\s+)?damage\s+(?:to|on|against)\s+([A-Za-z0-9\s'-]{2,25})/gi;
-    let ddMatch;
-    while ((ddMatch = dealsDamageRegex.exec(text)) !== null) {
-      const amount = parseFloat(ddMatch[1]);
-      const damageType = ddMatch[2] || undefined;
-      const rawTarget = ddMatch[3] ? ddMatch[3].trim().replace(/[.,;].*$/, '') : undefined;
-
-      if (!isNaN(amount) && amount > 0 && rawTarget) {
-        results.push({
-          target: rawTarget,
-          delta: -amount,
-          type: 'damage',
-          damageType
-        });
-      }
-    }
-
-    // 4. Pattern: "[Target] loses X HP / health / hit points"
-    const losesHpRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:loses?|lost)\s+(\d+(?:\.\d+)?)\s*(?:HP|health|hit points)/gi;
-    let lMatch;
-    while ((lMatch = losesHpRegex.exec(text)) !== null) {
-      const rawTarget = lMatch[1] ? lMatch[1].trim() : activePlayerName;
-      const amount = parseFloat(lMatch[2]);
-      if (!isNaN(amount) && amount > 0) {
-        results.push({
-          target: rawTarget,
-          delta: -amount,
-          type: 'damage'
-        });
-      }
-    }
-
-    // 5. Pattern: "[Target] heals/recovers/regains X HP / health / hit points"
-    const healsHpRegex = /(?:([A-Za-z0-9\s'-]{2,25})?\s+)?(?:heals?|recovers?|regains?|restores?)\s+(\d+(?:\.\d+)?)\s*(?:HP|health|hit points)/gi;
-    let hMatch;
-    while ((hMatch = healsHpRegex.exec(text)) !== null) {
-      const rawTarget = hMatch[1] ? hMatch[1].trim() : activePlayerName;
-      const amount = parseFloat(hMatch[2]);
-      if (!isNaN(amount) && amount > 0) {
-        results.push({
-          target: rawTarget,
-          delta: amount,
-          type: 'heal'
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Automatically verifies and synchronizes character and entity Health, damage, and healing.
-   * Guarantees that health changes are never forgotten and always written to disk files.
+   * Reconciles character and entity Health, damage, and healing dynamically when detected.
+   * Only updates health when damage or healing actually occurs.
    */
   private syncCharacterHealth(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
-    // 1. Gather all damage / healing events
+    // 1. Gather all damage / healing events dynamically detected by AI
     const healthEvents: {
       target?: string;
       targetFile?: string;
@@ -2459,21 +2353,6 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         );
         if (!exists) {
           healthEvents.push(ud);
-        }
-      }
-    }
-
-    // From narrative text
-    if (data.narrative && typeof data.narrative === 'string') {
-      const narrativeDeltas = this.extractHealthDeltasFromNarrative(data.narrative);
-      for (const nd of narrativeDeltas) {
-        const exists = healthEvents.some(h => 
-          (!nd.target || !h.target || h.target.toLowerCase() === nd.target.toLowerCase()) &&
-          Math.sign(h.delta) === Math.sign(nd.delta) &&
-          Math.abs(h.delta) === Math.abs(nd.delta)
-        );
-        if (!exists) {
-          healthEvents.push(nd);
         }
       }
     }
@@ -2605,162 +2484,6 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             }
           }
         }
-      }
-    }
-  }
-
-  /**
-   * Decrements or consumes items like potions, arrows, bandages, or rations used during a turn.
-   */
-  private syncConsumableUsage(data: AIResponse, username?: string) {
-    if (!data || !data.narrative) return;
-    const narrative = data.narrative.toLowerCase();
-
-    const consumablePatterns = [
-      { pattern: /(?:drinks?|quaffs?|chugs?|consumes?)\s+(?:a\s+|an\s+)?(?:potion|draught|elixir|brew)\s+of\s+([a-zA-Z\s]+)/i, itemMatch: 'potion' },
-      { pattern: /(?:drinks?|quaffs?|chugs?|consumes?)\s+(?:a\s+|an\s+)?([a-zA-Z\s]+potion)/i, itemMatch: 'potion' },
-      { pattern: /(?:fires?|shoots?|looses?)\s+(\d+)?\s*(?:arrows?|bolts?)/i, itemMatch: 'arrow' },
-      { pattern: /(?:uses?|applies?|wraps?)\s+(?:a\s+|an\s+)?(?:bandage|clean cloth|splint)/i, itemMatch: 'bandage' },
-      { pattern: /(?:eats?|consumes?)\s+(?:a\s+|some\s+)?(?:ration|food|bread|meat)/i, itemMatch: 'ration' }
-    ];
-
-    const playerFile = this.findPlayerCharacterFile(username, data.files);
-    if (!playerFile) return;
-
-    let content = data.files && data.files[playerFile]
-      ? (typeof data.files[playerFile] === 'string' ? data.files[playerFile] : (data.files[playerFile] as any).content)
-      : this.fs.read(playerFile);
-    if (!content || typeof content !== 'string') return;
-
-    for (const cp of consumablePatterns) {
-      const match = narrative.match(cp.pattern);
-      if (match) {
-        const keyword = cp.itemMatch;
-        const lines = content.split('\n');
-        let itemIndex = -1;
-        let itemLine = '';
-
-        for (let i = 0; i < lines.length; i++) {
-          const l = lines[i];
-          if (l.toLowerCase().includes(keyword) && (l.includes('- ') || l.includes('* '))) {
-            itemIndex = i;
-            itemLine = l;
-            break;
-          }
-        }
-
-        if (itemIndex >= 0) {
-          const countMatch = itemLine.match(/[\(\[]\s*(?:x\s*)?(\d+)\s*(?:arrows?|count|remaining|units)?\s*[\)\]]/i) ||
-                             itemLine.match(/x\s*(\d+)/i) ||
-                             itemLine.match(/(\d+)\s*(?:arrows?|charges|doses|units)/i);
-          let newContent = content;
-
-          if (countMatch) {
-            const currentCount = parseInt(countMatch[1]);
-            const deduction = match[1] && !isNaN(parseInt(match[1])) ? parseInt(match[1]) : 1;
-            const newCount = Math.max(0, currentCount - deduction);
-            if (newCount > 0) {
-              const updatedLine = itemLine.replace(countMatch[0], `(${newCount} remaining)`);
-              lines[itemIndex] = updatedLine;
-              newContent = lines.join('\n');
-            } else {
-              lines.splice(itemIndex, 1);
-              newContent = lines.join('\n');
-            }
-          } else {
-            lines.splice(itemIndex, 1);
-            newContent = lines.join('\n');
-          }
-
-          if (newContent !== content) {
-            if (!data.files) data.files = {};
-            if (typeof data.files[playerFile] === 'object' && (data.files[playerFile] as any).content !== undefined) {
-              (data.files[playerFile] as any).content = newContent;
-            } else {
-              data.files[playerFile] = newContent;
-            }
-            content = newContent;
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Synchronizes active status conditions (poisoned, bleeding, stunned, prone, burning)
-   * or cures mentioned in narrative onto character files.
-   */
-  private syncStatusEffects(data: AIResponse, username?: string) {
-    if (!data || !data.narrative) return;
-    const narrative = data.narrative;
-    const lowerNarrative = narrative.toLowerCase();
-
-    const conditions = [
-      { name: 'Poisoned', patterns: [/is poisoned/i, /inflicted with poison/i, /venom surges/i, /succumbs to the venom/i, /takes poison damage/i] },
-      { name: 'Burning', patterns: [/catches fire/i, /engulfed in flames/i, /ignited/i, /burning/i] },
-      { name: 'Bleeding', patterns: [/is bleeding/i, /bleeds heavily/i, /arterial spray/i, /deep bleeding gash/i] },
-      { name: 'Stunned', patterns: [/is stunned/i, /dazed and reels/i, /knocked senseless/i] },
-      { name: 'Prone', patterns: [/knocked prone/i, /falls to the ground/i, /knocked to the floor/i, /tripped/i] },
-      { name: 'Blinded', patterns: [/is blinded/i, /eyes burned/i, /loses sight/i] },
-    ];
-
-    const recoveries = [
-      { name: 'Poisoned', patterns: [/cured of poison/i, /poison neutral/i, /antidote takes effect/i] },
-      { name: 'Burning', patterns: [/puts out the fire/i, /extinguishes the flames/i, /smothers the fire/i] },
-      { name: 'Bleeding', patterns: [/bleeding is staunched/i, /bandaged the wound/i, /stops the bleeding/i] },
-      { name: 'Prone', patterns: [/stands back up/i, /scrambles to their feet/i, /rises to feet/i] }
-    ];
-
-    const playerFile = this.findPlayerCharacterFile(username, data.files);
-    if (!playerFile) return;
-
-    let content = data.files && data.files[playerFile]
-      ? (typeof data.files[playerFile] === 'string' ? data.files[playerFile] : (data.files[playerFile] as any).content)
-      : this.fs.read(playerFile);
-    if (!content || typeof content !== 'string') return;
-
-    let modified = false;
-
-    // Process recoveries first
-    for (const rec of recoveries) {
-      if (rec.patterns.some(p => p.test(lowerNarrative))) {
-        const statusRegex = new RegExp(`\\[Status:${rec.name}[^\\]]*\\]`, 'gi');
-        if (statusRegex.test(content)) {
-          content = content.replace(statusRegex, '');
-          modified = true;
-        }
-        const lineRegex = new RegExp(`^\\s*[-*•]?\\s*(?:Status\\s*Effect|Effect)?[:=]?\\s*${rec.name}.*$`, 'gim');
-        if (lineRegex.test(content)) {
-          content = content.replace(lineRegex, '');
-          modified = true;
-        }
-      }
-    }
-
-    // Process afflictions
-    for (const cond of conditions) {
-      if (cond.patterns.some(p => p.test(lowerNarrative))) {
-        if (!content.toLowerCase().includes(`status:${cond.name.toLowerCase()}`) && !content.toLowerCase().includes(`- ${cond.name.toLowerCase()}`)) {
-          const statusTag = `\n- [Status:${cond.name}(Active)]`;
-          if (content.includes('[STATUS EFFECTS & LORE]')) {
-            const idx = content.indexOf('[STATUS EFFECTS & LORE]') + '[STATUS EFFECTS & LORE]'.length;
-            content = content.slice(0, idx) + statusTag + content.slice(idx);
-            modified = true;
-          } else if (content.includes('[STATS & MODIFIERS]')) {
-            const idx = content.indexOf('[STATS & MODIFIERS]') + '[STATS & MODIFIERS]'.length;
-            content = content.slice(0, idx) + statusTag + content.slice(idx);
-            modified = true;
-          }
-        }
-      }
-    }
-
-    if (modified) {
-      if (!data.files) data.files = {};
-      if (typeof data.files[playerFile] === 'object' && (data.files[playerFile] as any).content !== undefined) {
-        (data.files[playerFile] as any).content = content;
-      } else {
-        data.files[playerFile] = content;
       }
     }
   }
@@ -3094,7 +2817,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
-    // Ensure character health, wounds, damage, and healing are always properly updated and in sync
+    // Dynamically reconcile health, damage, and healing when detected
     this.syncCharacterHealth(data, username, auditContext);
 
     // Ensure character energy is always properly updated and in sync
@@ -3105,12 +2828,6 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
     // Ensure currency transactions and balance changes are synchronized
     this.syncPlayerCurrency(data, username, auditContext);
-
-    // Ensure consumable items (potions, arrows, bandages, rations) are properly decremented
-    this.syncConsumableUsage(data, username);
-
-    // Ensure status conditions (poisoned, bleeding, stunned, prone, burning) are reflected
-    this.syncStatusEffects(data, username);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 1. Check for player file duplicates/naming changes if we have a username
