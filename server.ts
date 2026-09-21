@@ -817,8 +817,8 @@ async function startServer() {
         const cardToken = await stripe.tokens.create({
           card: {
             number: cleanNum,
-            exp_month: parseInt(String(expMonth), 10),
-            exp_year: parseInt(String(expYear), 10),
+            exp_month: String(expMonth).trim(),
+            exp_year: String(expYear).trim(),
             cvc: String(cardCvc || '').trim(),
             name: String(cardName || safeUsername).trim()
           }

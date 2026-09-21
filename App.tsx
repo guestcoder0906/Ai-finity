@@ -205,6 +205,7 @@ function App() {
   }, [currentUser, guestId]);
 
   const isSyncingPurchasesRef = useRef(false);
+  const notifiedPurchaseIdsRef = useRef<Set<string>>(new Set());
 
   // Unified automatic purchase sync engine:
   // Strictly attributes completed purchases ONLY to the exact account that bought them.
@@ -245,19 +246,32 @@ function App() {
         if (syncRes.purchases && syncRes.purchases.length > 0) {
           // Collect known transactions from localStorage
           const localTx = getLocalTransactions(user.uid);
-          const knownIds = new Set(localTx.map((t) => t.id));
+          const knownIds = new Set<string>();
+          localTx.forEach((t) => {
+            if (t?.id) {
+              knownIds.add(t.id);
+              knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            }
+          });
 
           // Cross-reference Firestore transactions
           try {
             const firestoreTx = await getUserTransactions(user.uid);
-            firestoreTx.forEach((t) => knownIds.add(t.id));
+            firestoreTx.forEach((t) => {
+              if (t?.id) {
+                knownIds.add(t.id);
+                knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              }
+            });
           } catch (e) {
             // ignore
           }
 
+          // Include in-memory notified IDs to prevent any duplicate toast notifications
+          notifiedPurchaseIdsRef.current.forEach((id) => knownIds.add(id));
+
           let totalNewCredits = 0;
           let newlyFoundPurchases = false;
-          let totalLifetimePackActions = 0;
           let latestReceipt: PaymentTransactionRecord | null = null;
 
           const tierRank: Record<string, number> = {
@@ -270,10 +284,6 @@ function App() {
           let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
 
           for (const p of syncRes.purchases) {
-            if (p.itemType === 'pack' && p.actionDelta > 0) {
-              totalLifetimePackActions += p.actionDelta;
-            }
-
             if (p.itemType === 'tier' && p.itemId) {
               const rank = tierRank[p.itemId] || 0;
               const currentBestRank = bestPurchasedTier ? tierRank[bestPurchasedTier] : 0;
@@ -282,9 +292,19 @@ function App() {
               }
             }
 
-            if (!knownIds.has(p.id)) {
+            const safeId = String(p.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const isAlreadyKnown =
+              knownIds.has(p.id) ||
+              knownIds.has(safeId) ||
+              notifiedPurchaseIdsRef.current.has(p.id) ||
+              notifiedPurchaseIdsRef.current.has(safeId);
+
+            if (!isAlreadyKnown) {
               newlyFoundPurchases = true;
               knownIds.add(p.id);
+              knownIds.add(safeId);
+              notifiedPurchaseIdsRef.current.add(p.id);
+              notifiedPurchaseIdsRef.current.add(safeId);
 
               if (p.itemType === 'pack' && p.actionDelta > 0) {
                 totalNewCredits += p.actionDelta;
@@ -315,33 +335,28 @@ function App() {
 
           const currentTierRank = tierRank[user.tier || 'free'] || 0;
           const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
-          const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
-          const currentCredits = user.actionCredits || 0;
-          const creditsNeedFloorFix = totalLifetimePackActions > 0 && currentCredits < totalLifetimePackActions;
+          const needsTierUpgrade = Boolean(bestPurchasedTier && bestRank > currentTierRank);
 
-          if (newlyFoundPurchases || needsTierUpgrade || totalNewCredits > 0 || creditsNeedFloorFix) {
+          if ((newlyFoundPurchases && totalNewCredits > 0) || needsTierUpgrade) {
             const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
             const updated = await ActionLimitService.applyRestoredPurchases(
               user,
               totalNewCredits,
               targetTier as any,
-              guestId,
-              totalLifetimePackActions > 0 ? totalLifetimePackActions : undefined
+              guestId
             );
             setCurrentUser({ ...updated });
             setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
 
-            if (latestReceipt) {
+            if (latestReceipt && newlyFoundPurchases) {
               setVerifiedReceiptTransaction(latestReceipt);
               setIsReceiptModalOpen(true);
             }
 
-            if (newlyFoundPurchases || needsTierUpgrade || creditsNeedFloorFix) {
-              setStripeReturnMessage({
-                type: 'success',
-                text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${updated.actionCredits ? ` with ${updated.actionCredits} action credits` : ''}.`
-              });
-            }
+            setStripeReturnMessage({
+              type: 'success',
+              text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${updated.actionCredits ? ` with ${updated.actionCredits} action credits` : ''}.`
+            });
 
             // Cross-tab broadcast
             try {
@@ -439,10 +454,10 @@ function App() {
       } catch (e) {}
     }, 2000);
 
-    // Regular background heartbeat every 8s while logged in
+    // Regular background heartbeat every 60s while logged in (passive sync)
     const heartbeatInterval = setInterval(() => {
       syncUserPurchases(currentUser);
-    }, 8000);
+    }, 60000);
 
     return () => {
       clearInterval(fastInterval);

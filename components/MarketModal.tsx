@@ -275,19 +275,16 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
         const currentTierRank = tierRank[currentUser.tier || 'free'] || 0;
         const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
-        const needsTierUpgrade = bestPurchasedTier && bestRank > currentTierRank;
-        const currentCredits = currentUser.actionCredits || 0;
-        const creditsNeedFloorFix = totalLifetimePackActions > 0 && currentCredits < totalLifetimePackActions;
+        const needsTierUpgrade = Boolean(bestPurchasedTier && bestRank > currentTierRank);
 
         let updated = currentUser;
-        if (totalNewCredits > 0 || needsTierUpgrade || creditsNeedFloorFix || (newlyRestoredCount > 0 && bestPurchasedTier)) {
+        if (totalNewCredits > 0 || needsTierUpgrade || (newlyRestoredCount > 0 && bestPurchasedTier)) {
           const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             totalNewCredits,
             targetTier as any,
-            guestId,
-            totalLifetimePackActions > 0 ? totalLifetimePackActions : undefined
+            guestId
           );
         }
 
@@ -296,7 +293,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           onStatusUpdated();
         }
 
-        if (newlyRestoredCount > 0 || needsTierUpgrade || creditsNeedFloorFix) {
+        if (newlyRestoredCount > 0 || needsTierUpgrade) {
           setSyncStatusMessage({
             type: 'success',
             text: `🎉 Membership Verified! Added ${totalNewCredits > 0 ? `+${totalNewCredits} actions` : `credits`} ${bestPurchasedTier ? `& activated ${bestPurchasedTier.toUpperCase()} tier` : ''} on your account.`
