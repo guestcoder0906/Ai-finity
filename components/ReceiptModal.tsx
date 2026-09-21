@@ -76,17 +76,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-neutral-900 border border-neutral-700 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden text-neutral-200 font-sans max-h-[90vh]">
         {/* Modal Top Controls (Hidden in Print) */}
-        <div className="px-5 py-3.5 bg-neutral-950 border-b border-neutral-800 flex justify-between items-center shrink-0 print:hidden">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+        <div className="px-4 sm:px-5 py-3 sm:py-3.5 bg-neutral-950 border-b border-neutral-800 flex justify-between items-center shrink-0 print:hidden">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
               <ReceiptIcon size={16} />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-white tracking-tight">Official Order Receipt</h3>
-              <p className="text-[11px] font-mono text-neutral-400">{invoiceNumber}</p>
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-white tracking-tight truncate">Official Order Receipt</h3>
+              <p className="text-[11px] font-mono text-neutral-400 truncate">{invoiceNumber}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handlePrint}
               title="Print Receipt"
@@ -105,10 +105,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         </div>
 
         {/* Printable Receipt Body */}
-        <div className="p-5 sm:p-7 overflow-y-auto space-y-5 bg-gradient-to-b from-neutral-900 to-neutral-950 print:bg-white print:text-black print:p-8">
+        <div className="p-4 sm:p-7 overflow-y-auto space-y-4 sm:space-y-5 bg-gradient-to-b from-neutral-900 to-neutral-950 print:bg-white print:text-black print:p-8">
           
           {/* Brand Header */}
-          <div className="flex justify-between items-start border-b border-neutral-800 print:border-black pb-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start gap-2.5 sm:gap-2 border-b border-neutral-800 print:border-black pb-4">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-lg sm:text-xl font-black tracking-tight text-white print:text-black">
@@ -126,7 +126,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               </p>
             </div>
 
-            <div className="text-right">
+            <div className="text-left sm:text-right">
               <span className="text-[10px] uppercase font-mono tracking-wider text-amber-400 print:text-gray-700 block font-semibold">
                 Tax Invoice
               </span>
