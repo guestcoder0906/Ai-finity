@@ -187,7 +187,6 @@ const weirdFacts: TaggedWord[] = [
     { text: 'magic requires sacrifice', tags: ['fantasy'] },
     { text: 'dreams manifest as reality', tags: ['fantasy'] },
     { text: 'the sky is a mirror', tags: [] },
-    { text: 'people communicate via smell', tags: [] },
     { text: 'the trees walk', tags: ['nature', 'fantasy'] },
     { text: 'shadows have their own lives', tags: ['horror', 'fantasy'] },
     { text: 'the earth is hollow', tags: [] },
