@@ -571,6 +571,16 @@ export class WeightInventoryEngine {
       lower.startsWith('holding status') ||
       lower.startsWith('- capacity') ||
       lower.startsWith('capacity:') ||
+      lower.startsWith('hand slots & starting capacity') ||
+      lower.startsWith('- hand slots & starting capacity') ||
+      lower.startsWith('slots & starting capacity') ||
+      lower.startsWith('- slots & starting capacity') ||
+      lower.startsWith('hand slots') ||
+      lower.startsWith('- hand slots') ||
+      lower.startsWith('starting capacity') ||
+      lower.startsWith('- starting capacity') ||
+      lower.includes('hand slots & starting capacity') ||
+      lower.includes('slots & starting capacity') ||
       lower.startsWith('items currently held') ||
       lower.startsWith('held items') ||
       lower.startsWith('currently holding') ||
@@ -651,6 +661,13 @@ export class WeightInventoryEngine {
       cleanLower.startsWith('overflow rule') ||
       cleanLower.startsWith('weight mandate') ||
       cleanLower.startsWith('capacity mandate') ||
+      cleanLower.startsWith('slots & starting capacity') ||
+      cleanLower.startsWith('hand slots & starting capacity') ||
+      cleanLower.startsWith('hand slots') ||
+      cleanLower.startsWith('starting capacity') ||
+      cleanLower.includes('slots & starting capacity') ||
+      cleanLower.includes('hand slots') ||
+      cleanLower.includes('starting carrying limit') ||
       cleanLower.includes('jaws are occupied') ||
       cleanLower.includes('held in jaws..') ||
       cleanLower.includes('held in mouth without dropping') ||
@@ -1574,7 +1591,13 @@ export class WeightInventoryEngine {
       name.toLowerCase().includes('weight mandate') ||
       name.toLowerCase().includes('capacity mandate') ||
       name.toLowerCase().includes('holding mandate') ||
-      name.toLowerCase().includes('weight & capacity')
+      name.toLowerCase().includes('weight & capacity') ||
+      name.toLowerCase().includes('hand slots') ||
+      name.toLowerCase().includes('starting capacity') ||
+      name.toLowerCase().includes('slots & starting capacity') ||
+      name.toLowerCase().includes('starting carrying limit') ||
+      name.toLowerCase().includes('holding anatomy') ||
+      name.toLowerCase().includes('holding capacity')
     ) {
       return null;
     }
@@ -2253,6 +2276,10 @@ export class WeightInventoryEngine {
           lower.startsWith('- total carried weight') ||
           lower.startsWith('total carried weight') ||
           lower.startsWith('- total weight') ||
+          lower.includes('slots & starting capacity') ||
+          lower.includes('hand slots') ||
+          lower.includes('starting capacity') ||
+          lower.includes('starting carrying limit') ||
           lower === '(none)' ||
           lower === '- (none)' ||
           lower === '* (none)' ||
@@ -2467,8 +2494,16 @@ export class WeightInventoryEngine {
           lower.includes('holding capacity') ||
           lower.includes('capacity & status') ||
           lower.includes('holding status') ||
+          lower.includes('slots & starting capacity') ||
+          lower.includes('hand slots') ||
+          lower.includes('starting capacity') ||
+          lower.includes('starting carrying limit') ||
           lower.startsWith('- capacity:') ||
-          lower.startsWith('capacity:')
+          lower.startsWith('capacity:') ||
+          lower.startsWith('- slots') ||
+          lower.startsWith('slots') ||
+          lower.startsWith('- hand slots') ||
+          lower.startsWith('hand slots')
         ) {
           continue;
         }
