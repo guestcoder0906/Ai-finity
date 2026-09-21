@@ -11,7 +11,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { UserProfile, isDefaultAdmin } from './authService';
+import { UserProfile, UserTier, isDefaultAdmin } from './authService';
 import { NarrativeEntry } from '../types';
 
 export interface SavedAdventure {
@@ -34,7 +34,7 @@ export interface CommunityAdventure {
   id: string;
   authorId: string;
   authorName: string;
-  authorTier: 'free' | 'adventurer' | 'legendary';
+  authorTier: UserTier;
   title: string;
   shareType: CommunityShareType;
   startingPrompt: string;
@@ -278,7 +278,7 @@ export class AdventuresService {
         return { success: false, message: 'Adventure not found.' };
       }
       const data = snap.data() as CommunityAdventure;
-      const isAuthor = data.authorUid === user.uid;
+      const isAuthor = data.authorId === user.uid;
 
       if (!isAdmin && !isMod && !isAuthor) {
         return { success: false, message: 'You do not have permission to delete this community adventure.' };

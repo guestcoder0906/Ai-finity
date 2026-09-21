@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { FileSystem } from "./fileSystem";
-import { AIResponse, CheckDef } from "../types";
+import { AIResponse, CheckDef, UpdateItem } from "../types";
 import { WeightInventoryEngine } from "./weightInventoryEngine";
 
 interface DetectedModifier {
@@ -72,15 +72,27 @@ MAP DATA INTEGRITY & MULTI-PAGE SEPARATION (CRITICAL):
   * Active Players: Every active player MUST be accounted for on their respective page's 'players' array. Never lose track of a player's coordinates.
 
 MANDATORY MAP GENERATION & POPULATION RULES:
+- COMPREHENSIVE ZERO-OMISSION MAP COMPLETENESS (CRITICAL):
+  * Maps MUST have NOTHING missing within all players' observable and known areas. Every single observable, sensed, or known area, landmark, item, weapon, treasure, NPC, enemy, ally, obstacle, building, interior room, door, vehicle, hazard, container, or dynamic element MUST be plotted and updated on the map on every turn without exception.
+  * Always keep everything on the map updated correctly as positions, statuses, or environments evolve.
+- ADVANCED, ACCURATE & FLEXIBLE SHAPES (NOT JUST CIRCLES AND SQUARES):
+  * Maps are flexible and can make ANY shapes instead of just circles and squares:
+    1. Oblong / Elliptical Areas (shape: "ellipse" or "oblong"): Use with cx, cy, rx, ry, and optional rotation in degrees (e.g. { "shape": "ellipse", "cx": 40, "cy": 50, "rx": 35, "ry": 18, "rotation": 25, "name": "Whispering Woods", "type": "forest" }). Ideal for oblong forest areas, oval clearings, groves, lakes, ponds, hills, or broad meadows.
+    2. Polygons (shape: "polygon"): Use with points string ("x1,y1 x2,y2 x3,y3...") for organic, jagged, or angled terrain such as riverbanks, winding forest perimeters, coastline, castle fortifications, courtyards, or rocky ridges.
+    3. High-Detail Architectural Buildings & Sub-Structures: Break down complex locations into rich, detailed individual structures instead of a single generic box! For example, a market MUST show individual vendor stalls (type: "shop" or "stall"), vendor carts, central fountain, market square, surrounding shops, taverns, and alleys. A dungeon or castle must show distinct individual rooms, walls, corridors, and doorways.
+    4. Paths & Roads (shape: "path" with SVG "d" attribute or "polygon"): Curved or straight paths, roads, tracks, bridges, and rivers.
+    5. Circles (shape: "circle"): Use with cx, cy (or x, y) and radius for round towers, circular clearings, fountains, wells, or campfires.
+    6. Rectangles (shape: "rect"): Use with x, y, width, height, and optional rx, ry for rectangular rooms, buildings, counters, tables, or crates.
 - FULL ENTITY REGISTRATION: Every single entity within map bounds MUST be present:
   * All active player characters on that page (in 'players' array).
   * Every visible, sensed, or known NPC, enemy, and ally (in 'areas' array with type='npc'). If 3 bandits are present, there MUST be 3 distinct NPC entries.
-  * Every interactive object, structure, vehicle, hazard, container, or dynamic element (using type: 'furniture', 'terminal', 'hazard', 'treasure', etc.).
+  * Every dropped, placed, or observable item, weapon, treasure chest, container, or loot (type: 'treasure', 'loot', 'item', 'furniture').
+  * Every interactive object, structure, vehicle, hazard, container, or dynamic element (using type: 'building', 'shop', 'stall', 'landmark', 'furniture', 'terminal', 'hazard', 'treasure', etc.).
   * Every airborne projectile with travel time > 1.0s (type='projectile').
 - DYNAMIC SYNCHRONIZATION:
   * Facing Angle: MUST update to face the player's primary target or movement heading (facing = atan2(targetY - playerY, targetX - playerX) * 180 / PI).
   * Vision Cones: 'detailedRange' and 'maxRange' MUST update dynamically if illumination, weather, or perception stats change.
-  * Scale Alignment: All element boundaries ('width', 'height', 'radius', 'points') and positions (x, y) must match the page's declared 'scale'.
+  * Scale Alignment: All element boundaries ('width', 'height', 'radius', 'rx', 'ry', 'points') and positions (x, y, cx, cy) must match the page's declared 'scale'.
 
 JSON RESPONSE FORMAT:
 {
@@ -152,8 +164,9 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 
 [CONTAINERS & CARRIED GEAR]
 - Containers Equipped/Carried: (Carrying loose items REQUIRES at least one container the character can equip or carry, such as a Backpack, Satchel, Pouch, or Belt Bag. Each container has max space dimensions, e.g. "Leather Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs, Weight: 2 lbs". Containers hold items not exceeding their dimensions; if forced to overflow, some items might drop or get knocked down by accident during movement/combat!)
-- Equipped Gear & Armor: (List all worn armor, jewelry, and weapons held in hands with exact weight and dimensions)
+- Equipped Gear & Armor: (List all worn armor, clothing, jewelry, and weapons held in hands with exact weight and dimensions)
   * Format: "Item Name: Weight: X lbs. Dimensions: HxWxD inches. (Technical stats/properties)"
+- Auto-Equip Oversized / Wearable Items Rule (CRITICAL): If a character acquires, carries, or receives items that are bigger than their container's space capacity (or would cause container overflow) and it makes sense in the context for them to equip or wear them (such as clothes, armor, cloaks, tunics, robes, boots, gloves, helmets, belts, worn jewelry, sheathed side-weapons, or shields), they MUST automatically be equipped under [Equipped Gear & Armor] rather than stuffed into an undersized container. This realistically reflects what a person does when finding wearable gear or oversized equipment and prevents unnatural container overflowing. Always equip wearable/wieldable items automatically when contextually sensible to avoid overflowing containers.
 - Carried Inventory (Inside Containers): (List of items carried inside each container with detectable weight and dimensions format)
   * Standard detectable format examples: "feather 0 weight 3x0 inch", "Medium geode 1 pound and 3x5 inches", "Iron Dagger: 2 lbs, 12x2 inches. Container: [Backpack]"
   * Overflow rule: If an item's dimensions exceed the container's space dimensions (e.g. a 60-inch staff placed inside an 18-inch backpack), flag it: "(Overflow: Yes - exceeds container dimensions; risks dropping or being knocked down by accident during story)"
@@ -188,7 +201,7 @@ All weapons, tools, containers, and items MUST include detectable weight and dim
 - Category: (e.g., Heavy Slashing, Light Piercing, Container, Tool, Consumable, Incorporeal)
 - Weight: (Detectable format: e.g. "0 weight", "1 pound", "4 lbs", or "None (Incorporeal/Ghost)")
 - Dimensions: (Detectable format: e.g. "3x0 inch", "3x5 inches", "18x12x8 inches", "18 inches tall by 12 inches area", or "None (Incorporeal)")
-- Container Space Capacity: (If container: max dimensions it can hold without overflow, e.g. "Max Space Dimensions: 18 inches tall by 12 inches area, Max Weight: 40 lbs")
+- Container Space Capacity: (If container: max dimensions it can hold without overflow, e.g. "Max Space Dimensions: 18 inches tall by 12 inches area, Max Weight: 40 lbs". Note: Wearable gear like clothes, armor, cloaks, footwear, and weapons bigger than container space capacity or risking overflow must automatically equip on the character under [Equipped Gear & Armor] if contextually sensible)
 - Material: (e.g., High-Carbon Steel, Iron, Hardened Leather)
 
 [TECHNICAL RULES]
@@ -280,22 +293,27 @@ CRITICAL FILE MANAGEMENT RULES:
 - Create "WorldRules.txt" defining physics, magic, tech, logic, time costs, and encumbrance effects.
 - Create "CurrentMap.json" to track the live map of the player's current location (50-200 meter scale). MUST be valid JSON.
   * Update this file accurately in real-time based on context, location, dimensions, and speed.
-  * Structure: \`{ "pages": [{ "name": "Region/Area Name", "scale": "50m", "areas": [{ "id": "a1", "name": "Room Name", "type": "room|hallway|field|forest|water|building|furniture|npc|obstacle|vehicle|fire|lava|poison|treasure|tech|magic|nature|portal|terminal|hazard", "shape": "rect|circle|polygon", "x": 0, "y": 0, "width": 10, "height": 10, "radius": 5, "points": "0,0 10,10 0,10", "visible": true}], "players": [{ "username": "PlayerName", "x": 5, "y": 5, "facing": 0, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 20, "maxRange": 50} }], "notes": [{ "x": 10, "y": 10, "text": "Fire", "type": "danger|info|warning|discovery"}] }] }\`
+  * Structure: \`{ "pages": [{ "name": "Region/Area Name", "scale": "50m", "areas": [{ "id": "a1", "name": "Room Name", "type": "room|hallway|field|forest|water|building|furniture|npc|obstacle|vehicle|fire|lava|poison|treasure|tech|magic|nature|portal|terminal|hazard|shop|stall|item|landmark", "shape": "rect|circle|ellipse|oblong|polygon|path", "x": 0, "y": 0, "width": 10, "height": 10, "radius": 5, "rx": 15, "ry": 8, "rotation": 0, "points": "0,0 10,10 0,10", "visible": true}], "players": [{ "username": "PlayerName", "x": 5, "y": 5, "facing": 0, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 20, "maxRange": 50} }], "items": [{ "x": 8, "y": 12, "name": "Iron Dagger", "description": "Lying on table" }], "landmarks": [{ "x": 25, "y": 25, "name": "Town Square Fountain", "description": "Ornate stone fountain" }], "notes": [{ "x": 10, "y": 10, "text": "Fire", "type": "danger|info|warning|discovery"}] }] }\`
+  * NOTHING MISSING (CRITICAL): There MUST BE NOTHING MISSING within all players' observable and known areas. Every single landmark, loose item, weapon, treasure, NPC, creature, building, stall, obstacle, and environmental hazard MUST be plotted on the map. It should be EVERYTHING observable or known, with everything on the map updated correctly always.
+  * ADVANCED, ACCURATE & FLEXIBLE SHAPES: Do NOT limit maps to just simple circles or squares. Use advanced, flexible, and accurate shapes:
+    - Oblong / Elliptical shapes: for oblong forest groves, elongated clearings, oval glades, stretched ponds, or curved plazas, use shape: "ellipse" or shape: "oblong" with center (cx, cy or x, y), radii (rx, ry), and optional rotation in degrees.
+    - Polygons: for irregular caverns, winding riverbanks, jagged rocky outcrops, angled street corners, or natural terrain, use shape: "polygon" with points: "x1,y1 x2,y2 x3,y3 ...".
+    - Detailed Buildings & Architecture: In settlements, villages, or markets, map every building and stall individually with high detail (e.g. distinct buildings for the "Blacksmith Forge", "Apothecary", "Tavern", and individual market stalls like "Fruit Stall", "Weaponsmith Canopy", "Fish Vendor"), rather than one generic block.
   * Map Pages Rule: If all active players are in the same general region, generate a single page in the "pages" array. If players are geographically far apart (e.g. different towns, deep dungeon vs surface), separate them into multiple distinct pages within the "pages" array.
   * \`notes\`: Use for dynamic annotations like "Fire", "Toxic Gas", "Discovery", "Clue", "Exit", etc. for specific coordinates.
   * \`visible\`: false means it's greyed out (fog of war).
   * Completely unknown/unseen elements MUST be omitted from the map entirely.
-  * Ensure correct geometry and scale for all elements using \`shape\`, \`width\`, \`height\`, \`radius\`, or \`points\`.
+  * Ensure correct geometry and scale for all elements using \`shape\`, \`width\`, \`height\`, \`radius\`, \`rx\`, \`ry\`, or \`points\`.
   * \`facing\`: angle in degrees (0 is right, 90 is down, 180 is left, 270 is up).
   * \`vision\`: contains the player's dynamic vision capabilities.
   * Include all player-visible elements within the scale (npcs, furniture, buildings, vehicles, hazards, etc.).
   * You MUST show ALL active players on the map in the 'players' array.
   * You MUST show all visible, sensed, or last known NPC locations on the map in the 'areas' array (type: 'npc').
-  * CRITICAL: Make the map highly detailed. Add small details like furniture, individual trees, hazards, or ground texture as separate areas or via the \`notes\` array. Use \`notes\` for anything that isn't a physical structure but is an important environmental effect (e.g., "Heavy Fire", "Poison Gas", "Strange Energy", "Digital Glitch").
-  * Use \`type: tech/terminal\` for cyberpunk/sci-fi elements.
-  * Use \`type: magic/portal\` for fantasy/supernatural elements.
-  * Use \`type: nature/hazard\` for environmental obstacles.
-  * Use \`type: treasure/loot\` for items or points of interest.
+  * CRITICAL: Make the map highly detailed. Add small details like furniture, individual trees, hazards, or ground texture as separate areas or via the "notes" array. Use "notes" for anything that isn't a physical structure but is an important environmental effect (e.g., "Heavy Fire", "Poison Gas", "Strange Energy", "Digital Glitch").
+  * Use "type: tech/terminal" for cyberpunk/sci-fi elements.
+  * Use "type: magic/portal" for fantasy/supernatural elements.
+  * Use "type: nature/hazard" for environmental obstacles.
+  * Use "type: treasure/loot" for items or points of interest.
   * Use hide[Secret Room] or target(PlayerName)[Secret Room] for area names if they are forgotten, hidden or only known to specific players.
   * Ensure scaling and coordinates are consistent.
 - Create character files named "CharacterName-USERNAME.txt" for each player using the ENTITY FILE SCHEMA.
@@ -425,10 +443,10 @@ Your ONLY goal is to analyze the player's action against the "World Context" and
 INSTRUCTIONS:
 1. AUDIT FOR CHECKS: Identify if the action requires a probability check (Combat, Stealth, Magic Focus, Physical feats, etc.).
 2. AUDIT FOR ENTITIES: List every individual NPC, group of NPCs, Weapon, Item, or Location mentioned that does NOT have a file in context.
-3. AUDIT FOR MAP: Determine if the player moved or the environment changed.
+3. AUDIT FOR MAP: Determine if the player moved, environment changed, or new entities/landmarks/items appeared. Maps must have NOTHING missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain features, etc. Always keep all observable and known elements updated correctly. Support advanced flexible shapes (oblong areas like forests via ellipse, irregular multi-point polygons, detailed architectural buildings such as market stalls and shops, paths/roads, circles, rects).
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
 5. AUDIT FOR TEMPORAL SHIFT, SPATIAL SPLIT, & MAP PAGES: Detect if the action causes time travel, dimensional slips, or timeline returns. Specify destination time/year, anchor origin time, and whether WorldTime.txt requires temporal re-anchoring. Spatial splits & map pages: Determine whether players are together or geographically separated across different locations, levels, or timelines. Verify which map page(s) must be created, updated, or preserved to prevent data loss. List all NPCs, entities, hazards, and projectiles that must appear on the updated page(s).
-6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
+6. AUDIT FOR INVENTORY, WEIGHT, DIMENSIONS & ENCUMBRANCE: Check if items are picked up, dropped, transferred to containers, or if temporary weight spells are cast/expired. Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. CRITICAL: Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics, or high-endurance beasts) are NOT penalized like standard humans. Always respect the character's biological and racial encumbrance rules.
 7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY: Check if the action (weapon attacks, athletic feats, sprinting, leaping, climbing, dodging, heavy lifting, magic spellcasting, or resting/sleeping) consumes or restores Energy, Stamina, or Mana. If energy/stamina changes, you MUST add the character's file ("CharacterName-USERNAME.txt") to "filesToUpdate" and specify the expected energy change.
    
 OUTPUT FORMAT (Strict JSON only):
@@ -504,7 +522,7 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and any initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If the initialization involves any uncertain event, return "checks".\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and any initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
           const res = await this.handleRequest(prompt, undefined, username);
           resolve(res);
         } catch (e) {
@@ -594,8 +612,10 @@ CRITICAL REMINDERS:
 2. ${resolvedCheckDetails ? `Include this exactly: ${resolvedCheckDetails}` : ""}
 3. MAP UPDATE: Fully update CurrentMap.json. 
    - CRITICAL: Do NOT omit pages for players who did not take this turn. If players are separated, return ALL pages in the "pages" array.
-   - Every entity, NPC, obstacle, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
-4. WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
+   - NOTHING MISSING: All players' observable and known areas, landmarks, items, npcs, structures, terrain, hazards, containers, and loot MUST be on the map with everything updated correctly.
+   - FLEXIBLE SHAPES & HIGH DETAIL: Generate flexible shapes (not just circles/squares): use oblong ellipses (shape: "ellipse" with cx, cy, rx, ry, rotation) for oblong forests/groves/clearings, polygons for irregular terrain/rivers, and high-detail architectural buildings (such as individual market stalls, shops, and taverns in a market).
+   - Every entity, NPC, obstacle, item, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
+4. INVENTORY & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created. If items are bigger than container space or would overflow (such as clothes, armor, cloaks, footwear, worn gear, or held weapons), automatically equip/wear them under [Equipped Gear & Armor] if sensible in context to avoid overflowing containers.
 5. STATS & ENERGY: Whenever energy, stamina, or mana is expended or restored (from attacks, abilities, spells, sprinting, physical exertion, or resting), you MUST update the character's file under [STATS & MODIFIERS] (- Energy/Mana/Stamina: Current / Max) and include the change in the "updates" array (e.g. {"type": "stat", "text": "Energy -10", "value": -10}). NEVER forget to update the character's energy when it changes.
 6. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".`;
 
@@ -723,12 +743,28 @@ CRITICAL REMINDERS:
           const distLines: string[] = [];
 
           for (const area of areas) {
-            const ax = Number(area.x) || 0;
-            const ay = Number(area.y) || 0;
+            const ax = Number(area.x ?? area.cx) || 0;
+            const ay = Number(area.y ?? area.cy) || 0;
             const aw = Number(area.width) || 0;
             const ah = Number(area.height) || 0;
-            const cx = area.shape === 'circle' ? ax : ax + aw / 2;
-            const cy = area.shape === 'circle' ? ay : ay + ah / 2;
+            let cx = ax + aw / 2;
+            let cy = ay + ah / 2;
+            if (area.shape === 'circle' || area.shape === 'ellipse' || area.shape === 'oblong') {
+              cx = Number(area.cx ?? area.x) || ax;
+              cy = Number(area.cy ?? area.y) || ay;
+            } else if (area.shape === 'polygon' && area.points) {
+              const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
+              const numPoints = Math.floor(pts.length / 2);
+              if (numPoints >= 1) {
+                let sx = 0, sy = 0;
+                for (let j = 0; j < numPoints * 2; j += 2) {
+                  sx += pts[j];
+                  sy += pts[j + 1];
+                }
+                cx = sx / numPoints;
+                cy = sy / numPoints;
+              }
+            }
             const dist = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2);
             distLines.push(`  → ${area.type || 'Object'}: ${area.name} (${area.description || ''}) is ${dist.toFixed(1)}m away [at (${cx.toFixed(1)}, ${cy.toFixed(1)})]`);
           }
@@ -806,8 +842,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       const newPages = newMap.pages || (newMap.areas ? [newMap] : []);
 
       const interactiveTypes = new Set([
-        'npc', 'treasure', 'loot', 'furniture', 'vehicle', 'terminal',
-        'portal', 'tech', 'magic', 'obstacle', 'building'
+        'npc', 'treasure', 'loot', 'item', 'weapon', 'furniture', 'vehicle', 'terminal',
+        'portal', 'tech', 'magic', 'obstacle', 'building', 'shop', 'stall', 'container'
       ]);
 
       let modified = false;
@@ -841,12 +877,28 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           for (const area of areas) {
             if (!interactiveTypes.has(area.type?.toLowerCase())) continue;
 
-            const ax = Number(area.x) || 0;
-            const ay = Number(area.y) || 0;
+            const ax = Number(area.x ?? area.cx) || 0;
+            const ay = Number(area.y ?? area.cy) || 0;
             const aw = Number(area.width) || 0;
             const ah = Number(area.height) || 0;
-            const cx = area.shape === 'circle' ? ax : ax + aw / 2;
-            const cy = area.shape === 'circle' ? ay : ay + ah / 2;
+            let cx = ax + aw / 2;
+            let cy = ay + ah / 2;
+            if (area.shape === 'circle' || area.shape === 'ellipse' || area.shape === 'oblong') {
+              cx = Number(area.cx ?? area.x) || ax;
+              cy = Number(area.cy ?? area.y) || ay;
+            } else if (area.shape === 'polygon' && area.points) {
+              const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
+              const numPoints = Math.floor(pts.length / 2);
+              if (numPoints >= 1) {
+                let sx = 0, sy = 0;
+                for (let j = 0; j < numPoints * 2; j += 2) {
+                  sx += pts[j];
+                  sy += pts[j + 1];
+                }
+                cx = sx / numPoints;
+                cy = sy / numPoints;
+              }
+            }
             const dist = Math.sqrt((newX - cx) ** 2 + (newY - cy) ** 2);
 
             if (dist < closestDist) {

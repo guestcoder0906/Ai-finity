@@ -57,7 +57,8 @@ import {
   FileText,
   Map as MapIcon,
   Receipt as ReceiptIcon,
-  CheckCircle2
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -206,6 +207,7 @@ function App() {
 
   const isSyncingPurchasesRef = useRef(false);
   const notifiedPurchaseIdsRef = useRef<Set<string>>(new Set());
+  const lastPurchaseToastTimeRef = useRef<number>(0);
 
   // Unified automatic purchase sync engine:
   // Strictly attributes completed purchases ONLY to the exact account that bought them.
@@ -253,6 +255,20 @@ function App() {
               knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
             }
           });
+
+          // Also load persistently notified IDs from localStorage to avoid spamming after page reload
+          try {
+            const rawNotified = localStorage.getItem(`aifinity_notified_purchases_${user.uid}`);
+            if (rawNotified) {
+              const parsed = JSON.parse(rawNotified);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((id: string) => {
+                  knownIds.add(id);
+                  notifiedPurchaseIdsRef.current.add(id);
+                });
+              }
+            }
+          } catch (e) {}
 
           // Cross-reference Firestore transactions
           try {
@@ -333,6 +349,12 @@ function App() {
             }
           }
 
+          // Persist all known IDs to localStorage so notifications never spam
+          try {
+            const allKnown = Array.from(knownIds);
+            localStorage.setItem(`aifinity_notified_purchases_${user.uid}`, JSON.stringify(allKnown.slice(-100)));
+          } catch (e) {}
+
           const currentTierRank = tierRank[user.tier || 'free'] || 0;
           const bestRank = bestPurchasedTier ? (tierRank[bestPurchasedTier] || 0) : 0;
           const needsTierUpgrade = Boolean(bestPurchasedTier && bestRank > currentTierRank);
@@ -348,15 +370,20 @@ function App() {
             setCurrentUser({ ...updated });
             setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
 
-            if (latestReceipt && newlyFoundPurchases) {
-              setVerifiedReceiptTransaction(latestReceipt);
-              setIsReceiptModalOpen(true);
-            }
+            // Only show toast and receipt modal if there was genuinely a NEW purchase and we haven't shown one in the last 15s
+            const now = Date.now();
+            if (newlyFoundPurchases && now - lastPurchaseToastTimeRef.current > 15000) {
+              lastPurchaseToastTimeRef.current = now;
+              if (latestReceipt) {
+                setVerifiedReceiptTransaction(latestReceipt);
+                setIsReceiptModalOpen(true);
+              }
 
-            setStripeReturnMessage({
-              type: 'success',
-              text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${updated.actionCredits ? ` with ${updated.actionCredits} action credits` : ''}.`
-            });
+              setStripeReturnMessage({
+                type: 'success',
+                text: `🎉 Membership & Purchases Applied! ${user.username}'s account is now ${updated.tier.toUpperCase()} tier${updated.actionCredits ? ` with ${updated.actionCredits} action credits` : ''}.`
+              });
+            }
 
             // Cross-tab broadcast
             try {
@@ -365,15 +392,17 @@ function App() {
                 JSON.stringify({ uid: user.uid, time: Date.now() })
               );
             } catch (e) {}
+          }
 
-            // Clear active checkout markers
-            try {
-              sessionStorage.removeItem('aifinity_active_stripe_checkout');
-              localStorage.removeItem('aifinity_active_stripe_checkout');
+          // Clear active checkout markers so background polling stops immediately once verified
+          try {
+            sessionStorage.removeItem('aifinity_active_stripe_checkout');
+            localStorage.removeItem('aifinity_active_stripe_checkout');
+            if (newlyFoundPurchases) {
               sessionStorage.removeItem('aifinity_pending_checkout');
               localStorage.removeItem('aifinity_pending_checkout');
-            } catch (e) {}
-          }
+            }
+          } catch (e) {}
         }
       }
     } catch (syncErr) {
@@ -439,7 +468,7 @@ function App() {
   useEffect(() => {
     if (!currentUser?.uid) return;
 
-    // Fast polling (every 2s) when a Stripe checkout was initiated recently
+    // Fast polling (every 3s) when a Stripe checkout was initiated recently
     const fastInterval = setInterval(() => {
       try {
         const raw =
@@ -447,12 +476,15 @@ function App() {
           localStorage.getItem('aifinity_active_stripe_checkout');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed && Date.now() - (parsed.startedAt || 0) < 15 * 60 * 1000) {
+          if (parsed && Date.now() - (parsed.startedAt || 0) < 2 * 60 * 1000) {
             syncUserPurchases(currentUser);
+          } else {
+            sessionStorage.removeItem('aifinity_active_stripe_checkout');
+            localStorage.removeItem('aifinity_active_stripe_checkout');
           }
         }
       } catch (e) {}
-    }, 2000);
+    }, 3000);
 
     // Regular background heartbeat every 60s while logged in (passive sync)
     const heartbeatInterval = setInterval(() => {

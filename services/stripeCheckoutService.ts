@@ -120,6 +120,7 @@ export async function checkStripeSessionStatus(sessionId: string): Promise<{
   amount?: number;
   customerEmail?: string;
   metadata?: any;
+  paymentIntentId?: string;
 }> {
   try {
     const res = await fetch(`/api/stripe/check-session-status?sessionId=${encodeURIComponent(sessionId)}`);
@@ -179,8 +180,8 @@ export async function syncUserPurchasesFromStripe(
     }
     const data = await res.json();
     return data;
-  } catch (err) {
-    console.error('Failed to sync Stripe purchases:', err);
+  } catch (err: any) {
+    // Gracefully handle network disconnects, browser tab switches, or offline modes
     return { success: false, count: 0, purchases: [], activeSubscription: null };
   }
 }

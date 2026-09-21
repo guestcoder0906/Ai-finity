@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import { FileSystem } from '../services/fileSystem';
+import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 interface MapPanelProps {
   fileSystem: FileSystem;
@@ -16,7 +17,14 @@ export interface MapPanelHandle {
 const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files, username, debugMode, syncCount }, ref) => {
   const [mapData, setMapData] = useState<any>(null);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+  const panStartPos = useRef({ x: 0, y: 0 });
+  const touchStartRef = useRef<{ x: number; y: number; dist?: number }>({ x: 0, y: 0 });
   const svgRef = useRef<SVGSVGElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
 
   useImperativeHandle(ref, () => ({
     captureScreenshot: async () => {
@@ -124,6 +132,128 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   const safePageIndex = Math.max(0, Math.min(currentPageIndex, pages.length - 1));
   const currentPage = pages[safePageIndex];
 
+  // Auto-reset pan and zoom when changing pages
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [safePageIndex]);
+
+  // Window listeners to prevent stuck dragging state
+  useEffect(() => {
+    const handleGlobalUp = () => {
+      setIsDragging(false);
+    };
+    window.addEventListener('mouseup', handleGlobalUp);
+    window.addEventListener('touchend', handleGlobalUp);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalUp);
+      window.removeEventListener('touchend', handleGlobalUp);
+    };
+  }, []);
+
+  // Pan and Zoom Handlers
+  const handleResetPanZoom = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const handleZoomIn = () => {
+    setZoom((prev) => Math.min(8, +(prev * 1.3).toFixed(2)));
+  };
+
+  const handleZoomOut = () => {
+    setZoom((prev) => Math.max(0.2, +(prev / 1.3).toFixed(2)));
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+    setZoom((prev) => Math.max(0.2, Math.min(8, +(prev * zoomFactor).toFixed(2))));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only primary button
+    setIsDragging(true);
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    panStartPos.current = { ...pan };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartPos.current.x;
+    const dy = e.clientY - dragStartPos.current.y;
+    const svgEl = svgRef.current;
+    if (svgEl) {
+      const rect = svgEl.getBoundingClientRect();
+      const viewBoxWidth = mapWidth + padding * 2;
+      const viewBoxHeight = mapHeight + padding * 2;
+      const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
+      const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
+      setPan({
+        x: panStartPos.current.x + dx * scaleX,
+        y: panStartPos.current.y + dy * scaleY
+      });
+    } else {
+      setPan({
+        x: panStartPos.current.x + dx,
+        y: panStartPos.current.y + dy
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      setIsDragging(true);
+      touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      panStartPos.current = { ...pan };
+    } else if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartRef.current = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+        dist
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && isDragging) {
+      const dx = e.touches[0].clientX - touchStartRef.current.x;
+      const dy = e.touches[0].clientY - touchStartRef.current.y;
+      const svgEl = svgRef.current;
+      if (svgEl) {
+        const rect = svgEl.getBoundingClientRect();
+        const viewBoxWidth = mapWidth + padding * 2;
+        const viewBoxHeight = mapHeight + padding * 2;
+        const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
+        const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
+        setPan({
+          x: panStartPos.current.x + dx * scaleX,
+          y: panStartPos.current.y + dy * scaleY
+        });
+      }
+    } else if (e.touches.length === 2 && touchStartRef.current.dist) {
+      const newDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const factor = newDist / touchStartRef.current.dist;
+      setZoom((prev) => Math.max(0.2, Math.min(8, +(prev * factor).toFixed(2))));
+      touchStartRef.current.dist = newDist;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
+
   if (!currentPage || !currentPage.areas) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500 italic p-4 text-center bg-black">
@@ -163,19 +293,30 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       const isHidden = parsedName === 'Unknown Area' && !debugMode;
       if (isHidden) return;
 
-      const ax = Number(area.x) || 0;
-      const ay = Number(area.y) || 0;
+      const ax = Number(area.x ?? area.cx) || 0;
+      const ay = Number(area.y ?? area.cy) || 0;
       const aw = Number(area.width) || 10;
       const ah = Number(area.height) || 10;
       const ar = Number(area.radius) || (aw / 2);
+      const rx = Number(area.rx ?? area.radiusX ?? (aw / 2)) || 15;
+      const ry = Number(area.ry ?? area.radiusY ?? (ah / 2)) || 10;
 
       if (area.shape === 'circle') {
         if (ax - ar < minX) minX = ax - ar;
         if (ay - ar < minY) minY = ay - ar;
         if (ax + ar > maxX) maxX = ax + ar;
         if (ay + ar > maxY) maxY = ay + ar;
+      } else if (area.shape === 'ellipse' || area.shape === 'oblong') {
+        const rot = Number(area.rotation) || 0;
+        const rad = (rot * Math.PI) / 180;
+        const dx = Math.sqrt(rx * rx * Math.cos(rad) * Math.cos(rad) + ry * ry * Math.sin(rad) * Math.sin(rad));
+        const dy = Math.sqrt(rx * rx * Math.sin(rad) * Math.sin(rad) + ry * ry * Math.cos(rad) * Math.cos(rad));
+        if (ax - dx < minX) minX = ax - dx;
+        if (ay - dy < minY) minY = ay - dy;
+        if (ax + dx > maxX) maxX = ax + dx;
+        if (ay + dy > maxY) maxY = ay + dy;
       } else if (area.shape === 'polygon' && area.points) {
-        const pts = area.points.split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
+        const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
         const numPoints = Math.floor(pts.length / 2);
         for (let j = 0; j < numPoints * 2; j += 2) {
           const px = pts[j];
@@ -206,6 +347,28 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     });
   }
 
+  // Also include top-level items and landmarks if present
+  if (currentPage.items && Array.isArray(currentPage.items)) {
+    currentPage.items.forEach((it: any) => {
+      const ix = Number(it.x) || 0;
+      const iy = Number(it.y) || 0;
+      if (ix < minX) minX = ix;
+      if (iy < minY) minY = iy;
+      if (ix > maxX) maxX = ix;
+      if (iy > maxY) maxY = iy;
+    });
+  }
+  if (currentPage.landmarks && Array.isArray(currentPage.landmarks)) {
+    currentPage.landmarks.forEach((lm: any) => {
+      const lx = Number(lm.x) || 0;
+      const ly = Number(lm.y) || 0;
+      if (lx < minX) minX = lx;
+      if (ly < minY) minY = ly;
+      if (lx > maxX) maxX = lx;
+      if (ly > maxY) maxY = ly;
+    });
+  }
+
   // Fallback defaults if bounds calculation yields no points
   if (minX === Infinity || isNaN(minX) || isNaN(maxX) || isNaN(minY) || isNaN(maxY)) {
     minX = 0; minY = 0; maxX = 100; maxY = 100;
@@ -228,28 +391,74 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       return 'fill-neutral-900/50 stroke-neutral-800';
     }
     switch (type?.toLowerCase()) {
+      case 'market':
+      case 'bazaar':
+      case 'square':
+      case 'plaza':
+        return 'fill-amber-950/40 stroke-amber-500/80';
+      case 'stall':
+      case 'shop':
+      case 'store':
+      case 'merchant':
+      case 'counter':
+        return 'fill-amber-700/60 stroke-amber-400';
+      case 'building':
+      case 'house':
+      case 'structure':
+      case 'inn':
+      case 'tavern':
+        return 'fill-neutral-700/70 stroke-neutral-400';
+      case 'wall':
+      case 'gate':
+      case 'fence':
+      case 'barrier':
+        return 'fill-neutral-600/80 stroke-neutral-300';
+      case 'road':
+      case 'path':
+      case 'trail':
+      case 'street':
+      case 'bridge':
+      case 'corridor':
+      case 'hallway':
+        return 'fill-stone-800/60 stroke-stone-500';
       case 'field':
       case 'forest':
-        return 'fill-green-900/40 stroke-green-700';
+      case 'wood':
+      case 'jungle':
+      case 'grove':
+        return 'fill-emerald-950/60 stroke-emerald-700';
+      case 'tree':
+      case 'bush':
+      case 'vegetation':
+        return 'fill-green-800/60 stroke-green-500';
+      case 'clearing':
+      case 'meadow':
+      case 'grass':
+        return 'fill-green-950/40 stroke-green-700';
       case 'water':
       case 'river':
       case 'lake':
-        return 'fill-blue-900/40 stroke-blue-700';
+      case 'pond':
+      case 'ocean':
+      case 'stream':
+        return 'fill-blue-900/50 stroke-blue-500';
       case 'room':
       case 'dungeon':
+      case 'chamber':
         return 'fill-neutral-800/80 stroke-neutral-500';
-      case 'hallway':
-      case 'corridor':
-        return 'fill-neutral-700/60 stroke-neutral-500';
-      case 'building':
-      case 'wall':
       case 'obstacle':
         return 'fill-neutral-600/80 stroke-neutral-400';
       case 'furniture':
         return 'fill-amber-900/60 stroke-amber-700';
       case 'npc':
-        return 'fill-purple-900/60 stroke-purple-700';
+      case 'enemy':
+      case 'ally':
+      case 'creature':
+      case 'boss':
+        return 'fill-purple-900/70 stroke-purple-400';
       case 'vehicle':
+      case 'cart':
+      case 'wagon':
         return 'fill-slate-700/80 stroke-slate-400';
       case 'projectile':
         return 'fill-red-500/80 stroke-red-300';
@@ -261,7 +470,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         return 'fill-lime-600/40 stroke-lime-400';
       case 'treasure':
       case 'loot':
-        return 'fill-yellow-400/60 stroke-yellow-200';
+      case 'item':
+      case 'weapon':
+      case 'equipment':
+        return 'fill-yellow-400/70 stroke-yellow-200';
+      case 'landmark':
+      case 'monument':
+      case 'statue':
+      case 'fountain':
+      case 'shrine':
+        return 'fill-indigo-900/60 stroke-indigo-400';
       case 'tech':
       case 'terminal':
         return 'fill-cyan-900/60 stroke-cyan-400 shadow-[0_0_5px_rgba(34,211,238,0.5)]';
@@ -295,9 +513,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-black relative">
-      <div className="absolute top-2 left-2 flex flex-col items-start gap-2 z-10 pointer-events-none">
-        <div className="bg-black/80 text-xs text-blue-400 font-mono px-2 py-1 rounded border border-blue-900/50">
+    <div
+      ref={mapContainerRef}
+      id="map-viewport"
+      className={`flex flex-col h-full w-full bg-black relative overflow-hidden select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
+      onDoubleClick={handleResetPanZoom}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Top Left Status & Pages Bar */}
+      <div className="absolute top-2 left-2 flex flex-col items-start gap-2 z-20 pointer-events-none">
+        <div className="bg-black/85 text-xs text-blue-400 font-mono px-2 py-1 rounded border border-blue-900/50 backdrop-blur-xs">
           Scale: {currentPage.scale || 'Unknown'}
         </div>
 
@@ -306,10 +538,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             {pages.map((p, idx) => (
               <button
                 key={idx}
+                type="button"
                 onClick={() => setCurrentPageIndex(idx)}
                 className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${idx === safePageIndex
                   ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-bold'
-                  : 'bg-black/60 border-neutral-800 text-gray-400 hover:bg-neutral-800'
+                  : 'bg-black/70 border-neutral-800 text-gray-400 hover:bg-neutral-800'
                   }`}
               >
                 {p.name || `Page ${idx + 1}`}
@@ -319,153 +552,296 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         )}
       </div>
 
+      {/* Top Right Zoom and Pan Controls */}
+      <div className="absolute top-2 right-2 flex items-center gap-1.5 z-20 bg-black/85 backdrop-blur-sm border border-neutral-800 rounded-lg p-1 px-1.5 shadow-lg select-none pointer-events-auto">
+        <button
+          type="button"
+          id="map-zoom-out-btn"
+          onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
+          title="Zoom Out (-)"
+          className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <span className="text-[10px] font-mono text-gray-300 min-w-[36px] text-center font-medium">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          id="map-zoom-in-btn"
+          onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
+          title="Zoom In (+)"
+          className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
+        <button
+          type="button"
+          id="map-reset-btn"
+          onClick={(e) => { e.stopPropagation(); handleResetPanZoom(); }}
+          title="Reset Pan & Zoom (100% / Centered)"
+          className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono text-blue-400 hover:text-blue-200 hover:bg-blue-900/40 rounded border border-blue-900/40 transition-colors"
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>Reset</span>
+        </button>
+      </div>
+
+      {/* Bottom Hint on Drag/Zoom */}
+      {(zoom !== 1 || pan.x !== 0 || pan.y !== 0) && (
+        <div className="absolute bottom-2 right-2 z-10 pointer-events-none bg-black/75 text-[9px] font-mono text-gray-400 px-2 py-0.5 rounded border border-neutral-800/80 backdrop-blur-xs">
+          Drag to pan • Scroll to zoom • Double-click to reset
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         className="w-full h-full"
         viewBox={viewBox}
         preserveAspectRatio="xMidYMid meet"
       >
-        {/* Draw Areas */}
-        {currentPage.areas.map((area: any, i: number) => {
-          const parsedName = parseName(area.name);
-          const isHidden = parsedName === 'Unknown Area' && !debugMode;
+        <g
+          id="map-transform-layer"
+          transform={`translate(${cx}, ${cy}) translate(${pan.x * zoom}, ${pan.y * zoom}) scale(${zoom}) translate(${-cx}, ${-cy})`}
+        >
+          {/* Draw Areas & Structures */}
+          {currentPage.areas?.map((area: any, i: number) => {
+            const parsedName = parseName(area.name);
+            const isHidden = parsedName === 'Unknown Area' && !debugMode;
 
-          if (isHidden) return null;
+            if (isHidden) return null;
 
-          const ax = Number(area.x) || 0;
-          const ay = Number(area.y) || 0;
-          const aw = Number(area.width) || 10;
-          const ah = Number(area.height) || 10;
-          const ar = Number(area.radius) || (aw / 2);
+            const ax = Number(area.x ?? area.cx) || 0;
+            const ay = Number(area.y ?? area.cy) || 0;
+            const aw = Number(area.width) || 10;
+            const ah = Number(area.height) || 10;
+            const ar = Number(area.radius) || (aw / 2);
+            const rx = Number(area.rx ?? area.radiusX ?? (aw / 2)) || 15;
+            const ry = Number(area.ry ?? area.radiusY ?? (ah / 2)) || 10;
 
-          let textX = ax + aw / 2;
-          let textY = ay + ah / 2;
-          if (area.shape === 'circle') {
-            textX = ax;
-            textY = ay;
-          } else if (area.shape === 'polygon' && area.points) {
-            const pts = area.points.split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
-            const numPoints = Math.floor(pts.length / 2);
-            if (numPoints >= 1) {
-              let sumX = 0, sumY = 0;
-              for (let j = 0; j < numPoints * 2; j += 2) {
-                sumX += pts[j];
-                sumY += pts[j + 1];
+            let textX = ax + aw / 2;
+            let textY = ay + ah / 2;
+
+            if (area.shape === 'circle') {
+              textX = ax;
+              textY = ay;
+            } else if (area.shape === 'ellipse' || area.shape === 'oblong') {
+              textX = ax;
+              textY = ay;
+            } else if (area.shape === 'polygon' && area.points) {
+              const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
+              const numPoints = Math.floor(pts.length / 2);
+              if (numPoints >= 1) {
+                let sumX = 0, sumY = 0;
+                for (let j = 0; j < numPoints * 2; j += 2) {
+                  sumX += pts[j];
+                  sumY += pts[j + 1];
+                }
+                textX = sumX / numPoints;
+                textY = sumY / numPoints;
               }
-              textX = sumX / numPoints;
-              textY = sumY / numPoints;
             }
-          }
 
-          return (
-            <g key={area.id || i} className="group">
-              {area.shape === 'circle' ? (
-                <circle
-                  cx={ax}
-                  cy={ay}
-                  r={ar}
-                  className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
-                  strokeWidth={2}
-                />
-              ) : area.shape === 'polygon' && area.points ? (
+            const areaTypeLower = area.type?.toLowerCase();
+            const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure';
+
+            return (
+              <g key={area.id || i} className="group">
+                {area.shape === 'circle' ? (
+                  <circle
+                    cx={ax}
+                    cy={ay}
+                    r={ar}
+                    className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
+                    strokeWidth={2}
+                  />
+                ) : (area.shape === 'ellipse' || area.shape === 'oblong') ? (
+                  <ellipse
+                    cx={ax}
+                    cy={ay}
+                    rx={rx}
+                    ry={ry}
+                    transform={area.rotation ? `rotate(${area.rotation} ${ax} ${ay})` : undefined}
+                    className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
+                    strokeWidth={2}
+                  />
+                ) : area.shape === 'polygon' && area.points ? (
+                  <polygon
+                    points={area.points}
+                    className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
+                    strokeWidth={2}
+                  />
+                ) : area.shape === 'path' && area.d ? (
+                  <path
+                    d={area.d}
+                    className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
+                    strokeWidth={Number(area.strokeWidth) || 2}
+                    fill={area.fill || 'none'}
+                  />
+                ) : (
+                  <rect
+                    x={ax}
+                    y={ay}
+                    width={aw}
+                    height={ah}
+                    rx={Number(area.rx) || 0}
+                    ry={Number(area.ry) || 0}
+                    transform={area.rotation ? `rotate(${area.rotation} ${ax + aw / 2} ${ay + ah / 2})` : undefined}
+                    className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
+                    strokeWidth={2}
+                  />
+                )}
+
+                {/* Highlight marker for loose items/weapons on ground */}
+                {isItemType && (
+                  <polygon
+                    points={`${textX},${textY - 3} ${textX + 3},${textY} ${textX},${textY + 3} ${textX - 3},${textY}`}
+                    className="fill-yellow-300 stroke-yellow-500 animate-pulse pointer-events-none"
+                    strokeWidth={1}
+                  />
+                )}
+
+                {/* Tooltip on hover */}
+                <title>{`${parsedName}${area.type ? ` (${area.type})` : ''}`}</title>
+
+                {/* Area Label */}
+                {((area.shape !== 'polygon' && (aw > 16 || ar > 8 || rx > 10)) || area.shape === 'polygon' || isItemType) && (
+                  <text
+                    x={textX}
+                    y={textY}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className={`text-[8px] font-mono pointer-events-none transition-opacity ${
+                      isItemType
+                        ? 'fill-yellow-300 opacity-80 group-hover:opacity-100 font-bold'
+                        : 'fill-gray-400 opacity-50 group-hover:opacity-100'
+                    }`}
+                  >
+                    {parsedName}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Draw Top-Level Items (if separately registered on page) */}
+          {currentPage.items?.map((item: any, i: number) => {
+            const ix = Number(item.x) || 0;
+            const iy = Number(item.y) || 0;
+            const iName = parseName(item.name || 'Item');
+            return (
+              <g key={`page-item-${i}`} className="group cursor-crosshair">
                 <polygon
-                  points={area.points}
-                  className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
-                  strokeWidth={2}
+                  points={`${ix},${iy - 3.5} ${ix + 3.5},${iy} ${ix},${iy + 3.5} ${ix - 3.5},${iy}`}
+                  className="fill-yellow-400 stroke-yellow-200 animate-pulse"
+                  strokeWidth={1}
                 />
-              ) : (
-                <rect
-                  x={ax}
-                  y={ay}
-                  width={aw}
-                  height={ah}
-                  className={`${getAreaColor(area.type, area.visible)} transition-colors duration-300 hover:fill-opacity-80 cursor-crosshair`}
-                  strokeWidth={2}
-                />
-              )}
-              {/* Tooltip on hover */}
-              <title>{parsedName}</title>
-
-              {/* Area Label (only if large enough) */}
-              {((area.shape !== 'polygon' && (aw > 20 || ar > 10)) || area.shape === 'polygon') && (
+                <title>{`${iName} (Item: ${item.description || ''})`}</title>
                 <text
-                  x={textX}
-                  y={textY}
+                  x={ix}
+                  y={iy - 5}
                   textAnchor="middle"
-                  dominantBaseline="middle"
-                  className="fill-gray-400 text-[8px] font-mono pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity"
+                  className="fill-yellow-300 text-[6px] font-mono pointer-events-none opacity-80 group-hover:opacity-100 font-semibold"
                 >
-                  {parsedName}
+                  {iName}
                 </text>
-              )}
-            </g>
-          );
-        })}
+              </g>
+            );
+          })}
 
-        {/* Draw Players */}
-        {currentPage.players?.map((player: any, i: number) => {
-          const px = Number(player.x) || 0;
-          const py = Number(player.y) || 0;
-          const pfacing = Number(player.facing) || 0;
-          const isMe = String(player.username).toLowerCase() === String(username).toLowerCase();
+          {/* Draw Top-Level Landmarks (if separately registered on page) */}
+          {currentPage.landmarks?.map((lm: any, i: number) => {
+            const lx = Number(lm.x) || 0;
+            const ly = Number(lm.y) || 0;
+            const lName = parseName(lm.name || 'Landmark');
+            return (
+              <g key={`page-lm-${i}`} className="group cursor-crosshair">
+                <circle
+                  cx={lx}
+                  cy={ly}
+                  r={4}
+                  className="fill-indigo-900/80 stroke-indigo-400"
+                  strokeWidth={1.5}
+                />
+                <title>{`${lName} (Landmark: ${lm.description || ''})`}</title>
+                <text
+                  x={lx}
+                  y={ly - 6}
+                  textAnchor="middle"
+                  className="fill-indigo-300 text-[6px] font-mono pointer-events-none opacity-80 group-hover:opacity-100 font-semibold"
+                >
+                  {lName}
+                </text>
+              </g>
+            );
+          })}
 
-          return (
-            <g key={player.username || i}>
-              {/* Vision Cones */}
-              {player.vision && (
-                <>
-                  {/* Max Range (Peripheral) */}
-                  <path
-                    d={createConePath(px, py, pfacing, Number(player.vision.peripheralAngle) || 90, Number(player.vision.maxRange) || 100)}
-                    className="fill-white/5 pointer-events-none"
-                  />
-                  {/* Detailed Range (Main) */}
-                  <path
-                    d={createConePath(px, py, pfacing, Number(player.vision.mainAngle) || 66, Number(player.vision.detailedRange) || 50)}
-                    className="fill-white/10 pointer-events-none"
-                  />
-                </>
-              )}
+          {/* Draw Players */}
+          {currentPage.players?.map((player: any, i: number) => {
+            const px = Number(player.x) || 0;
+            const py = Number(player.y) || 0;
+            const pfacing = Number(player.facing) || 0;
+            const isMe = String(player.username).toLowerCase() === String(username).toLowerCase();
 
-              {/* Player Triangle */}
-              <polygon
-                points="-4,-4 6,0 -4,4"
-                fill={isMe ? "#3b82f6" : "#ef4444"}
-                transform={`translate(${px}, ${py}) rotate(${pfacing})`}
-              />
-              <text
-                x={px}
-                y={py - 8}
-                textAnchor="middle"
-                className="fill-white text-[6px] font-mono pointer-events-none"
-              >
-                {player.username}
-              </text>
-            </g>
-          );
-        })}
+            return (
+              <g key={player.username || i}>
+                {/* Vision Cones */}
+                {player.vision && (
+                  <>
+                    {/* Max Range (Peripheral) */}
+                    <path
+                      d={createConePath(px, py, pfacing, Number(player.vision.peripheralAngle) || 90, Number(player.vision.maxRange) || 100)}
+                      className="fill-white/5 pointer-events-none"
+                    />
+                    {/* Detailed Range (Main) */}
+                    <path
+                      d={createConePath(px, py, pfacing, Number(player.vision.mainAngle) || 66, Number(player.vision.detailedRange) || 50)}
+                      className="fill-white/10 pointer-events-none"
+                    />
+                  </>
+                )}
 
-        {/* Draw Notes/Annotations */}
-        {currentPage.notes?.map((note: any, i: number) => {
-          const nx = Number(note.x) || 0;
-          const ny = Number(note.y) || 0;
-          const isDanger = note.type === 'danger';
-          const isDiscovery = note.type === 'discovery';
+                {/* Player Triangle */}
+                <polygon
+                  points="-4,-4 6,0 -4,4"
+                  fill={isMe ? "#3b82f6" : "#ef4444"}
+                  transform={`translate(${px}, ${py}) rotate(${pfacing})`}
+                />
+                <text
+                  x={px}
+                  y={py - 8}
+                  textAnchor="middle"
+                  className="fill-white text-[6px] font-mono pointer-events-none font-bold"
+                >
+                  {player.username}
+                </text>
+              </g>
+            );
+          })}
 
-          return (
-            <g key={`note-${i}`} transform={`translate(${nx}, ${ny})`}>
-              <circle r="1" className={isDanger ? "fill-red-500" : isDiscovery ? "fill-yellow-400" : "fill-blue-400"} />
-              <text
-                y="-3"
-                textAnchor="middle"
-                className={`text-[5px] font-bold font-mono pointer-events-none drop-shadow-md ${isDanger ? "fill-red-400" : isDiscovery ? "fill-yellow-300" : "fill-blue-300"
-                  }`}
-              >
-                {note.text}
-              </text>
-            </g>
-          );
-        })}
+          {/* Draw Notes/Annotations */}
+          {currentPage.notes?.map((note: any, i: number) => {
+            const nx = Number(note.x) || 0;
+            const ny = Number(note.y) || 0;
+            const isDanger = note.type === 'danger';
+            const isDiscovery = note.type === 'discovery';
+
+            return (
+              <g key={`note-${i}`} transform={`translate(${nx}, ${ny})`}>
+                <circle r="1" className={isDanger ? "fill-red-500" : isDiscovery ? "fill-yellow-400" : "fill-blue-400"} />
+                <text
+                  y="-3"
+                  textAnchor="middle"
+                  className={`text-[5px] font-bold font-mono pointer-events-none drop-shadow-md ${isDanger ? "fill-red-400" : isDiscovery ? "fill-yellow-300" : "fill-blue-300"
+                    }`}
+                >
+                  {note.text}
+                </text>
+              </g>
+            );
+          })}
+        </g>
       </svg>
     </div>
   );

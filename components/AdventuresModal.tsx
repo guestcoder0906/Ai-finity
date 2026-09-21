@@ -55,21 +55,33 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
   const isSubscriber = currentUser?.tier === 'adventurer' || currentUser?.tier === 'legendary' || currentUser?.tier === 'celestial';
   const canSaveMultiple = Boolean(currentUser?.canSaveMultipleAdventures || isAdmin || isMod || isSubscriber);
 
-  const loadList = async () => {
-    setIsLoading(true);
-    const list = await AdventuresService.getSavedAdventures(currentUser, guestId);
-    setAdventures(list);
-    setIsLoading(false);
+  const isFetchingRef = React.useRef(false);
+
+  const loadList = async (showFullSpinner = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (showFullSpinner) {
+      setIsLoading(true);
+    }
+    try {
+      const list = await AdventuresService.getSavedAdventures(currentUser, guestId);
+      setAdventures(list);
+    } catch (err) {
+      console.warn('Failed to load saved adventures list:', err);
+    } finally {
+      setIsLoading(false);
+      isFetchingRef.current = false;
+    }
   };
 
   useEffect(() => {
     if (isOpen) {
-      loadList();
+      loadList(adventures.length === 0);
       setSaveError(null);
       setSaveSuccess(false);
       setNewTitle('');
     }
-  }, [isOpen, currentUser]);
+  }, [isOpen, currentUser?.uid, guestId]);
 
   if (!isOpen) return null;
 
@@ -215,8 +227,8 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
 
         {/* Adventures List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {isLoading ? (
-            <div className="text-center py-8 text-xs text-neutral-400">
+          {isLoading && adventures.length === 0 ? (
+            <div className="text-center py-8 text-xs text-neutral-400 animate-pulse">
               Loading your saved adventures...
             </div>
           ) : (adventures || []).length === 0 ? (

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Receipt as ReceiptIcon, X, Sparkles, CheckCircle2, AlertCircle, Info } from 'lucide-react';
-import { PaymentTransactionRecord } from '../services/paymentService';
+import { PaymentTransactionRecord } from '../services/authService';
 
 interface PurchaseNotificationBannerProps {
   message: {

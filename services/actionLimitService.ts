@@ -1,4 +1,4 @@
-import { UserProfile, UserTier, UserRole, isDefaultAdmin, updateUserProfile } from './authService';
+import { UserProfile, UserTier, UserRole, isDefaultAdmin, updateUserProfile, getUserProfile } from './authService';
 
 export interface ActionPack {
   id: string;

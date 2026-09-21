@@ -67,11 +67,11 @@ export default async function handler(req: any, res: any) {
       const cardToken = await stripe.tokens.create({
         card: {
           number: cleanNum,
-          exp_month: String(expMonth).trim(),
-          exp_year: String(expYear).trim(),
+          exp_month: String(expMonth || '').trim() as any,
+          exp_year: String(expYear || '').trim() as any,
           cvc: String(cardCvc || '').trim(),
           name: String(cardName || safeUsername).trim()
-        }
+        } as any
       });
       chargeSource = cardToken.id;
     }
