@@ -240,6 +240,26 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     };
   }, []);
 
+  // Non-passive wheel event listener attached directly to the DOM node
+  // This completely resolves the "Unable to preventDefault inside passive event listener invocation" error
+  useEffect(() => {
+    const el = mapContainerRef.current;
+    if (!el) return;
+
+    const handleWheelNative = (e: WheelEvent) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      setZoom((prev) => Math.max(0.2, Math.min(8, +(prev * zoomFactor).toFixed(2))));
+    };
+
+    el.addEventListener('wheel', handleWheelNative, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', handleWheelNative);
+    };
+  }, [pages.length, safePageIndex]);
+
   if (pages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-500 italic p-6 text-center gap-4 bg-black">
@@ -282,26 +302,6 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   const handleZoomOut = () => {
     setZoom((prev) => Math.max(0.2, +(prev / 1.3).toFixed(2)));
   };
-
-  // Non-passive wheel event listener attached directly to the DOM node
-  // This completely resolves the "Unable to preventDefault inside passive event listener invocation" error
-  useEffect(() => {
-    const el = mapContainerRef.current;
-    if (!el) return;
-
-    const handleWheelNative = (e: WheelEvent) => {
-      if (e.cancelable) {
-        e.preventDefault();
-      }
-      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-      setZoom((prev) => Math.max(0.2, Math.min(8, +(prev * zoomFactor).toFixed(2))));
-    };
-
-    el.addEventListener('wheel', handleWheelNative, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', handleWheelNative);
-    };
-  }, [pages.length, safePageIndex]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only primary button
