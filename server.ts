@@ -489,23 +489,37 @@ async function startServer() {
   // Cancel an active monthly subscription
   app.post('/api/stripe/cancel-subscription', async (req, res) => {
     try {
-      const { userId, subscriptionId } = req.body;
-      if (!userId && !subscriptionId) {
-        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'User ID or Subscription ID is required.' });
+      const { userId, subscriptionId, userEmail, email, username } = req.body || {};
+      const searchEmail = (userEmail || email || '').trim().toLowerCase();
+      const searchUsername = (username || '').trim().toLowerCase();
+
+      if (!userId && !subscriptionId && !searchEmail && !searchUsername) {
+        return res.status(400).json({ error: 'MISSING_PARAMS', message: 'User ID, Email, or Subscription ID is required.' });
       }
 
       const stripe = getStripe();
       if (!stripe) {
-        return res.json({ success: true, message: 'Subscription cancelled in test mode.' });
+        return res.json({ success: true, message: 'Subscription status reset in test mode.' });
       }
 
       let subToCancelId = subscriptionId;
 
-      // If subscriptionId wasn't passed directly, find the user's active subscription
+      // Search active subscriptions by userId, username, or email
       if (!subToCancelId) {
-        const subs = await stripe.subscriptions.list({ limit: 100, status: 'active' });
+        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' });
         for (const s of subs.data) {
-          if (s.metadata?.userId === userId) {
+          const isLive = s.status === 'active' || s.status === 'trialing';
+          if (!isLive) continue;
+
+          const subUid = (s.metadata?.userId || '').trim();
+          const subEmail = (s.metadata?.userEmail || '').toLowerCase().trim();
+          const subUsername = (s.metadata?.username || '').toLowerCase().trim();
+
+          if (
+            (userId && subUid === userId) ||
+            (searchUsername && subUsername === searchUsername) ||
+            (searchEmail && subEmail === searchEmail)
+          ) {
             subToCancelId = s.id;
             break;
           }
@@ -513,10 +527,13 @@ async function startServer() {
       }
 
       if (!subToCancelId) {
-        return res.status(404).json({ error: 'NOT_FOUND', message: 'No active subscription found for this account.' });
+        return res.json({
+          success: true,
+          notFoundOnStripe: true,
+          message: 'No active recurring subscription was found on Stripe servers for this account. Account plan has been updated to Free.'
+        });
       }
 
-      // Cancel the subscription immediately or at period end
       const cancelledSub = await stripe.subscriptions.cancel(subToCancelId);
 
       res.json({
@@ -528,6 +545,83 @@ async function startServer() {
     } catch (err: any) {
       console.error('Failed to cancel Stripe subscription:', err);
       res.status(500).json({ error: 'CANCEL_FAILED', message: err.message });
+    }
+  });
+
+  // Create Stripe Customer Portal session for subscription/billing management
+  app.post('/api/stripe/create-portal-session', async (req, res) => {
+    try {
+      const { userId, userEmail, username, origin } = req.body || {};
+      const clientOrigin = origin || 'https://www.aifinity-rpg.com';
+
+      const stripe = getStripe();
+      if (!stripe) {
+        return res.status(400).json({ error: 'STRIPE_NOT_CONFIGURED', message: 'Stripe is not configured.' });
+      }
+
+      let customerId: string | undefined;
+
+      // 1. Search customers by email
+      if (userEmail && userEmail.includes('@')) {
+        const customers = await stripe.customers.list({ email: userEmail, limit: 10 }).catch(() => ({ data: [] }));
+        if (customers.data.length > 0) {
+          customerId = customers.data[0].id;
+        }
+      }
+
+      // 2. Search checkout sessions for customer ID if not found yet
+      if (!customerId) {
+        const sessions = await stripe.checkout.sessions.list({ limit: 100 }).catch(() => ({ data: [] }));
+        for (const s of sessions.data) {
+          const sEmail = (s.customer_details?.email || s.customer_email || s.metadata?.userEmail || '').toLowerCase().trim();
+          const sUid = (s.metadata?.userId || '').trim();
+          const sUsername = (s.metadata?.username || '').toLowerCase().trim();
+
+          if (
+            (userId && sUid === userId) ||
+            (userEmail && sEmail === userEmail.toLowerCase()) ||
+            (username && sUsername === username.toLowerCase())
+          ) {
+            if (s.customer) {
+              customerId = typeof s.customer === 'string' ? s.customer : s.customer.id;
+              break;
+            }
+          }
+        }
+      }
+
+      // 3. Search subscriptions
+      if (!customerId) {
+        const subs = await stripe.subscriptions.list({ limit: 100, status: 'all' }).catch(() => ({ data: [] }));
+        for (const sub of subs.data) {
+          const subUid = (sub.metadata?.userId || '').trim();
+          const subUsername = (sub.metadata?.username || '').toLowerCase().trim();
+          if ((userId && subUid === userId) || (username && subUsername === username.toLowerCase())) {
+            customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+            break;
+          }
+        }
+      }
+
+      if (!customerId) {
+        return res.status(404).json({
+          error: 'CUSTOMER_NOT_FOUND',
+          message: 'No Stripe customer account was found for your user profile.'
+        });
+      }
+
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: `${clientOrigin}/?stripe_portal_return=true`
+      });
+
+      res.json({
+        success: true,
+        url: portalSession.url
+      });
+    } catch (err: any) {
+      console.error('Failed to create Stripe portal session:', err);
+      res.status(500).json({ error: 'PORTAL_ERROR', message: err.message });
     }
   });
 

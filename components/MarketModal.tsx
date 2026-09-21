@@ -109,6 +109,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   const [isSyncingPurchases, setIsSyncingPurchases] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [isCancellingSubscription, setIsCancellingSubscription] = useState(false);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelSuccessMessage, setCancelSuccessMessage] = useState<string | null>(null);
   const [cancelErrorMessage, setCancelErrorMessage] = useState<string | null>(null);
@@ -120,17 +121,59 @@ export const MarketModal: React.FC<MarketModalProps> = ({
     setIsCancellingSubscription(true);
     setCancelErrorMessage(null);
     try {
-      const res = await cancelStripeSubscription(currentUser.uid, currentUser.stripeSubscriptionId);
+      const res = await cancelStripeSubscription(
+        currentUser.uid,
+        currentUser.stripeSubscriptionId,
+        currentUser.email || undefined,
+        currentUser.username || undefined
+      );
       const updated = await ActionLimitService.cancelSubscription(currentUser, guestId);
       if (onProfileUpdated) onProfileUpdated({ ...updated });
       onStatusUpdated();
       setShowCancelConfirm(false);
-      setCancelSuccessMessage(res.message || 'Your monthly subscription has been successfully cancelled.');
-      setTimeout(() => setCancelSuccessMessage(null), 8000);
+      
+      const successText = res.notFoundOnStripe
+        ? 'No active recurring subscription was found on Stripe servers. Your account plan has been updated to Free.'
+        : res.message || 'Your monthly subscription has been successfully cancelled on Stripe.';
+
+      setCancelSuccessMessage(successText);
+      
+      // Auto re-sync state across Stripe
+      try {
+        await handleSyncStripePurchases();
+      } catch (e) {}
+
+      setTimeout(() => setCancelSuccessMessage(null), 10000);
     } catch (err: any) {
       setCancelErrorMessage(err.message || 'Failed to cancel subscription.');
     } finally {
       setIsCancellingSubscription(false);
+    }
+  };
+
+  // Direct portal redirect to Stripe Customer Portal
+  const handleOpenStripePortal = async () => {
+    if (!currentUser?.uid) return;
+    setIsOpeningPortal(true);
+    setCancelErrorMessage(null);
+    try {
+      const portalUrl = await createStripeCustomerPortalSession(
+        currentUser.uid,
+        currentUser.email || undefined,
+        currentUser.username || undefined,
+        typeof window !== 'undefined' ? window.location.origin : 'https://www.aifinity-rpg.com'
+      );
+      if (portalUrl) {
+        window.location.href = portalUrl;
+      } else {
+        throw new Error('Stripe did not return a valid customer portal link.');
+      }
+    } catch (err: any) {
+      setCancelErrorMessage(
+        err.message || 'Could not open Stripe Customer Portal. You can click "Yes, Cancel" to reset your plan to Free.'
+      );
+    } finally {
+      setIsOpeningPortal(false);
     }
   };
 
@@ -1412,11 +1455,21 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 self-start md:self-auto shrink-0">
+                      <button
+                        onClick={handleOpenStripePortal}
+                        disabled={isOpeningPortal}
+                        className="px-3.5 py-2 text-xs font-semibold text-blue-300 hover:text-blue-200 bg-blue-950/40 hover:bg-blue-900/50 border border-blue-800/60 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Redirect to Stripe's Customer Portal to manage, change billing, or cancel directly on Stripe"
+                      >
+                        <ExternalLink size={13} className={isOpeningPortal ? 'animate-spin' : ''} />
+                        <span>{isOpeningPortal ? 'Opening Stripe...' : 'Manage on Stripe'}</span>
+                      </button>
+
                       {!showCancelConfirm ? (
                         <button
                           onClick={() => setShowCancelConfirm(true)}
-                          className="px-3.5 py-2 text-xs font-semibold text-rose-300 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-800/60 rounded-lg transition-all"
+                          className="px-3.5 py-2 text-xs font-semibold text-rose-300 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-800/60 rounded-lg transition-all cursor-pointer"
                         >
                           Cancel Subscription
                         </button>
@@ -1428,14 +1481,14 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                           <button
                             onClick={handleCancelSubscription}
                             disabled={isCancellingSubscription}
-                            className="px-2.5 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-50"
+                            className="px-2.5 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-50 cursor-pointer"
                           >
                             {isCancellingSubscription ? 'Cancelling...' : 'Yes, Cancel'}
                           </button>
                           <button
                             onClick={() => setShowCancelConfirm(false)}
                             disabled={isCancellingSubscription}
-                            className="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded transition-colors"
+                            className="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded transition-colors cursor-pointer"
                           >
                             Keep Plan
                           </button>

@@ -190,8 +190,10 @@ export async function syncUserPurchasesFromStripe(
  */
 export async function cancelStripeSubscription(
   userId: string,
-  subscriptionId?: string | null
-): Promise<{ success: boolean; message: string; status?: string }> {
+  subscriptionId?: string | null,
+  userEmail?: string,
+  username?: string
+): Promise<{ success: boolean; message: string; status?: string; notFoundOnStripe?: boolean }> {
   const res = await fetch('/api/stripe/cancel-subscription', {
     method: 'POST',
     headers: {
@@ -200,7 +202,10 @@ export async function cancelStripeSubscription(
     },
     body: JSON.stringify({
       userId,
-      subscriptionId: subscriptionId || undefined
+      subscriptionId: subscriptionId || undefined,
+      userEmail: userEmail || undefined,
+      email: userEmail || undefined,
+      username: username || undefined
     })
   });
 
@@ -217,6 +222,8 @@ export async function cancelStripeSubscription(
  */
 export async function createStripeCustomerPortalSession(
   userId: string,
+  userEmail?: string,
+  username?: string,
   origin?: string
 ): Promise<string> {
   const clientOrigin =
@@ -231,6 +238,8 @@ export async function createStripeCustomerPortalSession(
     },
     body: JSON.stringify({
       userId,
+      userEmail: userEmail || undefined,
+      username: username || undefined,
       origin: clientOrigin
     })
   });
