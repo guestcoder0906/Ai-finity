@@ -48,23 +48,30 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       const svgEl = svgRef.current;
       if (!svgEl) return null;
 
+      let url = '';
       try {
         const serializer = new XMLSerializer();
         const svgString = serializer.serializeToString(svgEl);
         const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(svgBlob);
+        url = URL.createObjectURL(svgBlob);
 
         const img = new Image();
         img.crossOrigin = 'anonymous';
 
-        const loaded = await new Promise<boolean>((resolve) => {
-          img.onload = () => resolve(true);
-          img.onerror = () => resolve(false);
-          img.src = url;
-        });
+        // Add 800ms timeout race to prevent infinite hanging if image load fails to trigger
+        const loaded = await Promise.race([
+          new Promise<boolean>((resolve) => {
+            img.onload = () => resolve(true);
+            img.onerror = () => resolve(false);
+            img.src = url;
+          }),
+          new Promise<boolean>((resolve) => {
+            setTimeout(() => resolve(false), 800);
+          })
+        ]);
 
         if (!loaded) {
-          URL.revokeObjectURL(url);
+          if (url) URL.revokeObjectURL(url);
           return null;
         }
 
@@ -73,7 +80,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         canvas.height = 600;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          URL.revokeObjectURL(url);
+          if (url) URL.revokeObjectURL(url);
           return null;
         }
 
@@ -83,11 +90,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
         URL.revokeObjectURL(url);
+        url = '';
         const dataUrl = canvas.toDataURL('image/png');
         return dataUrl.split(',')[1] || null;
       } catch (e) {
         console.error('Failed to capture map screenshot:', e);
         return null;
+      } finally {
+        if (url) {
+          try { URL.revokeObjectURL(url); } catch (_) {}
+        }
       }
     }
   }));
@@ -548,80 +560,82 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Top Left Status & Pages Bar */}
-      <div className="absolute top-2 left-2 flex flex-col items-start gap-2 z-20 pointer-events-none">
-        <div className="bg-black/85 text-xs text-blue-400 font-mono px-2 py-1 rounded border border-blue-900/50 backdrop-blur-xs">
-          Scale: {currentPage.scale || 'Unknown'}
+      {/* Top Left Pages Bar */}
+      {pages.length > 1 && (
+        <div className="absolute top-2 left-2 flex gap-1 z-20 pointer-events-auto flex-wrap max-w-[calc(100%-260px)]">
+          {pages.map((p, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setCurrentPageIndex(idx)}
+              className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${idx === safePageIndex
+                ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-bold'
+                : 'bg-black/70 border-neutral-800 text-gray-400 hover:bg-neutral-800'
+                }`}
+            >
+              {p.name || `Page ${idx + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Top Right Zoom, Pan and Labels Controls with Scale Directly Underneath */}
+      <div className="absolute top-2 right-2 flex flex-col items-end gap-1.5 z-20 pointer-events-none">
+        <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-sm border border-neutral-800 rounded-lg p-1 px-1.5 shadow-lg select-none pointer-events-auto">
+          <button
+            type="button"
+            id="map-zoom-out-btn"
+            onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
+            title="Zoom Out (-)"
+            className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] font-mono text-gray-300 min-w-[36px] text-center font-medium">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            id="map-zoom-in-btn"
+            onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
+            title="Zoom In (+)"
+            className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+          <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
+          <button
+            type="button"
+            id="map-reset-btn"
+            onClick={(e) => { e.stopPropagation(); handleResetPanZoom(); }}
+            title="Reset Pan & Zoom (100% / Centered)"
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono text-blue-400 hover:text-blue-200 hover:bg-blue-900/40 rounded border border-blue-900/40 transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+          <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
+          <button
+            type="button"
+            id="map-toggle-labels-btn"
+            onClick={(e) => { e.stopPropagation(); toggleShowAllLabels(); }}
+            title={showAllLabels ? "Labels: Always showing all (click to switch to hover-only)" : "Labels: Showing on hover only (click to show all labels)"}
+            className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono rounded border transition-colors ${
+              showAllLabels
+                ? 'bg-blue-950/80 text-blue-300 border-blue-600/70 shadow-[0_0_8px_rgba(59,130,246,0.3)]'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-800 border-neutral-800'
+            }`}
+          >
+            {showAllLabels ? <Eye className="w-3 h-3 text-blue-400" /> : <EyeOff className="w-3 h-3 text-neutral-400" />}
+            <span>{showAllLabels ? 'All Text' : 'Hover Text'}</span>
+          </button>
         </div>
 
-        {pages.length > 1 && (
-          <div className="flex gap-1 pointer-events-auto flex-wrap max-w-full">
-            {pages.map((p, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setCurrentPageIndex(idx)}
-                className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${idx === safePageIndex
-                  ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-bold'
-                  : 'bg-black/70 border-neutral-800 text-gray-400 hover:bg-neutral-800'
-                  }`}
-              >
-                {p.name || `Page ${idx + 1}`}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Top Right Zoom, Pan and Labels Controls */}
-      <div className="absolute top-2 right-2 flex items-center gap-1.5 z-20 bg-black/85 backdrop-blur-sm border border-neutral-800 rounded-lg p-1 px-1.5 shadow-lg select-none pointer-events-auto">
-        <button
-          type="button"
-          id="map-zoom-out-btn"
-          onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
-          title="Zoom Out (-)"
-          className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
-        >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-        <span className="text-[10px] font-mono text-gray-300 min-w-[36px] text-center font-medium">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          type="button"
-          id="map-zoom-in-btn"
-          onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
-          title="Zoom In (+)"
-          className="p-1 rounded text-gray-300 hover:text-white hover:bg-neutral-800 transition-colors"
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-        <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
-        <button
-          type="button"
-          id="map-reset-btn"
-          onClick={(e) => { e.stopPropagation(); handleResetPanZoom(); }}
-          title="Reset Pan & Zoom (100% / Centered)"
-          className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono text-blue-400 hover:text-blue-200 hover:bg-blue-900/40 rounded border border-blue-900/40 transition-colors"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Reset</span>
-        </button>
-        <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
-        <button
-          type="button"
-          id="map-toggle-labels-btn"
-          onClick={(e) => { e.stopPropagation(); toggleShowAllLabels(); }}
-          title={showAllLabels ? "Labels: Always showing all (click to switch to hover-only)" : "Labels: Showing on hover only (click to show all labels)"}
-          className={`flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono rounded border transition-colors ${
-            showAllLabels
-              ? 'bg-blue-950/80 text-blue-300 border-blue-600/70 shadow-[0_0_8px_rgba(59,130,246,0.3)]'
-              : 'text-neutral-400 hover:text-white hover:bg-neutral-800 border-neutral-800'
-          }`}
-        >
-          {showAllLabels ? <Eye className="w-3 h-3 text-blue-400" /> : <EyeOff className="w-3 h-3 text-neutral-400" />}
-          <span>{showAllLabels ? 'All Text' : 'Hover Text'}</span>
-        </button>
+        {/* Meters Scale: Positioned under the map buttons so it is never hidden */}
+        <div className="bg-black/90 text-[10px] text-blue-400 font-mono px-2 py-0.5 rounded border border-blue-900/60 backdrop-blur-xs shadow-md flex items-center gap-1.5 select-none pointer-events-none">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+          <span>Scale: {currentPage.scale || 'Unknown'}</span>
+        </div>
       </div>
 
       {/* Bottom Hint on Drag/Zoom */}

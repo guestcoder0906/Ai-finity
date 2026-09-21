@@ -87,6 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
+  const [expandedStoredItems, setExpandedStoredItems] = useState<{ [filename: string]: boolean }>({});
   const isHost = roomState?.hostUsername === username;
   const expandedRef = useRef<HTMLDivElement>(null);
   const filesListRef = useRef<HTMLDivElement>(null);
@@ -125,8 +126,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!content) return '';
     let formatted = content;
 
-    // Handle target(...) syntax
-    formatted = formatted.replace(/target\((.*?)\)\[(.*?)\]/gs, (match, targets, innerText) => {
+    // Handle target(...) syntax safely without backtracking
+    formatted = formatted.replace(/target\(([^)]*)\)\[([^\]]*)\]/g, (match, targets, innerText) => {
       const targetList = targets.split(',').map((t: string) => t.trim());
       if (debugMode || targetList.includes(username)) {
         return `<span class="text-purple-300 bg-purple-900/20 px-1 border border-dashed border-purple-800 rounded" title="Target: ${targets}">${innerText}</span>`;
@@ -134,11 +135,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       return ''; // Hide completely for non-targets
     });
 
-    // Handle hide[] syntax
+    // Handle hide[] syntax safely without backtracking
     if (debugMode) {
-      formatted = formatted.replace(/hide\[(.*?)\]/gs, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded">$1</span>');
+      formatted = formatted.replace(/hide\[([^\]]*)\]/g, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded">$1</span>');
     } else {
-      formatted = formatted.replace(/hide\[.*?\]/gs, '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>');
+      formatted = formatted.replace(/hide\[[^\]]*\]/g, '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>');
     }
 
     return formatted;
@@ -715,9 +716,35 @@ const Sidebar: React.FC<SidebarProps> = ({
 
                               {/* Stored Items (Not on Person) */}
                               {pStats.storedItems.length > 0 && (
-                                <div className="text-[9px] text-gray-500 italic bg-neutral-950 p-1 rounded border border-neutral-800/60 flex items-center justify-between">
-                                  <span>📦 {pStats.storedItems.length} items owned & stored off-person</span>
-                                  <span className="text-gray-600">(Excluded from carried weight)</span>
+                                <div className="pt-1 border-t border-neutral-800/60">
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedStoredItems(prev => ({ ...prev, [filename]: !prev[filename] }))}
+                                    className="w-full text-left text-[9px] bg-neutral-950 hover:bg-neutral-900 text-gray-400 p-1.5 rounded border border-neutral-800/60 flex items-center justify-between transition-colors group cursor-pointer"
+                                    title={expandedStoredItems[filename] ? "Click to collapse stored items" : "Click to expand stored items"}
+                                  >
+                                    <div className="flex items-center gap-1.5 font-medium text-gray-300">
+                                      <span>📦 Owned & Stored Off-Person ({pStats.storedItems.length})</span>
+                                      <span className="text-[8px] text-gray-500 font-normal hidden sm:inline">(Excluded from carried weight)</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-gray-500 group-hover:text-gray-300 shrink-0">
+                                      <span className="text-[8px]">{expandedStoredItems[filename] ? 'Hide' : 'View'}</span>
+                                      {expandedStoredItems[filename] ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                    </div>
+                                  </button>
+                                  {expandedStoredItems[filename] && (
+                                    <div className="mt-1 pl-1.5 border-l border-neutral-800 space-y-1 bg-neutral-950/70 p-1.5 rounded text-[9px]">
+                                      {pStats.storedItems.map((it, si) => (
+                                        <div key={si} className="flex justify-between items-center text-gray-300 hover:text-white">
+                                          <span className="truncate pr-1">• {it.name}</span>
+                                          <span className="font-mono text-gray-500 text-[8px] shrink-0">
+                                            {it.weight > 0 ? `${it.weight} lbs` : '0 lbs'}
+                                            {it.dimensions?.raw && it.dimensions.raw !== 'None' && it.dimensions.raw !== '0 lbs' ? ` (${it.dimensions.raw})` : ''}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>

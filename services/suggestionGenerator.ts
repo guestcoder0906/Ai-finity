@@ -267,8 +267,9 @@ export class SuggestionGenerator {
     static generateSinglePlayer(): string[] {
         const suggestions: string[] = [];
         const count = 3;
+        let attempts = 0;
 
-        while (suggestions.length < count) {
+        while (suggestions.length < count && attempts++ < 60) {
             const theme = mainThemes[Math.floor(Math.random() * mainThemes.length)];
 
             const charTemplates = [
@@ -295,14 +296,18 @@ export class SuggestionGenerator {
                 suggestions.push(res);
             }
         }
+        if (suggestions.length === 0) {
+            suggestions.push("A lone wanderer exploring an ancient ruin.");
+        }
         return suggestions;
     }
 
     static generateMultiplayer(): string[] {
         const suggestions: string[] = [];
         const count = 3;
+        let attempts = 0;
 
-        while (suggestions.length < count) {
+        while (suggestions.length < count && attempts++ < 60) {
             const theme = mainThemes[Math.floor(Math.random() * mainThemes.length)];
 
             const templates = [
@@ -324,6 +329,9 @@ export class SuggestionGenerator {
             if (!suggestions.includes(res)) {
                 suggestions.push(res);
             }
+        }
+        if (suggestions.length === 0) {
+            suggestions.push("The shattered realm of ancient magic.");
         }
         return suggestions;
     }
