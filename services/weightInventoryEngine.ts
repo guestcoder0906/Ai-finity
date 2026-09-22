@@ -410,46 +410,50 @@ export class WeightInventoryEngine {
       return { weight: 0, applies: false };
     }
 
+    // Helper to clean commas in numbers
+    const cleanNum = (val: string) => parseFloat(val.replace(/,/g, ''));
+    const numRegex = '([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]+)?|[0-9]+(?:\\.[0-9]+)?)';
+
     // Pattern 1: "X weight" or "0 weight"
-    const weightWordMatch = lower.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:weight)/);
+    const weightWordMatch = lower.match(new RegExp(`${numRegex}\\s*(?:weight)`));
     if (weightWordMatch) {
-      return { weight: parseFloat(weightWordMatch[1]), applies: true };
+      return { weight: cleanNum(weightWordMatch[1]), applies: true };
     }
 
     // Pattern 2: "X pound(s)" or "X lbs" or "X lb"
-    const poundMatch = lower.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/);
+    const poundMatch = lower.match(new RegExp(`${numRegex}\\s*(?:lbs?|pounds?)`));
     if (poundMatch) {
-      return { weight: parseFloat(poundMatch[1]), applies: true };
+      return { weight: cleanNum(poundMatch[1]), applies: true };
     }
 
     // Pattern 3: "Weight:\s*X"
-    const colonWeightMatch = lower.match(/(?:weight|wt)[:=]\s*([0-9]+(?:\.[0-9]+)?)/);
+    const colonWeightMatch = lower.match(new RegExp(`(?:weight|wt)[:=]\\s*${numRegex}`));
     if (colonWeightMatch) {
-      return { weight: parseFloat(colonWeightMatch[1]), applies: true };
+      return { weight: cleanNum(colonWeightMatch[1]), applies: true };
     }
 
     // Pattern 4: Kilograms "X kg"
-    const kgMatch = lower.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:kg|kilograms?)/);
+    const kgMatch = lower.match(new RegExp(`${numRegex}\\s*(?:kg|kilograms?)`));
     if (kgMatch) {
-      return { weight: parseFloat(kgMatch[1]) * 2.20462, applies: true };
+      return { weight: cleanNum(kgMatch[1]) * 2.20462, applies: true };
     }
 
     // Pattern 5: Grams "X grams" / "X g"
-    const gMatch = lower.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:grams?|g\b)/);
+    const gMatch = lower.match(new RegExp(`${numRegex}\\s*(?:grams?|g\\b)`));
     if (gMatch) {
-      return { weight: parseFloat(gMatch[1]) * 0.00220462, applies: true };
+      return { weight: cleanNum(gMatch[1]) * 0.00220462, applies: true };
     }
 
     // Pattern 6: Ounces "X oz"
-    const ozMatch = lower.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:oz|ounces?)/);
+    const ozMatch = lower.match(new RegExp(`${numRegex}\\s*(?:oz|ounces?)`));
     if (ozMatch) {
-      return { weight: parseFloat(ozMatch[1]) * 0.0625, applies: true };
+      return { weight: cleanNum(ozMatch[1]) * 0.0625, applies: true };
     }
 
     // Standalone number before/after common text
-    const standaloneMatch = lower.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:and|,|\/|$)/);
+    const standaloneMatch = lower.match(new RegExp(`\\b${numRegex}\\s*(?:and|\\/|$)`));
     if (standaloneMatch && (lower.includes('weight') || lower.includes('heavy'))) {
-      return { weight: parseFloat(standaloneMatch[1]), applies: true };
+      return { weight: cleanNum(standaloneMatch[1]), applies: true };
     }
 
     return { weight: 0, applies: true };
@@ -1254,32 +1258,52 @@ export class WeightInventoryEngine {
       );
     };
 
+    const isAccountingOrMetaItem = (it: ItemInfo) => {
+      const nameLower = it.name.toLowerCase().replace(/^\[|\]$/g, '').trim();
+      return (
+        nameLower.startsWith('total starting') ||
+        nameLower.includes('starting carried items') ||
+        nameLower.includes('items accounting') ||
+        nameLower.includes('starting carrying limit') ||
+        WeightInventoryEngine.isLimbOrGripResidue(nameLower) ||
+        (it.weight === 0 && (!it.dimensions?.raw || it.dimensions.raw === 'Standard size') && /^\d+\.\s*/.test(it.name))
+      );
+    };
+
+    const normalizeItemKey = (name: string) => name.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/^\[|\]$/g, '').replace(/[-–—\s]+$/, '').trim();
+
+    // Priority ordering for retention:
+    // 1. Currently held weapons/tools in hands (most essential to survival and immediate action)
+    // 2. Worn armor/clothing
+    // 3. Equipped containers
+    // 4. Container items / loose items (least essential background items moved first if over limit)
     const carriedList: Array<{ item: ItemInfo; section: 'equipped' | 'container_item' | 'loose' | 'held' }> = [];
-    for (const eq of stats.equippedGear) {
-      if (!isCurrencyOrPouch(eq)) {
-        carriedList.push({ item: eq, section: 'equipped' });
-      }
-    }
+    const seenItemNames = new Set<string>();
+
+    const addCarried = (item: ItemInfo, section: 'equipped' | 'container_item' | 'loose' | 'held') => {
+      if (isCurrencyOrPouch(item) || isAccountingOrMetaItem(item)) return;
+      const key = normalizeItemKey(item.name);
+      if (!key || seenItemNames.has(key)) return;
+      seenItemNames.add(key);
+      carriedList.push({ item, section });
+    };
+
+    // First add held items (Priority 1: active weapons/tools in hands must never be stripped first)
+    for (const held of stats.currentlyHolding) addCarried(held, 'held');
+
+    // Next add equipped gear & armor (Priority 2: worn protective gear)
+    for (const eq of stats.equippedGear) addCarried(eq, 'equipped');
+
+    // Next add containers themselves (Priority 3: worn/carried bags)
     for (const cont of stats.containers) {
-      for (const it of cont.items) {
-        if (!isCurrencyOrPouch(it)) {
-          carriedList.push({ item: it, section: 'container_item' });
-        }
-      }
+      addCarried({ name: cont.name, weight: cont.weight, dimensions: cont.dimensions }, 'equipped');
     }
-    for (const loose of stats.carriedItems) {
-      if (!isCurrencyOrPouch(loose)) {
-        carriedList.push({ item: loose, section: 'loose' });
-      }
+
+    // Finally add container contents & loose items (Priority 4: excess background items moved first)
+    for (const cont of stats.containers) {
+      for (const it of cont.items) addCarried(it, 'container_item');
     }
-    for (const held of stats.currentlyHolding) {
-      if (!isCurrencyOrPouch(held)) {
-        const alreadyIn = carriedList.some(c => c.item.name.toLowerCase() === held.name.toLowerCase());
-        if (!alreadyIn) {
-          carriedList.push({ item: held, section: 'held' });
-        }
-      }
-    }
+    for (const loose of stats.carriedItems) addCarried(loose, 'loose');
 
     if (carriedList.length <= maxAllowed) {
       return {
@@ -1353,15 +1377,17 @@ export class WeightInventoryEngine {
     if (!containers || containers.length === 0) return undefined;
     if (!targetName || !targetName.trim()) return undefined;
 
-    const target = targetName.trim().toLowerCase();
+    const clean = (s: string) => s.trim().toLowerCase().replace(/^\[|\]$/g, '').trim();
+    const target = clean(targetName);
+    if (!target) return undefined;
 
-    // 1. Exact match (case insensitive)
-    const exact = containers.find(c => c.name.toLowerCase() === target);
+    // 1. Exact match (case insensitive, stripped brackets)
+    const exact = containers.find(c => clean(c.name) === target);
     if (exact) return exact;
 
     // 2. Contains match (either container name contains target or target contains container name)
     const contains = containers.find(c => {
-      const cName = c.name.toLowerCase();
+      const cName = clean(c.name);
       return cName.includes(target) || target.includes(cName);
     });
     if (contains) return contains;
@@ -1370,7 +1396,7 @@ export class WeightInventoryEngine {
     const keywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'chest', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
     const matchedKey = keywords.find(k => target.includes(k));
     if (matchedKey) {
-      const keyMatch = containers.find(c => c.name.toLowerCase().includes(matchedKey));
+      const keyMatch = containers.find(c => clean(c.name).includes(matchedKey));
       if (keyMatch) return keyMatch;
     }
 
@@ -1592,7 +1618,7 @@ export class WeightInventoryEngine {
    */
   public static parseItemLine(line: string, defaultContainer?: string): ItemInfo | null {
     const trimmed = line.trim().replace(/^[-*•>]\s*/, '');
-    if (!trimmed || trimmed.startsWith('[') && trimmed.endsWith(']')) return null;
+    if (!trimmed || (trimmed.startsWith('[') && trimmed.endsWith(']') && !trimmed.includes(':') && !/\b(?:weight|lbs?|dimensions?)\b/i.test(trimmed))) return null;
 
     // Check if it's a category header or section line
     const lower = trimmed.toLowerCase();
@@ -1602,6 +1628,16 @@ export class WeightInventoryEngine {
       lower.startsWith('containers:') ||
       lower.startsWith('total carried weight') ||
       lower.startsWith('encumbrance') ||
+      lower.includes('starting carried items') ||
+      lower.includes('starting items accounting') ||
+      lower.includes('items accounting') ||
+      lower.includes('starting carried items limit') ||
+      lower.includes('total starting carried items count') ||
+      lower.includes('starting carried items count') ||
+      lower.includes('starting carrying limit') ||
+      lower.includes('stored to respect starting carried item limit') ||
+      lower.includes('stored to respect starting') ||
+      /^[-\s*•]*\d+\.\s*\[?[^\]:]+\]?\s*\((?:Equipped|Carried|Held|Inside).*?\)$/i.test(line) ||
       lower === 'none' ||
       lower === '(none)' ||
       lower === 'none.' ||
@@ -1635,8 +1671,13 @@ export class WeightInventoryEngine {
     // Extract item name
     let name = '';
     let rest = trimmed;
+    const closingBracket = trimmed.indexOf(']');
     const colonIdx = trimmed.indexOf(':');
-    if (colonIdx > 0 && colonIdx < 40) {
+
+    if (trimmed.startsWith('[') && closingBracket > 1) {
+      name = trimmed.substring(1, closingBracket).trim();
+      rest = trimmed.substring(closingBracket + 1).replace(/^[:\s-]+/, '').trim();
+    } else if (colonIdx > 0 && colonIdx < 100) {
       name = trimmed.substring(0, colonIdx).trim();
       rest = trimmed.substring(colonIdx + 1).trim();
     } else {
@@ -1679,10 +1720,16 @@ export class WeightInventoryEngine {
       }
     }
 
+    const cleanNameLower = name.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/^\[|\]$/g, '').trim();
     if (
       !name ||
       name.toLowerCase() === 'none' ||
       name.toLowerCase() === '0 lbs' ||
+      cleanNameLower.startsWith('total starting') ||
+      cleanNameLower.includes('starting carried items') ||
+      cleanNameLower.includes('items accounting') ||
+      cleanNameLower.includes('starting items accounting') ||
+      cleanNameLower.includes('starting carrying limit') ||
       name.toLowerCase() === 'hands' ||
       name.toLowerCase() === 'hand' ||
       name.toLowerCase() === '(two-handed)' ||
@@ -1807,6 +1854,15 @@ export class WeightInventoryEngine {
       }
     }
 
+    if (location) {
+      if (location.endsWith(']') && !location.includes('[')) {
+        location = location.slice(0, -1).trim();
+      }
+      if (location.startsWith('[') && location.endsWith(']') && !/hide|target/i.test(location)) {
+        location = location.slice(1, -1).trim();
+      }
+    }
+
     // Check overflow & does not fit notes in text
     let doesNotFit = false;
     let isOverflow = false;
@@ -1921,7 +1977,7 @@ export class WeightInventoryEngine {
 
     let currentSection = '';
     let activeContainerName = '';
-    let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'holding' | 'general' = 'general';
+    let activeSubsection: 'containers' | 'equipped' | 'inside_containers' | 'holding' | 'general' | 'accounting' = 'general';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -2430,9 +2486,47 @@ export class WeightInventoryEngine {
           continue;
         }
 
+        // Accounting header e.g. "- Starting Carried Items Accounting (Rule: <= 2x Hand Slots = Max 4 Items):"
+        const isAccountingHeader = !hasItemStat && (
+          lower.includes('starting carried items accounting') ||
+          lower.includes('starting items accounting') ||
+          lower.includes('carried items accounting') ||
+          lower.includes('items accounting') ||
+          lower.includes('starting carried items limit') ||
+          lower.includes('total starting carried items count') ||
+          lower.includes('starting carried items count') ||
+          lower.includes('starting carrying limit') ||
+          lower.includes('starting carried items rule')
+        );
+
+        if (isAccountingHeader) {
+          activeSubsection = 'accounting';
+          activeContainerName = '';
+          continue;
+        }
+
+        if (activeSubsection === 'accounting') {
+          // If inside accounting block, ignore tallies, rules, and summary lines
+          if (
+            /^[-\s*•]*\d+\.\s*/.test(line) ||
+            lower.includes('rule:') ||
+            lower.includes('items count') ||
+            lower.includes('held in hand') ||
+            lower.includes('equipped gear') ||
+            lower.includes('carried in container') ||
+            lower.includes('equipped container') ||
+            lower.includes('total starting')
+          ) {
+            continue;
+          }
+        }
+
         // Container definition: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
-        const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'chest', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
-        const hasContainerKeyword = containerKeywords.some(kw => lower.includes(kw));
+        const rawItemName = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').replace(/^\[|\]$/g, '').trim();
+        const itemNameLower = rawItemName.toLowerCase();
+        const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
+        const isChestContainer = /\bchest\b/i.test(itemNameLower) && !/\b(?:chestplate|chest\s*plate|chest\s*armor|chest\s*guard|across\s*chest)\b/i.test(itemNameLower);
+        const hasContainerKeyword = containerKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(itemNameLower)) || isChestContainer;
         const isExplicitItemInContainer = lower.includes('container:') || lower.includes('inside container') || lower.includes('in backpack') || lower.includes('in satchel') || lower.includes('in pouch') || lower.includes('in bag');
 
         const isContainerDef = (activeSubsection === 'containers' && !lower.startsWith('total') && !isExplicitItemInContainer) || (
@@ -2452,6 +2546,7 @@ export class WeightInventoryEngine {
 
         if (isContainerDef) {
           let name = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').trim();
+          name = name.replace(/^\[|\]$/g, '').trim();
           const parenIdx = name.search(/[\(\[]/);
           if (parenIdx > 0) {
             name = name.substring(0, parenIdx).trim();
@@ -3130,7 +3225,7 @@ export class WeightInventoryEngine {
    */
   public static findNextSectionHeaderIndex(text: string, fromIndex: number): number {
     const sub = text.substring(fromIndex);
-    const m = sub.match(/\n\s*\[[A-Z0-9_\s&/'-]+\]/);
+    const m = sub.match(/\n\s*\[[A-Z0-9_\s&/()'-]+\]/);
     if (m && m.index !== undefined) {
       const bracketOffset = m[0].indexOf('[');
       return fromIndex + m.index + bracketOffset;
@@ -3207,15 +3302,21 @@ export class WeightInventoryEngine {
       updated = updated.replace(/^[-\s]*Speed:.*$/im, speedLine);
     }
 
+    // Weight status for encumbrance & speed
+    const weightStatusText = !stats.encumbranceApplies
+      ? 'IMMUNE TO ENCUMBRANCE'
+      : stats.isEncumbered
+        ? 'ENCUMBERED: Slower Speed'
+        : 'Good / Unencumbered';
+
     // Encumbrance Rule line in stats
+    const encumbranceThresholdLbs = ((stats.bodyWeight * stats.encumbranceThreshold) / 100).toFixed(1).replace(/\.0$/, '');
     const encumbranceRuleLine = stats.encumbranceApplies
-      ? `- Encumbrance Threshold: ${stats.encumbranceThreshold}% of body weight (Carried weight at ${stats.encumbranceThreshold + 1}%+ affects character negatively with slower speed until weight drops below ${stats.encumbranceThreshold + 1}%)`
+      ? `- Encumbrance Threshold & Effects: Base ${stats.encumbranceThreshold}% threshold is ${encumbranceThresholdLbs} lbs. Current carried weight is ${stats.totalCarriedWeight} lbs (${stats.encumbranceRatio}% of body weight - Status: ${weightStatusText}). (Carried weight at ${stats.encumbranceThreshold + 1}%+ causes slower speed penalty until dropped)`
       : `- Encumbrance: Immune / Unaffected (${stats.encumbranceImmunityReason || 'Dynamic biology absorbs or ignores weight penalties'})`;
 
-    if (updated.match(/^[-\s]*Encumbrance Threshold:.*$/im)) {
-      updated = updated.replace(/^[-\s]*Encumbrance Threshold:.*$/im, encumbranceRuleLine);
-    } else if (updated.match(/^[-\s]*Encumbrance:.*$/im)) {
-      updated = updated.replace(/^[-\s]*Encumbrance:.*$/im, encumbranceRuleLine);
+    if (updated.match(/^[-\s]*Encumbrance(?:\s*Threshold)?(?:\s*(?:&|and)\s*Effects)?:.*$/im)) {
+      updated = updated.replace(/^[-\s]*Encumbrance(?:\s*Threshold)?(?:\s*(?:&|and)\s*Effects)?:.*$/im, encumbranceRuleLine);
     }
 
     // Max Lift Strength
@@ -3232,7 +3333,7 @@ export class WeightInventoryEngine {
     }
 
     // 3. Update or Insert Total Carried Weight summary in [CONTAINERS & CARRIED GEAR] or [INVENTORY & EQUIPMENT]
-    const weightStatusText = !stats.encumbranceApplies
+    const carriedWeightStatusBadge = !stats.encumbranceApplies
       ? 'IMMUNE TO ENCUMBRANCE'
       : stats.isEncumbered
         ? 'ENCUMBERED: Slower Speed'
@@ -3242,8 +3343,8 @@ export class WeightInventoryEngine {
       ? ` (Includes ${stats.passengerWeight} lbs rider/passenger load)`
       : '';
     const weightSummaryLine = ((stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0)
-      ? `- Total Carried Weight on Mount/Vehicle: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${weightStatusText}${riderSummary}) | Max Lift/Draw: ${stats.maxLiftStrength} lbs`
-      : `- Total Carried Weight on Person: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${weightStatusText}) | Max Lift: ${stats.maxLiftStrength} lbs`;
+      ? `- Total Carried Weight on Mount/Vehicle: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${carriedWeightStatusBadge}${riderSummary}) | Max Lift/Draw: ${stats.maxLiftStrength} lbs`
+      : `- Total Carried Weight on Person: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${carriedWeightStatusBadge}) | Max Lift: ${stats.maxLiftStrength} lbs`;
 
     if (updated.match(/^[-\s]*Total Carried Weight on Mount\/Vehicle:.*$/im)) {
       updated = updated.replace(/^[-\s]*Total Carried Weight on Mount\/Vehicle:.*$/im, weightSummaryLine);
@@ -3261,6 +3362,32 @@ export class WeightInventoryEngine {
       updated = updated.substring(0, insertPos) + storedSection + updated.substring(insertPos);
       changes.push('Added Owned/Stored Items section');
     }
+
+    // Clean up phantom / duplicate starting stash entries if the item is currently on person
+    const carriedNames: string[] = Array.from(new Set<string>([
+      ...stats.currentlyHolding.map(h => h.name.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/^\[|\]$/g, '').trim()),
+      ...stats.equippedGear.map(e => e.name.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/^\[|\]$/g, '').trim()),
+      ...stats.containers.flatMap(c => c.items.map(i => i.name.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/^\[|\]$/g, '').trim()))
+    ])).filter(Boolean);
+
+    const updatedLines = updated.split('\n');
+    const filteredLines = updatedLines.filter(l => {
+      const lower = l.toLowerCase();
+      if (lower.includes('total starting carried items count')) {
+        return false;
+      }
+      if (lower.includes('stored to respect starting carried item limit')) {
+        for (let i = 0; i < carriedNames.length; i++) {
+          const carried = carriedNames[i];
+          if (carried && lower.includes(carried)) {
+            changes.push(`Removed stale starting stash duplicate for ${carried}`);
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+    updated = filteredLines.join('\n');
 
     // 5. Ensure [CURRENTLY HOLDING] section reflects dynamic held items if applicable
     if (stats.holdingCapacity.applies && (stats.currentlyHolding.length > 0 || updated.includes('[CURRENTLY HOLDING]'))) {

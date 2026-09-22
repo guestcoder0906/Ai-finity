@@ -239,7 +239,8 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
     - Both Hands (Two-Handed): Greatsword: 6 lbs, 48x4 inches. (Occupies both hands; 0 free hands remaining)
     - Held in Jaws: Healing Herb: 0.1 lbs, 4x1 inches. (Held in mouth/teeth)
     - Overflow Hold: Rolled Map: 0.3 lbs, 12x2 inches. (Overflow: Yes - awkwardly clutched under arm while hands are occupied; risks dropping or getting knocked down))
-  * If holding nothing: "- (None - Hands/Appendages free)"
+  * If holding a weapon, tool, shield, or item: list it above under Items Currently Held with the limb name (e.g. "Right Hand: Scrap Arc Wrench: 4 lbs, 14x3x2 inches").
+  * If holding nothing: "- (None - Hands/Appendages free)". NEVER mark hands free if the character starts with or holds a primary weapon/tool in hand!
 - Dynamic Overflow & Scaled Accidental Drop Rule (CRITICAL):
   1. Overflow Mechanics: If a character holds more items than their anatomy normally allows (e.g. clutching an extra item under an arm, tucking something under a chin, clamping an item in their teeth while hands are full), or if items protrude from containers, the AI dynamically marks them as overflow.
   2. Overflow Strain Scaling: The MORE items added to overflow, the higher the overall chance of dropping items by accident.
@@ -248,12 +249,13 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 - Starting Carried Items Limit Rule (CRITICAL MANDATE):
   * At character creation / game start, the MAXIMUM number of carrying items a character can start with (sum of equipped gear, worn armor, carried containers, and items inside containers) is LESS THAN OR EQUAL TO 2x their hand slots (e.g. standard 2-handed humanoid = max 4 starting carrying items; 1-slot mouth/quadruped = max 2 items; 4 arms = max 8 items; 0 hand slots = 0 items).
   * Any extra background items, heirlooms, or gear MUST be placed under [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached location (e.g. [Location: Starting Home / Camp Stash]).
+  * Important: Do NOT create redundant numbered tally lists of already-listed gear; the code automatically tallies and tracks carried items.
   * DURING ADVENTURE RULE: Once the adventure begins, characters CAN carry more than this limit without restriction (subject only to container space, encumbrance, and overflow rules)!
 - Weight & Capacity Mandate: All items currently held count toward total items capacity, carried weight, and encumbrance like usual.
 
 [CONTAINERS & CARRIED GEAR]
 - Containers Equipped/Carried: (Carrying loose items REQUIRES at least one container the character can equip or carry, such as a Backpack, Satchel, Pouch, or Belt Bag. Each container has max space dimensions, e.g. "Leather Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs, Weight: 2 lbs".)
-- Equipped Gear & Armor: (List all worn armor, clothing, jewelry, and weapons held in hands with exact weight and dimensions)
+- Equipped Gear & Armor: (List all worn armor, clothing, boots, gloves, helmets, belts, and worn accessories with exact weight and dimensions. Note: items actively held in hands belong under [CURRENTLY HOLDING], NOT duplicate-listed under worn armor!)
   * Format: "Item Name: Weight: X lbs. Dimensions: HxWxD inches. (Technical stats/properties)"
 - Auto-Equip Oversized / Wearable Items Rule (CRITICAL): If a character acquires, carries, or receives items that are wearable (such as clothes, armor, cloaks, tunics, robes, boots, gloves, helmets, belts, worn jewelry, sheathed side-weapons, or shields), they MUST automatically be equipped under [Equipped Gear & Armor] rather than stuffed into a container. This realistically reflects what a person does when finding wearable gear or armor and prevents unnatural container clutter.
 - Carried Inventory (Inside Containers): (List of items carried inside each container with detectable weight and dimensions format)
