@@ -12,6 +12,7 @@ export class FileSystem {
 
   private loadFromStorage() {
     try {
+      if (typeof localStorage === 'undefined') return;
       const stored = localStorage.getItem(this.STORAGE_KEY_FILES);
       if (stored) {
         this.files = JSON.parse(stored);
@@ -27,6 +28,7 @@ export class FileSystem {
 
   private saveToStorage() {
     try {
+      if (typeof localStorage === 'undefined') return;
       localStorage.setItem(this.STORAGE_KEY_FILES, JSON.stringify(this.files));
       localStorage.setItem(this.STORAGE_KEY_META, JSON.stringify(this.metadata));
     } catch (e: any) {

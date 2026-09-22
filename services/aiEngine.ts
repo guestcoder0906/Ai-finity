@@ -885,7 +885,7 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
 
           // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
           const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}`;
-          const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.5-flash-lite');
+          const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.1-flash-lite');
           const audit = this.extractJSON(auditRaw);
 
           if (!audit) throw new Error("Audit failed");
@@ -1102,7 +1102,7 @@ CRITICAL REMINDERS:
 11. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
 12. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
 
-          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.5-flash-lite', audit);
+          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.1-flash-lite', audit);
           
           // Post-process spatial consistency (Old map state already captured via fs.read in handleRequest/enforceSpatialConsistency)
           const latestMapRaw = this.fs.read('CurrentMap.json');
@@ -1314,7 +1314,7 @@ CRITICAL REMINDERS:
     try {
       let s = raw.trim();
       // Remove possible markdown wrappers
-      s = s.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
+      s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 
       // Remove trailing commas before } or ]
       s = s.replace(/,\s*([}\]])/g, '$1');
@@ -1325,15 +1325,66 @@ CRITICAL REMINDERS:
       // Fix inner stringified JSON keys where backslash was dropped before quote-colon: \"key": -> \"key\":
       s = s.replace(/\\\"([a-zA-Z0-9_-]+)":/g, '\\"$1\\":');
       
-      // Basic brace balancing
-      let delta = 0;
-      for (const char of s) {
-        if (char === '{') delta++;
-        if (char === '}') delta--;
+      // Auto-closing stack logic for unclosed braces/brackets and strings
+      let inString = false;
+      let escape = false;
+      const stack: string[] = [];
+      let res = '';
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (inString) {
+          if (escape) {
+            res += c;
+            escape = false;
+          } else if (c === '\\') {
+            res += c;
+            escape = true;
+          } else if (c === '"') {
+            res += c;
+            inString = false;
+          } else if (c === '\n') {
+            res += '\\n';
+          } else if (c === '\r') {
+            res += '\\r';
+          } else if (c === '\t') {
+            res += '\\t';
+          } else {
+            res += c;
+          }
+        } else {
+          if (c === '"') {
+            inString = true;
+            res += c;
+          } else if (c === '{') {
+            stack.push('}');
+            res += c;
+          } else if (c === '[') {
+            stack.push(']');
+            res += c;
+          } else if (c === '}') {
+            if (stack.length > 0 && stack[stack.length - 1] === '}') {
+              stack.pop();
+            }
+            res += c;
+          } else if (c === ']') {
+            if (stack.length > 0 && stack[stack.length - 1] === ']') {
+              stack.pop();
+            }
+            res += c;
+          } else {
+            res += c;
+          }
+        }
       }
-      while (delta > 0) { s += '}'; delta--; }
+      if (escape) res += '\\';
+      if (inString) res += '"';
+      res = res.replace(/,\s*$/, '');
+      while (stack.length > 0) {
+        res = res.replace(/,\s*$/, '') + stack.pop();
+      }
+      res = res.replace(/,\s*([}\]])/g, '$1');
 
-      return s;
+      return res;
     } catch (e) {
       return null;
     }
@@ -1673,45 +1724,180 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
       }
     }
+    if (escape) result += '\\';
+    if (inString) result += '"';
     return result;
   }
 
   private extractJSON(text: string): any {
+    if (!text || typeof text !== 'string') {
+      throw new Error("Invalid or empty input text");
+    }
+
     // 1. Direct parse attempt
     try {
       return JSON.parse(text);
     } catch (e) { }
 
-    // 2. Clear Markdown blocks if present and sanitize
-    const mdMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    // 2. Clear Markdown blocks if present
+    let cleanText = text.trim();
+    const mdMatch = cleanText.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (mdMatch) {
       try {
-        return JSON.parse(this.sanitizeJSON(mdMatch[1]));
+        return JSON.parse(mdMatch[1]);
+      } catch (e) { }
+      cleanText = mdMatch[1].trim();
+    }
+
+    // 3. Find beginning of JSON structure
+    const firstBrace = cleanText.indexOf('{');
+    const firstBracket = cleanText.indexOf('[');
+    let startIdx = -1;
+    if (firstBrace !== -1 && firstBracket !== -1) {
+      startIdx = Math.min(firstBrace, firstBracket);
+    } else if (firstBrace !== -1) {
+      startIdx = firstBrace;
+    } else if (firstBracket !== -1) {
+      startIdx = firstBracket;
+    }
+
+    if (startIdx === -1) {
+      throw new Error("No JSON structure found");
+    }
+
+    const rawCandidate = cleanText.substring(startIdx);
+
+    // Auto-closer helper function: escapes control characters and balances unclosed strings, brackets, and braces
+    const autoCloseAndSanitize = (input: string): string => {
+      let result = '';
+      let inString = false;
+      let escape = false;
+      const stack: string[] = [];
+
+      for (let i = 0; i < input.length; i++) {
+        const char = input[i];
+
+        if (inString) {
+          if (escape) {
+            result += char;
+            escape = false;
+          } else if (char === '\\') {
+            result += char;
+            escape = true;
+          } else if (char === '"') {
+            result += char;
+            inString = false;
+          } else if (char === '\n') {
+            result += '\\n';
+          } else if (char === '\r') {
+            result += '\\r';
+          } else if (char === '\t') {
+            result += '\\t';
+          } else {
+            result += char;
+          }
+        } else {
+          if (char === '"') {
+            result += char;
+            inString = true;
+          } else if (char === '{') {
+            stack.push('}');
+            result += char;
+          } else if (char === '[') {
+            stack.push(']');
+            result += char;
+          } else if (char === '}') {
+            if (stack.length > 0 && stack[stack.length - 1] === '}') {
+              stack.pop();
+            }
+            result += char;
+          } else if (char === ']') {
+            if (stack.length > 0 && stack[stack.length - 1] === ']') {
+              stack.pop();
+            }
+            result += char;
+          } else {
+            result += char;
+          }
+        }
+      }
+
+      if (escape) {
+        result += '\\';
+      }
+
+      if (inString) {
+        result += '"';
+      }
+
+      // Remove any trailing commas before closing braces
+      result = result.replace(/,\s*$/, '');
+
+      // Close all open brackets/braces in reverse order
+      while (stack.length > 0) {
+        const closing = stack.pop()!;
+        result = result.replace(/,\s*$/, '') + closing;
+      }
+
+      // Clean trailing commas before } or ]
+      result = result.replace(/,(\s*[}\]])/g, '$1');
+
+      return result;
+    };
+
+    // Attempt A: Auto-close and sanitize directly
+    try {
+      const fixed = autoCloseAndSanitize(rawCandidate);
+      return JSON.parse(fixed);
+    } catch (e) { }
+
+    // Attempt B: Trim to last } or ] if there is trailing commentary or extra text
+    const lastBrace = rawCandidate.lastIndexOf('}');
+    const lastBracket = rawCandidate.lastIndexOf(']');
+    const endIdx = Math.max(lastBrace, lastBracket);
+    if (endIdx > 0) {
+      const bounded = rawCandidate.substring(0, endIdx + 1);
+      try {
+        const fixed = autoCloseAndSanitize(bounded);
+        return JSON.parse(fixed);
       } catch (e) { }
     }
 
-    // 3. Fallback: Greedy match over the whole text, then sanitize unescaped newlines
-    const greedyMatch = text.match(/\{[\s\S]*\}/);
-    if (greedyMatch) {
+    // Attempt C: Progressive trimming of trailing } in case of extra braces
+    let candidate = rawCandidate;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const lb = candidate.lastIndexOf('}');
+      if (lb <= 0) break;
+      candidate = candidate.substring(0, lb);
       try {
-        return JSON.parse(this.sanitizeJSON(greedyMatch[0]));
+        const fixed = autoCloseAndSanitize(candidate);
+        return JSON.parse(fixed);
       } catch (e) { }
+    }
 
-      // 4. Progressive brace trimming — AI sometimes adds extra trailing } characters
-      let candidate = greedyMatch[0];
-      for (let attempt = 0; attempt < 5; attempt++) {
-        // Try removing the last }
-        const lastBrace = candidate.lastIndexOf('}');
-        if (lastBrace <= 0) break;
-        candidate = candidate.substring(0, lastBrace);
-        // Find the matching end
-        const reMatch = candidate.match(/\{[\s\S]*\}/);
-        if (reMatch) {
-          try {
-            return JSON.parse(this.sanitizeJSON(reMatch[0]));
-          } catch (e2) { }
-        }
-      }
+    // Attempt D: Fix unquoted property keys or dropped quotes
+    try {
+      const repaired = rawCandidate
+        .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+        .replace(/,(\s*[}\]])/g, '$1');
+      const fixed = autoCloseAndSanitize(repaired);
+      return JSON.parse(fixed);
+    } catch (e) { }
+
+    // Attempt E: Resilient Regex Extraction fallback if JSON is severely damaged
+    const narrativeMatch = text.match(/"narrative"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (narrativeMatch) {
+      try {
+        const unescapedNarrative = JSON.parse(`"${narrativeMatch[1]}"`);
+        return {
+          narrative: unescapedNarrative,
+          updates: [],
+          checks: [],
+          recommendations: [],
+          gameOver: false,
+          files: {}
+        };
+      } catch (e) { }
     }
 
     throw new Error("Failed to extract valid JSON");
@@ -4133,12 +4319,13 @@ INSTRUCTIONS:
 
       const ai = this.getAI();
       const response = await ai.models.generateContent({
-        model: modelName || 'gemini-3.5-flash-lite',
+        model: modelName || 'gemini-3.1-flash-lite',
         contents: contents,
         config: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: 'application/json',
           temperature: 0.7,
+          maxOutputTokens: 16384,
         }
       });
 
