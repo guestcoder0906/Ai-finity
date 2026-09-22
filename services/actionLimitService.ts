@@ -146,10 +146,9 @@ export interface ActionStatus {
 export class ActionLimitService {
   /**
    * Current Game Phase:
-   * Currently 'alpha' (unlimited actions while in Alpha phase until beta phase begins).
-   * When switching to beta phase in the future, set CURRENT_PHASE = 'beta'.
+   * 'beta' (registered accounts receive 20 daily free actions [10 base + 10 beta bonus], guests receive 3 trial actions).
    */
-  public static readonly CURRENT_PHASE: GamePhase = 'alpha';
+  public static readonly CURRENT_PHASE: GamePhase = 'beta';
 
   public static getPhase(): GamePhase {
     try {
@@ -667,7 +666,7 @@ export class ActionLimitService {
     user.subscriptionExpiresAt = expiresStr;
     user.canSaveMultipleAdventures = true;
     user.canPostCommunityAdventures = true;
-    if (resolvedTier === 'legendary' || resolvedTier === 'celestial') {
+    if (resolvedTier === 'legendary' || resolvedTier === 'celestial' || isDefaultAdmin(user.email, user.username)) {
       user.showGlowingName = true;
     }
 
@@ -727,7 +726,7 @@ export class ActionLimitService {
 
     const today = this.getTodayDateString();
     const status = this.getActionStatus(user, guestId);
-    const isAdminOrMod = user.role === 'admin' || user.role === 'mod';
+    const isAdminOrMod = user.role === 'admin' || user.role === 'mod' || isDefaultAdmin(user.email, user.username);
 
     user.tier = 'free';
     user.subscriptionExpiresAt = undefined;
@@ -781,7 +780,7 @@ export class ActionLimitService {
   ): Promise<UserProfile> {
     if (!user || !user.uid) return user as any;
 
-    const isAdminOrMod = user.role === 'admin' || user.role === 'mod';
+    const isAdminOrMod = user.role === 'admin' || user.role === 'mod' || isDefaultAdmin(user.email, user.username);
     const today = this.getTodayDateString();
     const status = this.getActionStatus(user, guestId);
 
@@ -795,7 +794,7 @@ export class ActionLimitService {
       user.subscriptionCancelAtPeriodEnd = activeSub.cancelAtPeriodEnd || false;
       user.canSaveMultipleAdventures = true;
       user.canPostCommunityAdventures = true;
-      if (activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial') {
+      if (activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial' || isAdminOrMod) {
         user.showGlowingName = true;
       }
 
@@ -816,14 +815,15 @@ export class ActionLimitService {
         subscriptionCancelAtPeriodEnd: activeSub.cancelAtPeriodEnd || false,
         canSaveMultipleAdventures: true,
         canPostCommunityAdventures: true,
-        ...(activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial' ? { showGlowingName: true } : {})
+        ...(activeSub.tierId === 'legendary' || activeSub.tierId === 'celestial' || isAdminOrMod ? { showGlowingName: true } : {})
       });
     } else if (
       !activeSub &&
-      (user.subscriptionStatus === 'canceled' || user.stripeSubscriptionId || (user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt).getTime() < Date.now())) &&
-      !isAdminOrMod
+      !isAdminOrMod &&
+      (user.subscriptionStatus === 'canceled' || (user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt).getTime() < Date.now()))
     ) {
-      // Downgrade to Free if the subscription was canceled or no active Stripe subscription exists
+      // ONLY downgrade to Free if the subscription was canceled or the paid period end has elapsed.
+      // Never downgrade active users if paid period is still valid or Stripe returns null/unavailable.
       user.tier = 'free';
       user.subscriptionStatus = 'canceled';
       user.subscriptionExpiresAt = undefined;

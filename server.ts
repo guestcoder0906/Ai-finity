@@ -657,9 +657,11 @@ async function startServer() {
         const subUsername = (sub.metadata?.username || '').trim().toLowerCase();
         const subCustomer = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
 
+        const subEmail = (sub.metadata?.userEmail || sub.metadata?.email || '').toLowerCase().trim();
         const isSubMatch =
           (userId && subUid === userId) ||
           (username && subUsername === username) ||
+          (email && subEmail === email) ||
           (subCustomer && userCustomerIds.has(subCustomer));
 
         if (isSubMatch) {

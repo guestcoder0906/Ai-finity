@@ -279,10 +279,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               </button>
             )}
 
-            {/* Alpha Phase Indicator */}
+            {/* Phase Indicator */}
             <div
-              className="w-7 h-7 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 cursor-help"
-              title="Alpha Phase Active: Unlimited Actions!"
+              className="w-7 h-7 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center text-blue-400 cursor-help"
+              title="Beta Phase Active: 20 Daily Free Actions (+10 Beta Bonus)!"
             >
               <Zap size={13} />
             </div>

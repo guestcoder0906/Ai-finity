@@ -240,17 +240,21 @@ function App() {
       if (syncRes.success) {
         // 1. Sync real-time active monthly subscription if present
         if (syncRes.activeSubscription !== undefined) {
-          const syncedSubUser = await ActionLimitService.syncSubscriptionState(
-            user,
-            syncRes.activeSubscription as any,
-            guestId
-          );
-          if (syncedSubUser) {
-            user.tier = syncedSubUser.tier;
-            user.stripeSubscriptionId = syncedSubUser.stripeSubscriptionId;
-            user.subscriptionExpiresAt = syncedSubUser.subscriptionExpiresAt;
-            setCurrentUser({ ...syncedSubUser });
-            setActionStatus(ActionLimitService.getActionStatus(syncedSubUser, guestId));
+          // If there is an active monthly sub, or if the user had a stripe sub and no purchased tier overrides it
+          const shouldCheckSub = syncRes.activeSubscription || (!syncRes.highestPurchasedTier && user.stripeSubscriptionId);
+          if (shouldCheckSub) {
+            const syncedSubUser = await ActionLimitService.syncSubscriptionState(
+              user,
+              syncRes.activeSubscription as any,
+              guestId
+            );
+            if (syncedSubUser) {
+              user.tier = syncedSubUser.tier;
+              user.stripeSubscriptionId = syncedSubUser.stripeSubscriptionId;
+              user.subscriptionExpiresAt = syncedSubUser.subscriptionExpiresAt;
+              setCurrentUser({ ...syncedSubUser });
+              setActionStatus(ActionLimitService.getActionStatus(syncedSubUser, guestId));
+            }
           }
         }
 
@@ -307,7 +311,7 @@ function App() {
             celestial: 3
           };
 
-          let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = null;
+          let bestPurchasedTier: 'adventurer' | 'legendary' | 'celestial' | null = (syncRes.highestPurchasedTier as any) || null;
 
           for (const p of syncRes.purchases) {
             if (p.itemType === 'tier' && p.itemId) {
