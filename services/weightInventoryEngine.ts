@@ -2320,7 +2320,37 @@ export class WeightInventoryEngine {
       lower.includes('weight & capacity') ||
       lower.includes('cannot hold additional') ||
       lower.includes('occupied by') ||
-      lower.includes('without dropping')
+      lower.includes('without dropping') ||
+      // Character's own body weight or physical stats lines must NEVER be parsed as items
+      lower.startsWith('body weight') ||
+      lower.startsWith('body:') ||
+      lower === 'body' ||
+      lower.startsWith('body ') ||
+      lower.startsWith('own weight') ||
+      lower.startsWith('own body weight') ||
+      lower.startsWith('character weight') ||
+      lower.startsWith('character body weight') ||
+      lower.startsWith('player weight') ||
+      lower.startsWith('player body weight') ||
+      lower.startsWith('entity weight') ||
+      lower.startsWith('total weight') ||
+      lower.startsWith('total body weight') ||
+      lower.startsWith('total weight on person') ||
+      lower.startsWith('weight on person') ||
+      lower.startsWith('current carried weight') ||
+      lower.startsWith('total occupant weight') ||
+      lower.startsWith('occupant weight') ||
+      lower.startsWith('rider') ||
+      lower.startsWith('driver') ||
+      lower.startsWith('passenger') ||
+      lower.startsWith('occupant') ||
+      lower.startsWith('weight:') ||
+      lower.startsWith('- weight:') ||
+      lower.startsWith('physical dimension') ||
+      lower.startsWith('dimensions:') ||
+      lower.startsWith('max lift') ||
+      lower.startsWith('lift strength') ||
+      lower.startsWith('speed:')
     ) {
       return null;
     }
@@ -2423,7 +2453,30 @@ export class WeightInventoryEngine {
       name.toLowerCase().includes('holding limbs') ||
       name.toLowerCase().includes('holding appendages') ||
       name.toLowerCase().includes('2 hands / arms') ||
-      name.toLowerCase().includes('holding capacity')
+      name.toLowerCase().includes('holding capacity') ||
+      cleanNameLower === 'body weight' ||
+      cleanNameLower === 'body' ||
+      cleanNameLower === 'own weight' ||
+      cleanNameLower === 'own body weight' ||
+      cleanNameLower === 'character weight' ||
+      cleanNameLower === 'character body weight' ||
+      cleanNameLower === 'player weight' ||
+      cleanNameLower === 'player body weight' ||
+      cleanNameLower === 'entity weight' ||
+      cleanNameLower === 'total weight' ||
+      cleanNameLower === 'total body weight' ||
+      cleanNameLower === 'total weight on person' ||
+      cleanNameLower === 'total carried weight' ||
+      cleanNameLower === 'weight on person' ||
+      cleanNameLower === 'current carried weight' ||
+      cleanNameLower === 'self' ||
+      cleanNameLower === 'own body' ||
+      cleanNameLower === 'weight' ||
+      cleanNameLower.startsWith('total occupant') ||
+      cleanNameLower.startsWith('occupant weight') ||
+      cleanNameLower.startsWith('rider') ||
+      cleanNameLower.startsWith('driver') ||
+      cleanNameLower.startsWith('passenger')
     ) {
       return null;
     }
@@ -2594,6 +2647,13 @@ export class WeightInventoryEngine {
     const lines = fileContent.split('\n');
 
     let characterName = 'Character';
+    const initialNameMatch = fileContent.match(/(?:^|\n)\s*[-*•#\s]*(?:character\s*name|full\s*name|name)\s*[:=]\s*([^\n\r]+)/i);
+    if (initialNameMatch) {
+      const cleanN = initialNameMatch[1].replace(/[*_#`[\]]/g, '').trim();
+      if (cleanN && !cleanN.toLowerCase().startsWith('character') && cleanN.toLowerCase() !== 'unknown') {
+        characterName = cleanN;
+      }
+    }
     let characterType = 'Humanoid';
     let height: string | undefined;
     let width: string | undefined;
@@ -2747,8 +2807,12 @@ export class WeightInventoryEngine {
 
       // 1. [NAME & DESCRIPTION] Section
       if (currentSection.includes('NAME') || currentSection.includes('DESCRIPTION')) {
-        if (lower.startsWith('- full name:') || lower.startsWith('name:')) {
-          characterName = line.split(/[:=]/)[1]?.trim() || characterName;
+        const nameMatch = line.match(/^[-*•#\s]*(?:character\s*name|full\s*name|name)\s*[:=]\s*([^\n\r]+)/i);
+        if (nameMatch) {
+          const rawName = nameMatch[1].replace(/[*_#`[\]]/g, '').trim();
+          if (rawName && !rawName.toLowerCase().startsWith('character') && rawName.toLowerCase() !== 'unknown') {
+            characterName = rawName;
+          }
         }
 
         // Detect creature type / race / biology (e.g. Slime, Ghost, Ooze, Golem, Elemental)
@@ -2889,9 +2953,37 @@ export class WeightInventoryEngine {
           !val.toLowerCase().includes('empty') &&
           !val.toLowerCase().includes('0 riders')
         ) {
-          const totalWeightMatch = val.match(/total(?:\s+occupant)?\s+weight[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
-          if (totalWeightMatch) {
-            passengerWeight = Math.max(passengerWeight, parseFloat(totalWeightMatch[1]));
+          const isLikelyMountOrVehicle =
+            /mount|vehicle|horse|warhorse|steed|pony|donkey|mule|camel|carriage|wagon|cart|boat|ship|vessel|chariot|sleigh|sled|glider|airship|mech|car|truck|bike|motorcycle|riding|transport/i.test(characterType) ||
+            /mount|vehicle|horse|warhorse|steed|carriage|wagon|cart|boat|ship|wagon/i.test(characterName) ||
+            fileContent.toLowerCase().includes('entity type: mount') ||
+            fileContent.toLowerCase().includes('is mount: yes') ||
+            fileContent.toLowerCase().includes('role: mount');
+
+          const isSelfReference = (targetName: string) => {
+            const tLower = (targetName || '').toLowerCase().trim();
+            if (!tLower) return true;
+            if (tLower === 'self' || tLower === 'own' || tLower === 'myself' || tLower === 'rider' || tLower === 'driver') return true;
+            if (characterName && characterName !== 'Character') {
+              const cLower = characterName.toLowerCase().trim();
+              if (tLower === cLower || tLower.includes(cLower) || cLower.includes(tLower)) return true;
+            }
+            return false;
+          };
+
+          const isTotalOccupantLine = lower.startsWith('- total occupant weight:') || lower.startsWith('total occupant weight:') || lower.includes('total occupant weight');
+          if (isTotalOccupantLine) {
+            // Total occupant weight only counts on actual mounts/vehicles carrying others (not on riders or foot characters)
+            if (isLikelyMountOrVehicle && !isMounted) {
+              const occMatch = line.match(/([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
+              if (occMatch) {
+                const matchedW = parseFloat(occMatch[1]);
+                // Never count if it accidentally mirrors the entity's own body weight
+                if (Math.abs(matchedW - bodyWeight) > 0.5) {
+                  passengerWeight = Math.max(passengerWeight, matchedW);
+                }
+              }
+            }
           } else {
             const bracketMatches = Array.from(val.matchAll(/\[([^\]]+)\](?:\s*\([^)]*?([0-9]+(?:\.[0-9]+)?)\s*lbs?[^)]*?\))?/g));
             let foundBracket = false;
@@ -2899,13 +2991,24 @@ export class WeightInventoryEngine {
               foundBracket = true;
               const pName = bm[1].trim();
               const pWeight = bm[2] ? parseFloat(bm[2]) : 0;
-              passengersOrRiders.push({ name: pName, weight: pWeight || undefined });
-              if (pWeight > 0) passengerWeight += pWeight;
+              // Characters NEVER carry themselves as riders or passengers!
+              if (!isSelfReference(pName)) {
+                // If entity is mounted on something else, they are the rider, not carrying riders
+                if (!isMounted && (isLikelyMountOrVehicle || lower.includes('passenger') || lower.includes('occupant'))) {
+                  passengersOrRiders.push({ name: pName, weight: pWeight || undefined });
+                  if (pWeight > 0) passengerWeight += pWeight;
+                }
+              }
             }
-            if (!foundBracket) {
-              const weightMatch = val.match(/([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
-              if (weightMatch) {
-                passengerWeight += parseFloat(weightMatch[1]);
+            if (!foundBracket && isLikelyMountOrVehicle && !isMounted) {
+              if (!isSelfReference(val)) {
+                const weightMatch = val.match(/([0-9]+(?:\.[0-9]+)?)\s*lbs?/i);
+                if (weightMatch) {
+                  const rawW = parseFloat(weightMatch[1]);
+                  if (Math.abs(rawW - bodyWeight) > 0.5) {
+                    passengerWeight += rawW;
+                  }
+                }
               }
             }
           }
@@ -3911,6 +4014,70 @@ export class WeightInventoryEngine {
       maxStartingCarryingItems
     };
 
+    // Robustly sanitize equippedGear, carriedItems, currentlyHolding, and containers against accidental inclusion of the character's own body weight or self
+    const isOwnBodyItem = (itName: string, itWeight?: number) => {
+      const n = (itName || '').toLowerCase().replace(/[-*•>\s\d._\[\]]+/g, ' ').trim();
+      if (!n) return false;
+      if (
+        n === 'body weight' ||
+        n === 'body' ||
+        n === 'own weight' ||
+        n === 'own body weight' ||
+        n === 'character weight' ||
+        n === 'character body weight' ||
+        n === 'player weight' ||
+        n === 'player body weight' ||
+        n === 'entity weight' ||
+        n === 'total weight' ||
+        n === 'total body weight' ||
+        n === 'total weight on person' ||
+        n === 'total carried weight' ||
+        n === 'weight on person' ||
+        n === 'current carried weight' ||
+        n === 'self' ||
+        n === 'own body'
+      ) return true;
+      if (characterName && characterName !== 'Character') {
+        const cLower = characterName.toLowerCase().trim();
+        if (n === cLower || n === `${cLower} body weight` || n === `${cLower} body` || n === `${cLower} weight`) {
+          return true;
+        }
+      }
+      if (bodyWeight > 40 && itWeight !== undefined && Math.abs(itWeight - bodyWeight) < 0.5) {
+        if (n.includes('body') || n.includes('character') || n.includes('self') || (characterName && characterName !== 'Character' && n.includes(characterName.toLowerCase()))) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const cleanEquippedGear = equippedGear.filter(eq => !isOwnBodyItem(eq.name, eq.weight));
+    equippedGear.length = 0;
+    equippedGear.push(...cleanEquippedGear);
+
+    const cleanCarriedItems = carriedItems.filter(c => !isOwnBodyItem(c.name, c.weight));
+    carriedItems.length = 0;
+    carriedItems.push(...cleanCarriedItems);
+
+    const cleanHolding = currentlyHolding.filter(h => !isOwnBodyItem(h.name, h.weight));
+    currentlyHolding.length = 0;
+    currentlyHolding.push(...cleanHolding);
+
+    for (const cont of containers) {
+      cont.items = cont.items.filter(it => !isOwnBodyItem(it.name, it.weight));
+      cont.currentItemsWeight = Math.round(cont.items.reduce((s, it) => s + (it.weight || 0), 0) * 100) / 100;
+      cont.totalWeight = Math.round((cont.weight + cont.currentItemsWeight + (cont.currencyWeight || 0)) * 100) / 100;
+    }
+
+    // Never add passenger weight if entity is mounted or is not carrying actual other passengers
+    const isMountOrVehicleEntity =
+      /mount|vehicle|horse|warhorse|steed|pony|donkey|mule|camel|carriage|wagon|cart|boat|ship|vessel|chariot|sleigh|sled|glider|airship|mech|car|truck|bike|motorcycle|riding|transport/i.test(characterType) ||
+      /mount|vehicle|horse|warhorse|steed|carriage|wagon|cart|boat|ship/i.test(characterName);
+
+    if (isMounted || (!isMountOrVehicleEntity && passengersOrRiders.length === 0)) {
+      passengerWeight = 0;
+    }
+
     // Calculate Total Carried Weight on Person:
     // = Equipped Gear + Containers (empty weight) + Items inside containers (including physical currency in containers) + Carried loose items + Currently Held items
     let totalCarriedWeight = 0;
@@ -4201,10 +4368,11 @@ export class WeightInventoryEngine {
         ? 'ENCUMBERED: Slower Speed'
         : 'GOOD: Unencumbered';
 
-    const riderSummary = (stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0
+    const isActualMountOrVehicle = !stats.isMounted && stats.passengerWeight > 0;
+    const riderSummary = isActualMountOrVehicle && ((stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0)
       ? ` (Includes ${stats.passengerWeight} lbs rider/passenger load)`
       : '';
-    const weightSummaryLine = ((stats.passengersOrRiders && stats.passengersOrRiders.length > 0) || stats.passengerWeight > 0)
+    const weightSummaryLine = isActualMountOrVehicle
       ? `- Total Carried Weight on Mount/Vehicle: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${carriedWeightStatusBadge}${riderSummary}) | Max Lift/Draw: ${stats.maxLiftStrength} lbs`
       : `- Total Carried Weight on Person: ${stats.totalCarriedWeight} lbs / ${stats.bodyWeight} lbs (${stats.encumbranceRatio}% body weight - ${carriedWeightStatusBadge}) | Max Lift: ${stats.maxLiftStrength} lbs`;
 
@@ -4214,6 +4382,17 @@ export class WeightInventoryEngine {
       updated = updated.replace(/^[-\s]*Total Carried Weight on Person:.*$/im, weightSummaryLine);
     } else if (updated.match(/^[-\s]*Total Weight:.*$/im)) {
       updated = updated.replace(/^[-\s]*Total Weight:.*$/im, weightSummaryLine);
+    } else {
+      const contHeaderIdx = updated.indexOf('[CONTAINERS & CARRIED GEAR]') >= 0
+        ? updated.indexOf('[CONTAINERS & CARRIED GEAR]')
+        : updated.indexOf('[INVENTORY & EQUIPMENT]');
+      if (contHeaderIdx >= 0) {
+        const lineBreak = updated.indexOf('\n', contHeaderIdx);
+        if (lineBreak >= 0) {
+          updated = updated.substring(0, lineBreak + 1) + `${weightSummaryLine}\n` + updated.substring(lineBreak + 1);
+          changes.push('Added Total Carried Weight summary line');
+        }
+      }
     }
 
     // 4. Ensure [OWNED / STORED ITEMS (NOT ON PERSON)] section exists
@@ -4233,11 +4412,25 @@ export class WeightInventoryEngine {
     ])).filter(Boolean);
 
     const updatedLines = updated.split('\n');
+    let inNameOrDescSection = false;
     const filteredLines = updatedLines.filter(l => {
       const lower = l.toLowerCase();
+      if (lower.startsWith('[name') || lower.startsWith('[description')) {
+        inNameOrDescSection = true;
+      } else if (lower.startsWith('[')) {
+        inNameOrDescSection = false;
+      }
+
       if (lower.includes('total starting carried items count')) {
         return false;
       }
+
+      // If a body weight line is accidentally placed outside [NAME & DESCRIPTION], strip it so it doesn't pollute gear/holding
+      if (!inNameOrDescSection && /^[-\s*•]*(?:body\s*weight|own\s*body\s*weight|character\s*weight|character\s*body\s*weight|player\s*weight|entity\s*weight)\s*:\s*[0-9]+(?:\.[0-9]+)?\s*lbs?/i.test(l)) {
+        changes.push('Removed stray body weight line from gear/inventory section');
+        return false;
+      }
+
       if (lower.includes('stored to respect starting carried item limit')) {
         for (let i = 0; i < carriedNames.length; i++) {
           const carried = carriedNames[i];

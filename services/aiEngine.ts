@@ -274,7 +274,7 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
   * Rigid Items & "Does Not Fit" Rule: Rigid, inflexible items (e.g. iron armor, steel plate, breastplates, shields, staves, spears, solid wooden/metal chests) cannot fold down.
     - If a rigid item has ALL dimensions bigger than the smallest dimension of the container, it DOES NOT FIT at all in the first place! It cannot be placed into the container (flag as: "Item Name: ... (Does Not Fit: Rigid item's dimensions exceed container opening/smallest dimension)").
     - If a rigid item fits through the container opening but its length exceeds the container's max depth (e.g. a 60-inch staff placed inside an 18-inch backpack), it protrudes and overflows: "(Overflow: Yes - rigid item sticks out of container; heavier/bulkier items have higher chance of dropping by accident based on context and scaled random chance)".
-- Total Carried Weight on Person: (The code automatically sums all weight of equipped gear, armor, containers, and items inside containers, e.g. "24 lbs / 165 lbs (14.5% body weight - Good: Unencumbered)")
+- Total Carried Weight on Person: (The code automatically sums all weight of equipped gear, armor, containers, and items inside containers, e.g. "24 lbs / 165 lbs (14.5% body weight - Good: Unencumbered)"). CRITICAL: A character's OWN body weight is NEVER added into their carried weight! Only equipment, clothing, armor, containers, and inventory items carried on their person count towards Total Carried Weight. NEVER list "Body Weight" or the character's own body as an equipped or carried item!
 
 [OWNED / STORED ITEMS (NOT ON PERSON)]
 - (List of items owned by character that are NOT on their person right now — stored at home, vault, camp, stash, wagon, mount, or lost/buried. Every single owned item not on their person MUST have a specific location attached! Secret, buried, or lost items use hide[...] syntax for location so they remain hidden from others until discovered. Their weight is strictly NOT added to the character's carried weight)
@@ -312,7 +312,7 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 [MOUNT, VEHICLE & TRANSPORT STATUS]
 - Mounting / Riding Status: (Determined dynamically by AI. E.g. "Mounted on [Chestnut Warhorse] (Riding)", "Inside [Ironclad Carriage] (Passenger)", "Riding [Custom Skateboard]", or "None (On Foot / Independent)")
 - Mount / Vehicle Link: (Exact clickable reference to the mount, creature, vehicle, or item file: e.g. [Chestnut Warhorse] or [Ironclad Carriage])
-- If this entity IS a Mount or Vehicle carrying others:
+- If this entity IS a Mount or Vehicle carrying others (NOTE: humanoid characters on foot or riding something NEVER list themselves as a rider/passenger or add occupant weight to their own file; this is strictly for the mount/vehicle file itself):
   * Rider / Driver: (e.g. "[Sir Roderick-Player] (Weight: 225 lbs)")
   * Passengers / Occupants: (e.g. "[Lady Gwendolyn] (Weight: 130 lbs)" or "(None)")
   * Total Occupant Weight: (Sum of rider & passenger weights counted into this mount/vehicle's carried weight and encumbrance)
