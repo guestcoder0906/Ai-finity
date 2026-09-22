@@ -582,9 +582,17 @@ COMPLETE CHARACTER FILES & ZERO MISSING SECTIONS RULE (CRITICAL):
   * [STATS & MODIFIERS] (Health: Current/Max, Energy/Mana/Stamina: Current/Max, Speed: walking & running m/s, Primary Attributes with probability engine modifiers, Armor with material base & resistances)
   * [ATTACKS & COMBAT ACTIONS] (Every physical attack or standard action with damage, stamina cost, accuracy, special effects)
   * [ABILITIES & MAGIC] (Every spell/ability with cost, range, duration, cooldown, limitations, or "None")
-  * [INVENTORY & EQUIPMENT] (Items with weights/dimensions, equipped gear with full technical stats)
+  * [CONTAINERS & CARRIED GEAR] (All equipped containers with volume/dimensions/capacity, carried inventory nested within containers, equipped gear & armor, currently held items)
+  * [CURRENCY & FINANCIAL BALANCE] (Currency Type, Carried Balance on Person in pouch/wallet/pockets with individual itemized denominations, Stored/Remote Balance with location, Total Net Worth)
+  * [OWNED / STORED ITEMS (NOT ON PERSON)] (Items stored at home, base, camp, vaults, or stashes with locations)
   * [STATUS EFFECTS & LORE] (Active status effects with timestamps, deep lore, background, and biometrics)
 - It MUST contain every section completely—never omit, shorten, or forget any section.
+
+ANTI-LAZINESS & ZERO TRUNCATION MANDATE (CRITICAL):
+- NEVER be lazy. You are strictly forbidden from cutting corners, producing rushed one-liner narratives, skipping file sections, or truncating file outputs.
+- ZERO PLACEHOLDERS: NEVER use ellipses (...), abbreviations, or summaries like "// rest of file unchanged", "[same as before]", "... [previous content continues] ...", or skipping any file sections. Every file returned in the 'files' object MUST be 100% complete, fully articulated from top to bottom with every single section, stat, container, item, modifier, and description written out in full.
+- NARRATIVE DEPTH & COMPLETION: The narrative must never be lazy or cut short. Write a rich, immersive, multi-sensory response (typically 2 to 4 substantial paragraphs) covering atmosphere, physical effort and physics, environmental impact, NPC dialogue and body language, and full story consequences.
+- RIGOROUS CURRENCY & WEALTH LOGIC: Never be lazy with character wealth or currency transactions. When creating any character or inhabitant, dynamically reason about who they are (their background, occupation, lineage, social standing, and current situation) and determine authentic, setting-appropriate starting money. Articulate their [CURRENCY & FINANCIAL BALANCE] section with proper denominations, carried inside a realistic container (pouch, wallet, pocket, etc.). Whenever money changes hands—looted, earned, paid, spent, given, or found—record currency transactions accurately in "currencyTransactions", in 'updates', and in the narrative. Never forget currency! Every character who can handle money MUST have their [CURRENCY & FINANCIAL BALANCE] section active!
 
 COMPREHENSIVE STORY & STAT UPDATE RESOLUTION RULE (CRITICAL):
 - Make sure the AI does not forget anything needed to update whenever an action genuinely alters game state (such as combat damage, genuine physical exhaustion from heavy exertion or spellcasting, healing, or inventory changes)—instead of cutting the story short and not finishing that part of the story.
@@ -818,8 +826,8 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. If the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
-          const res = await this.handleRequest(prompt, undefined, username);
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. If the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
           resolve(res);
         } catch (e) {
           console.error("Initialization failed", e);
@@ -885,7 +893,7 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
 
           // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
           const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}`;
-          const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.1-flash-lite');
+          const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.8-flash');
           const audit = this.extractJSON(auditRaw);
 
           if (!audit) throw new Error("Audit failed");
@@ -1100,9 +1108,13 @@ CRITICAL REMINDERS:
        }
      ]
 11. JSON SYNTAX: Close the "files" object with a curly brace "}" before "gameOver". NEVER close "files" with a square bracket "]".
-12. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.`;
+12. PLAYER ACTION PRESERVATION (CRITICAL): Do NOT change, sanitize, or alter what the player chose to do, even if their action seems strange, silly, reckless, or "doesn't make sense". A player can attempt ANY action within their context unless it is strictly physically/magically impossible. Faithfully narrate and resolve the exact action they took and authentic consequences in the world.
+13. ANTI-LAZINESS & CRAFTSMANSHIP MANDATE (CRITICAL):
+    - NEVER be lazy. Do NOT cut corners, skip file sections, or produce rushed, hollow one-liner narratives.
+    - Every file in the "files" map MUST be written out completely from top to bottom with zero placeholders, zero abbreviations, and zero omitted containers, currency, items, or stats.
+    - Write an immersive, multi-paragraph narrative (2-4 rich paragraphs) that fully finishes and resolves the player's action with realistic physical feedback, environmental reactions, and dialogue.`;
 
-          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.1-flash-lite', audit);
+          const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.8-flash', audit);
           
           // Post-process spatial consistency (Old map state already captured via fs.read in handleRequest/enforceSpatialConsistency)
           const latestMapRaw = this.fs.read('CurrentMap.json');
@@ -3208,17 +3220,29 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       for (const u of data.updates) {
         if (u.currency) {
           transactions.push(u.currency);
-        } else if (u.type === 'currency' || u.category === 'currency') {
+        } else {
+          // Check all update texts for currency entries
           const parsed = WeightInventoryEngine.parseCurrencyEntries(u.text || '');
-          const isDeduction = (u.value !== undefined && u.value < 0) || (u.text && u.text.trim().startsWith('-'));
-          for (const p of parsed) {
-            transactions.push({
-              name: p.name,
-              amount: Math.abs(p.amount),
-              operation: isDeduction ? 'deduct' : 'add',
-              container: p.container,
-              rawText: u.text
-            });
+          if (parsed.length > 0) {
+            const textLower = (u.text || '').toLowerCase();
+            const isDeduction = (u.value !== undefined && u.value < 0) ||
+              textLower.trim().startsWith('-') ||
+              /\b(?:spent|paid|lost|give|gave|giving|deduct|purchase|bought|donat|tip|tipped|handed over)\b/i.test(textLower);
+            for (const p of parsed) {
+              const alreadyExists = transactions.some(t =>
+                t.name.toLowerCase() === p.name.toLowerCase() &&
+                t.amount === Math.abs(p.amount)
+              );
+              if (!alreadyExists) {
+                transactions.push({
+                  name: p.name,
+                  amount: Math.abs(p.amount),
+                  operation: isDeduction ? 'deduct' : 'add',
+                  container: p.container,
+                  rawText: u.text
+                });
+              }
+            }
           }
         }
       }
@@ -3233,6 +3257,52 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         );
         if (!exists) {
           transactions.push(t);
+        }
+      }
+    }
+
+    // 2. Anti-Laziness Narrative Fallback: If the model generated a narrative that gives or takes currency but forgot structured updates
+    if (typeof data.narrative === 'string' && data.narrative.trim()) {
+      const narrative = data.narrative;
+      // Check for acquisition patterns
+      const gainRegex = /\b(?:finds?|found|receive[ds]?|earned?|rewarded(?:\s+with)?|looted?|collect(?:s|ed)?|pockets?|handed\s+(?:you|him|her|them)|given\s+(?:to\s+)?(?:you|him|her|them)|gains?|gained)\s+([^.!?\n]+)/gi;
+      let gMatch;
+      while ((gMatch = gainRegex.exec(narrative)) !== null) {
+        const phrase = gMatch[1];
+        const parsed = WeightInventoryEngine.parseCurrencyEntries(phrase);
+        for (const p of parsed) {
+          const exists = transactions.some(t =>
+            t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
+          );
+          if (!exists) {
+            transactions.push({
+              name: p.name,
+              amount: Math.abs(p.amount),
+              operation: 'add',
+              rawText: gMatch[0].trim()
+            });
+          }
+        }
+      }
+
+      // Check for spending/giving patterns
+      const lossRegex = /\b(?:pays?|paid|spen[td]|hand(?:ed)?\s+over|donat(?:es?|ed)|tips?|tipped|bought\s+[^.!?\n]+?\s+for)\s+([^.!?\n]+)/gi;
+      let lMatch;
+      while ((lMatch = lossRegex.exec(narrative)) !== null) {
+        const phrase = lMatch[1];
+        const parsed = WeightInventoryEngine.parseCurrencyEntries(phrase);
+        for (const p of parsed) {
+          const exists = transactions.some(t =>
+            t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
+          );
+          if (!exists) {
+            transactions.push({
+              name: p.name,
+              amount: Math.abs(p.amount),
+              operation: 'deduct',
+              rawText: lMatch[0].trim()
+            });
+          }
         }
       }
     }
@@ -3313,16 +3383,34 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         if (matchIdx >= 0) {
           pStats.currency.carriedCurrencies[matchIdx].amount += tx.amount;
         } else {
+          // Prefer pouch, wallet, purse, pocket, money belt, or first container
+          const targetCont = tx.container ||
+            pStats.containers.find(ct => /pouch|wallet|purse|pocket|money\s*belt/i.test(ct.name))?.name ||
+            (pStats.containers.length > 0 ? pStats.containers[0].name : undefined);
           pStats.currency.carriedCurrencies.push({
             name: tx.name,
             amount: tx.amount,
-            container: tx.container || (pStats.containers.length > 0 ? pStats.containers[0].name : undefined)
+            container: targetCont
           });
         }
         changed = true;
       }
 
       if (changed) {
+        // Ensure data.updates reflects the transaction if not already present
+        if (data.updates && Array.isArray(data.updates)) {
+          const hasUpdate = data.updates.some(u =>
+            u.text && u.text.toLowerCase().includes(tx.name.toLowerCase()) && u.text.includes(tx.amount.toString())
+          );
+          if (!hasUpdate) {
+            data.updates.push({
+              type: 'currency',
+              text: `${isDeduction ? 'Spent/Gave' : 'Acquired'} ${tx.amount.toLocaleString()} ${tx.name}${tx.container ? ` (${tx.container})` : ''}`,
+              value: isDeduction ? -tx.amount : tx.amount
+            });
+          }
+        }
+
         try {
           const activeTime = this.fs.read('WorldTime.txt') || undefined;
           const res = WeightInventoryEngine.syncCharacterFileContent(updatedContent, activeTime, { carried: pStats.currency.carriedCurrencies });
@@ -3515,10 +3603,20 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           }
           const displayName = (typeof fileData === 'object' && (fileData as any).displayName) ? (fileData as any).displayName : undefined;
 
+          // Anti-Laziness Guard: Check for truncated placeholder files attempting to replace rich existing files
+          const existingFile = this.fs.read(filename);
+          if (typeof contentStr === 'string' && existingFile && existingFile.length > 250) {
+            const isTruncatedPlaceholder = /\.\.\.\s*(?:rest of|same as|unchanged|previous|content continues)|\/\/\s*\.\.\.|\[rest of [^\]]+ unchanged\]|\[same as before\]/i.test(contentStr);
+            if (isTruncatedPlaceholder) {
+              console.warn(`[Anti-Laziness Guard] Detected placeholder/truncated file content for ${filename}. Preserving existing rich content.`);
+              contentStr = existingFile;
+            }
+          }
+
           // Auto-synchronize weight, dimensions, containers, and encumbrance on character files
           if (typeof contentStr === 'string' && filename.endsWith('.txt') && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CONTAINERS') || contentStr.includes('[INVENTORY'))) {
             try {
-              const existingCharacterFile = this.fs.read(filename);
+              const existingCharacterFile = existingFile;
               // If this is a newly created character file, enforce starting inventory carrying limit (<= 2x hand slots)
               if (!existingCharacterFile) {
                 const limitEnforcement = WeightInventoryEngine.enforceStartingInventoryLimit(contentStr);
@@ -4319,7 +4417,7 @@ INSTRUCTIONS:
 
       const ai = this.getAI();
       const response = await ai.models.generateContent({
-        model: modelName || 'gemini-3.1-flash-lite',
+        model: modelName || (typeof process !== 'undefined' && process.env?.VITE_GEMINI_MODEL) || 'gemini-3.8-flash',
         contents: contents,
         config: {
           systemInstruction: SYSTEM_PROMPT,

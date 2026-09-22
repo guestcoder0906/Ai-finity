@@ -957,7 +957,22 @@ function App() {
         // Host creates character for new player
         updateProcessing(1);
         try {
-          const prompt = `Create a highly detailed and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".\n\nCRITICAL: Check your context. If a character file for player "${newUsername}" (ending in "-${newUsername}.txt") ALREADY EXISTS, you MUST update that specific file and NOT create a new one. Do not create duplicates. Return the character file AND update "CurrentMap.json" to place the new player at the appropriate starting location. DO NOT modify, empty, or delete ANY OTHER existing files (do not use null). Make sure the character file includes Physical Dimensions (Height, Width, Depth), Body Weight, Speed, Max Lift Strength (100% of body weight for average human with 1.0x strength), equipped containers with max space dimensions (e.g. 18x12 inches for backpack), items with detectable weights and dimensions, and total carried weight.\n\nSTARTING INVENTORY LIMIT RULE (CRITICAL): The maximum number of carrying items this character starts with (equipped gear + carried in containers) MUST BE LESS THAN OR EQUAL TO 2x their hand slots (e.g. max 4 items for a 2-handed humanoid; 1 slot = max 2 items). Any additional items, background equipment, or family heirlooms must be placed under [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached location (e.g. [Location: Starting Home / Camp Stash]). During the adventure, characters can carry more than this limit!`;
+          const prompt = `Create a highly detailed, rich, and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".
+
+CRITICAL ANTI-LAZINESS MANDATE:
+- Do NOT be lazy, rushed, or cut corners. Never use placeholders (like "...", "// etc", "[same as before]"), abbreviations, or incomplete summaries.
+- Fill out EVERY single section completely and articulately: [NAME & DESCRIPTION], [STATS & MODIFIERS], [ATTACKS & COMBAT ACTIONS], [ABILITIES & MAGIC], [CONTAINERS & CARRIED GEAR], [CURRENCY & FINANCIAL BALANCE], [OWNED / STORED ITEMS (NOT ON PERSON)], and [STATUS EFFECTS & LORE].
+- Make sure the character file includes Physical Dimensions (Height, Width, Depth), Body Weight, Speed, Max Lift Strength (100% of body weight for average human with 1.0x strength), equipped containers with max space dimensions (e.g. 18x12 inches for backpack), items with detectable weights and dimensions, and total carried weight.
+
+DYNAMIC SETTING-APPROPRIATE STARTING CURRENCY & WEALTH (CRITICAL):
+- Never be lazy about money or forget starting funds. Dynamically reason about this character's background, social status, profession, and world setting to determine authentic, realistic starting wealth.
+- In [CURRENCY & FINANCIAL BALANCE], detail their Currency Type, Carried Balance (On Person) itemized with denominations, and assign it to an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they have savings, family heirlooms, or deposits, detail them under Stored Balance.
+- In the 'updates' array, include an update acknowledging their starting currency.
+
+STARTING INVENTORY LIMIT RULE (CRITICAL):
+- The maximum number of carrying items this character starts with (equipped gear + carried in containers) MUST BE LESS THAN OR EQUAL TO 2x their hand slots (e.g. max 4 items for a 2-handed humanoid; 1 slot = max 2 items). Any additional items, background equipment, or family heirlooms must be placed under [OWNED / STORED ITEMS (NOT ON PERSON)] with an attached location (e.g. [Location: Starting Home / Camp Stash]). During the adventure, characters can carry more than this limit!
+
+CRITICAL: Check your context. If a character file for player "${newUsername}" (ending in "-${newUsername}.txt") ALREADY EXISTS, you MUST update that specific file and NOT create a new one. Do not create duplicates. Return the character file AND update "CurrentMap.json" to place the new player at the appropriate starting location. DO NOT modify, empty, or delete ANY OTHER existing files (do not use null).`;
           await aiEngine.processAction(prompt);
           ms.syncState({
             fileSystemState: fileSystem.exportState(),
