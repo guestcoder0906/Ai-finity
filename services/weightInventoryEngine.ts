@@ -1617,7 +1617,7 @@ export class WeightInventoryEngine {
    * - "Staff of Power: Weight: 4 lbs. Dimensions: 60x2x2 inches. Container: Backpack (Overflow: Yes - sticks out)"
    */
   public static parseItemLine(line: string, defaultContainer?: string): ItemInfo | null {
-    const trimmed = line.trim().replace(/^[-*•>]\s*/, '');
+    const trimmed = line.trim().replace(/^[-*•>\s]+/, '').replace(/^\d+[\.)]\s*/, '');
     if (!trimmed || (trimmed.startsWith('[') && trimmed.endsWith(']') && !trimmed.includes(':') && !/\b(?:weight|lbs?|dimensions?)\b/i.test(trimmed))) return null;
 
     // Check if it's a category header or section line
@@ -2677,8 +2677,8 @@ export class WeightInventoryEngine {
             }
 
             cont.items.push(item);
-            cont.currentItemsWeight += item.weight;
-            cont.totalWeight += item.weight;
+            cont.currentItemsWeight = Math.round((cont.currentItemsWeight + item.weight) * 100) / 100;
+            cont.totalWeight = Math.round((cont.totalWeight + item.weight) * 100) / 100;
           } else if (lower.includes('equipped') || lower.includes('wielding') || lower.includes('wearing') || lower.includes('armor:')) {
             item.category = 'equipped';
             equippedGear.push(item);
@@ -3139,7 +3139,7 @@ export class WeightInventoryEngine {
       depth,
       dimensionsRaw,
       dimensionsApply,
-      bodyWeight: Math.round(bodyWeight * 10) / 10,
+      bodyWeight: Math.round(bodyWeight * 100) / 100,
       strengthMultiplier,
       maxLiftStrength,
       baseWalkingSpeed,
@@ -3152,13 +3152,13 @@ export class WeightInventoryEngine {
       encumbranceApplies,
       encumbranceImmunityReason,
       encumbranceEffectDescription,
-      totalCarriedWeight: Math.round(totalCarriedWeight * 10) / 10,
+      totalCarriedWeight: Math.round(totalCarriedWeight * 100) / 100,
       currency,
       isMounted,
       mountedEntityName,
       mountedStatusDescription,
       passengersOrRiders,
-      passengerWeight: Math.round(passengerWeight * 10) / 10,
+      passengerWeight: Math.round(passengerWeight * 100) / 100,
       currentlyHolding,
       holdingCapacity,
       handSlots,
