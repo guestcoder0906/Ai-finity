@@ -1,7 +1,13 @@
-import React, { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { FileSystem } from '../services/fileSystem';
 import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff } from 'lucide-react';
 import { resolveMapEntityName } from '../services/visibilityEngine';
+import {
+  buildPlayerRegistry,
+  resolvePlayerIdentity,
+  deduplicatePlayersOnMap,
+  reconcileRegisteredPlayersOnMap
+} from '../services/mapPlayerEngine';
 
 interface MapPanelProps {
   fileSystem: FileSystem;
@@ -105,6 +111,10 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     }
   }));
 
+  const playerRegistry = useMemo(() => {
+    return buildPlayerRegistry(files, fileSystem);
+  }, [files, fileSystem]);
+
   useEffect(() => {
     const content = fileSystem.read('CurrentMap.json');
     if (content) {
@@ -124,7 +134,10 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           const userLower = username.toLowerCase();
           let targetIndex = -1;
           for (let i = currentPages.length - 1; i >= 0; i--) {
-            if (currentPages[i].players?.some((pl: any) => (pl.username || pl.name || pl.characterName || '').toLowerCase() === userLower)) {
+            if (currentPages[i].players?.some((pl: any) => {
+              const res = resolvePlayerIdentity(pl, playerRegistry);
+              return res.canonicalKey === userLower;
+            })) {
               targetIndex = i;
               break;
             }
@@ -139,7 +152,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     } else {
       setMapData(null);
     }
-  }, [fileSystem, files, syncCount, username]);
+  }, [fileSystem, files, syncCount, username, playerRegistry]);
 
   // Robust multi-structure resolution for pages:
   let pages: any[] = [];
@@ -151,54 +164,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     pages = [{ name: 'World Map', ...mapData }];
   }
 
-  // Cross-page deduplication guard: Ensure each player is only on ONE map page
-  // If the AI or stale state forgot to remove the player's last position on the previous map,
-  // scanning from latest page (highest index) to earliest page preserves the active new position
-  // and purges the duplicate from earlier map pages.
-  if (pages.length > 1) {
-    const seenPlayerKeys = new Set<string>();
-    for (let pIdx = pages.length - 1; pIdx >= 0; pIdx--) {
-      const p = pages[pIdx];
-      if (Array.isArray(p.players)) {
-        p.players = p.players.filter((pl: any) => {
-          const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-          if (!key) return true;
-          if (seenPlayerKeys.has(key)) {
-            return false; // Drop duplicate player from older map page
-          }
-          seenPlayerKeys.add(key);
-          return true;
-        });
-      }
-    }
-  }
+  // Deduplicate and canonicalize players across and within pages using canonical identity registry
+  deduplicatePlayersOnMap(pages, playerRegistry, { activeUsername: username });
+  reconcileRegisteredPlayersOnMap(pages, playerRegistry);
+  deduplicatePlayersOnMap(pages, playerRegistry, { activeUsername: username });
 
-  // Intra-page deduplication guard: Ensure no player has multiple entries on the same page
-  for (const p of pages) {
-    if (Array.isArray(p.players) && p.players.length > 1) {
-      const pageSeen = new Set<string>();
-      const deduped: any[] = [];
-      for (let i = p.players.length - 1; i >= 0; i--) {
-        const pl = p.players[i];
-        const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-        if (key && pageSeen.has(key)) continue;
-        if (key) pageSeen.add(key);
-        deduped.unshift(pl);
-      }
-      p.players = deduped;
-    }
-  }
-
-  // Ensure every player and NPC with a character file is represented on the map
+  // Ensure every NPC with a character file is represented on the map
   if (pages.length > 0) {
-    const allUsernamesOnMap = new Set<string>();
     const allNpcNamesOnMap = new Set<string>();
 
     pages.forEach(p => {
-      (p.players || []).forEach((pl: any) => {
-        const u = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-        if (u) allUsernamesOnMap.add(u);
-      });
       (p.npcs || []).forEach((n: any) => {
         const nName = (n.name || '').trim().toLowerCase();
         if (nName) {
@@ -208,12 +183,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       });
     });
 
-    const playerFiles: { filename: string; charName: string; username: string }[] = [];
     const npcFiles: { filename: string; charName: string }[] = [];
 
     (files || []).forEach(f => {
       if (!f.endsWith('.txt')) return;
-      if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat')) return;
+      if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') return;
 
       const base = f.replace(/\.txt$/, '');
       const lower = f.toLowerCase();
@@ -227,29 +201,14 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         const charName = parts.slice(0, -1).join('-').trim();
         if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
           npcFiles.push({ filename: f, charName: charName || base });
-        } else {
-          playerFiles.push({ filename: f, charName: charName || suffix, username: suffix });
         }
       } else {
         const content = fileSystem.read(f);
-        if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]') || content.includes('[CURRENTLY HOLDING]'))) {
-          npcFiles.push({ filename: f, charName: base });
+        if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
+          if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
+            npcFiles.push({ filename: f, charName: base });
+          }
         }
-      }
-    });
-
-    playerFiles.forEach(pf => {
-      if (pf.username && !allUsernamesOnMap.has(pf.username.toLowerCase()) && !allUsernamesOnMap.has(pf.charName.toLowerCase())) {
-        if (!pages[0].players) pages[0].players = [];
-        const offset = pages[0].players.length;
-        pages[0].players.push({
-          username: pf.username,
-          characterName: pf.charName || pf.username,
-          x: 10 + (offset * 8),
-          y: 15 + (offset * 6),
-          facing: 0
-        });
-        allUsernamesOnMap.add(pf.username.toLowerCase());
       }
     });
 
@@ -1199,10 +1158,14 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const px = Number(player.x) || 0;
             const py = Number(player.y) || 0;
             const pfacing = Number(player.facing) || 0;
-            const isMe = String(player.username).toLowerCase() === String(username).toLowerCase();
+            const res = resolvePlayerIdentity(player, playerRegistry);
+            const isMe = res.canonicalKey === String(username).toLowerCase();
+            const displayName = res.characterName && res.characterName !== res.username
+              ? `${res.characterName} (${res.username})`
+              : res.characterName || res.username;
 
             return (
-              <g key={player.username || i} className="group cursor-pointer">
+              <g key={res.canonicalKey || player.username || i} className="group cursor-pointer">
                 {/* Vision Cones */}
                 {player.vision && (
                   <>
@@ -1239,7 +1202,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     className="fill-white text-[5.5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
-                    {player.characterName && player.characterName !== player.username ? `${player.characterName} (${player.username})` : player.username}
+                    {displayName}
                   </text>
                 </g>
               </g>

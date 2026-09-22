@@ -3,6 +3,13 @@ import { FileSystem } from "./fileSystem";
 import { AIResponse, CheckDef, UpdateItem, TimeTravelDirective } from "../types";
 import { WeightInventoryEngine } from "./weightInventoryEngine";
 import { HistoryService } from "./historyService";
+import {
+  buildPlayerRegistry,
+  resolvePlayerIdentity,
+  deduplicatePlayersOnMap,
+  reconcileRegisteredPlayersOnMap,
+  RegisteredPlayer
+} from "./mapPlayerEngine";
 
 interface DetectedModifier {
   label: string;
@@ -3799,116 +3806,41 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     return { pages: [parsed] };
   }
 
+  private getFileNamesList(): string[] {
+    if (!this.fs) return [];
+    if (typeof (this.fs as any).list === 'function') {
+      return (this.fs as any).list();
+    }
+    if (typeof (this.fs as any).listFiles === 'function') {
+      return (this.fs as any).listFiles();
+    }
+    if (typeof (this.fs as any).getAll === 'function') {
+      return Object.keys((this.fs as any).getAll() || {});
+    }
+    if ((this.fs as any).files && typeof (this.fs as any).files === 'object') {
+      return Object.keys((this.fs as any).files);
+    }
+    return [];
+  }
+
   /**
    * Cleans any duplicate player occurrences across or within pages.
-   * If the AI forgot to remove a player's last position in their previous map or left a duplicate entry,
-   * this identifies the stale previous position and removes it so each player exists strictly ONCE.
+   * Ensures each player exists strictly ONCE across the entire map,
+   * purging any stale positions left from prior turns or previous map scenes.
    */
   private cleanDuplicatePlayerPositions(
     normalized: { pages: any[] },
     oldPlayerLocations: Map<string, { pageIndex: number; pageName: string; x: number; y: number; facing: number; raw: any }>,
-    username?: string
+    username?: string,
+    playerRegistry?: RegisteredPlayer[]
   ): void {
     if (!normalized.pages || normalized.pages.length === 0) return;
-
-    // Collect all unique player keys present across all pages
-    const playerKeys = new Set<string>();
-    for (const page of normalized.pages) {
-      if (Array.isArray(page.players)) {
-        for (const pl of page.players) {
-          const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-          if (key) playerKeys.add(key);
-        }
-      }
-    }
-
-    for (const pKey of playerKeys) {
-      // Find all occurrences of this player across all pages
-      const occurrences: {
-        pageIndex: number;
-        pageName: string;
-        playerIndex: number;
-        playerObj: any;
-        score: number;
-      }[] = [];
-
-      const oldLoc = oldPlayerLocations.get(pKey);
-
-      for (let pIdx = 0; pIdx < normalized.pages.length; pIdx++) {
-        const page = normalized.pages[pIdx];
-        const pageName = (page.name || '').trim().toLowerCase();
-        if (Array.isArray(page.players)) {
-          for (let plIdx = 0; plIdx < page.players.length; plIdx++) {
-            const pl = page.players[plIdx];
-            const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-            if (key === pKey) {
-              const px = Number(pl.x) || 0;
-              const py = Number(pl.y) || 0;
-
-              let score = 0;
-
-              if (oldLoc) {
-                const samePage = pageName === oldLoc.pageName || pIdx === oldLoc.pageIndex;
-                const sameCoords = Math.abs(px - oldLoc.x) < 0.2 && Math.abs(py - oldLoc.y) < 0.2;
-
-                if (samePage && sameCoords) {
-                  // This matches the exact last position on the last map! Mark as stale.
-                  score -= 100;
-                } else if (!samePage) {
-                  // This is on a different/new map page (the player transitioned here)
-                  score += 100;
-                } else {
-                  // Same page but updated coordinates
-                  score += 50;
-                }
-              }
-
-              // Favor higher page index (newer scene) and later position in array (latest write)
-              score += pIdx * 10 + plIdx;
-
-              occurrences.push({
-                pageIndex: pIdx,
-                pageName,
-                playerIndex: plIdx,
-                playerObj: pl,
-                score
-              });
-            }
-          }
-        }
-      }
-
-      // If there's more than one occurrence, purge duplicates
-      if (occurrences.length > 1) {
-        // Sort occurrences by score descending (highest score = the intended current position)
-        occurrences.sort((a, b) => b.score - a.score);
-
-        const winner = occurrences[0];
-        console.log(`[cleanDuplicatePlayerPositions] Player "${pKey}" had ${occurrences.length} duplicate positions. Keeping active position on page "${winner.pageName}" at (${winner.playerObj.x}, ${winner.playerObj.y}), removing stale duplicate from previous map.`);
-
-        // All occurrences after index 0 are duplicates to remove
-        const toRemove = occurrences.slice(1);
-
-        // Group removals by page and remove from back to front to preserve array indices
-        const removalsByPage = new Map<number, number[]>();
-        for (const rem of toRemove) {
-          if (!removalsByPage.has(rem.pageIndex)) {
-            removalsByPage.set(rem.pageIndex, []);
-          }
-          removalsByPage.get(rem.pageIndex)!.push(rem.playerIndex);
-        }
-
-        for (const [pageIdx, indices] of removalsByPage.entries()) {
-          indices.sort((a, b) => b - a);
-          const targetPage = normalized.pages[pageIdx];
-          if (targetPage && Array.isArray(targetPage.players)) {
-            for (const idx of indices) {
-              targetPage.players.splice(idx, 1);
-            }
-          }
-        }
-      }
-    }
+    const allFiles = this.getFileNamesList();
+    const registry = playerRegistry || buildPlayerRegistry(allFiles, this.fs);
+    deduplicatePlayersOnMap(normalized.pages, registry, {
+      activeUsername: username,
+      oldPlayerLocations
+    });
   }
 
   /**
@@ -3921,6 +3853,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     if (!normalized.pages || normalized.pages.length === 0) {
       normalized.pages = [{ name: 'World Map', areas: [], players: [], items: [], landmarks: [] }];
     }
+
+    const allFileNames = this.getFileNamesList();
+    const playerRegistry = buildPlayerRegistry(allFileNames, this.fs);
 
     // Distribute root-level entities to page 0 if present (only if pages don't already have players)
     const hasAnyPagePlayers = normalized.pages.some((p: any) => Array.isArray(p.players) && p.players.length > 0);
@@ -3963,7 +3898,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         const oPageName = (oPage.name || '').trim().toLowerCase();
         if (Array.isArray(oPage.players)) {
           for (const pl of oPage.players) {
-            const key = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
+            const res = resolvePlayerIdentity(pl, playerRegistry);
+            const key = res.canonicalKey;
             if (key && !oldPlayerLocations.has(key)) {
               oldPlayerLocations.set(key, {
                 pageIndex: pIdx,
@@ -4006,13 +3942,13 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
               newPage.players = [];
             }
             for (const oldPlayer of matchingOldPage.players) {
-              const oldUName = (oldPlayer.username || oldPlayer.name || oldPlayer.characterName || '').trim().toLowerCase();
-              if (!oldUName) continue;
+              const oldRes = resolvePlayerIdentity(oldPlayer, playerRegistry);
+              if (!oldRes.canonicalKey) continue;
 
               const alreadyExistsAnywhere = normalized.pages.some((p: any) =>
                 Array.isArray(p.players) && p.players.some((existing: any) => {
-                  const eKey = (existing.username || existing.name || existing.characterName || '').trim().toLowerCase();
-                  return eKey === oldUName;
+                  const eRes = resolvePlayerIdentity(existing, playerRegistry);
+                  return eRes.canonicalKey === oldRes.canonicalKey;
                 })
               );
 
@@ -4112,28 +4048,20 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
 
     // Clean any duplicates across or within pages (removes player's stale last position)
-    this.cleanDuplicatePlayerPositions(normalized, oldPlayerLocations, username);
+    deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
+      activeUsername: username,
+      oldPlayerLocations
+    });
 
     // 3. File-System Player & NPC Verification:
     // Ensure every player and NPC with a character file is represented on the map
     try {
-      let allFiles: string[] = [];
-      if (this.fs) {
-        if (typeof (this.fs as any).list === 'function') {
-          allFiles = (this.fs as any).list();
-        } else if (typeof (this.fs as any).listFiles === 'function') {
-          allFiles = (this.fs as any).listFiles();
-        } else if (typeof (this.fs as any).getAll === 'function') {
-          allFiles = Object.keys((this.fs as any).getAll() || {});
-        } else if ((this.fs as any).files && typeof (this.fs as any).files === 'object') {
-          allFiles = Object.keys((this.fs as any).files);
-        }
-      }
+      // Reconcile players cleanly using player registry
+      reconcileRegisteredPlayersOnMap(normalized.pages, playerRegistry);
 
-      const playerFiles: { filename: string; charName: string; username: string }[] = [];
+      // Reconcile NPCs (ensure no NPCs are forgotten on the map)
       const npcFiles: { filename: string; charName: string }[] = [];
-
-      for (const f of allFiles) {
+      for (const f of allFileNames) {
         if (!f.endsWith('.txt')) continue;
         if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') continue;
 
@@ -4149,47 +4077,17 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           const charName = parts.slice(0, -1).join('-').trim();
           if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
             npcFiles.push({ filename: f, charName: charName || base });
-          } else {
-            playerFiles.push({ filename: f, charName: charName || suffix, username: suffix });
           }
         } else {
-          // File without hyphen: check if it's an NPC character sheet
           const content = this.fs ? this.fs.read(f) : null;
-          if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]') || content.includes('[CURRENTLY HOLDING]'))) {
-            npcFiles.push({ filename: f, charName: base });
+          if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
+            if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
+              npcFiles.push({ filename: f, charName: base });
+            }
           }
         }
       }
 
-      // Reconcile players
-      const allMapUsernames = new Set<string>();
-      for (const p of normalized.pages) {
-        if (Array.isArray(p.players)) {
-          for (const pl of p.players) {
-            const u = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
-            if (u) allMapUsernames.add(u);
-          }
-        }
-      }
-
-      for (const pf of playerFiles) {
-        if (pf.username && !allMapUsernames.has(pf.username.toLowerCase()) && !allMapUsernames.has(pf.charName.toLowerCase())) {
-          if (!Array.isArray(normalized.pages[0].players)) {
-            normalized.pages[0].players = [];
-          }
-          const existingCount = normalized.pages[0].players.length;
-          normalized.pages[0].players.push({
-            username: pf.username,
-            characterName: pf.charName || pf.username,
-            x: 10 + (existingCount * 8),
-            y: 15 + (existingCount * 6),
-            facing: 0
-          });
-          allMapUsernames.add(pf.username.toLowerCase());
-        }
-      }
-
-      // Reconcile NPCs (ensure no NPCs are forgotten on the map)
       const allMapNpcNames = new Set<string>();
       for (const p of normalized.pages) {
         if (Array.isArray(p.npcs)) {
@@ -4228,7 +4126,10 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
 
     // Final deduplication pass
-    this.cleanDuplicatePlayerPositions(normalized, oldPlayerLocations, username);
+    deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
+      activeUsername: username,
+      oldPlayerLocations
+    });
 
     return normalized;
   }
