@@ -822,41 +822,74 @@ const Sidebar: React.FC<SidebarProps> = ({
 
                                   {pStats.currentlyHolding.length > 0 ? (
                                     <div className="text-[9px] text-gray-300 pl-1 border-l border-amber-800/60 space-y-1 mt-0.5">
-                                      {pStats.currentlyHolding.map((it, hi) => (
-                                        <div key={hi} className={`p-1 rounded ${it.isOverflowHold ? 'bg-red-950/40 border border-red-900/60' : 'bg-neutral-950/60'}`}>
-                                          <div className="flex justify-between items-center">
-                                            <span className="font-medium text-amber-200">
-                                              • {it.holdingLimb ? <span className="text-neutral-400 font-normal">[{it.holdingLimb}] </span> : null}
-                                              {it.name.replace(/^[-*•>\s]*(?:(?:right|left|main|off|both)?\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?|tentacles?|trunk|held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+hands?|overflow\s+hold)[:=\s]+/i, '').replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '').trim() || it.name}
-                                            </span>
-                                            <span className="font-mono text-gray-400 text-[8.5px]">
-                                              {it.weight} lbs ({(() => {
-                                                const raw = it.dimensions?.raw || '';
-                                                const dimMatch = raw.match(/([0-9.]+\s*x\s*[0-9.]+(?:\s*x\s*[0-9.]+)?\s*(?:in|inch|inches|cm|m|ft)?)/i);
-                                                if (dimMatch) return dimMatch[1].trim();
-                                                if (raw.length <= 25 && !raw.includes(':') && !raw.toLowerCase().includes('overflow')) return raw;
-                                                if (it.dimensions?.height !== undefined && it.dimensions?.width !== undefined) {
-                                                  return `${it.dimensions.height}x${it.dimensions.width}${it.dimensions.depth !== undefined ? `x${it.dimensions.depth}` : ''} in`;
-                                                }
-                                                return 'Standard size';
-                                              })()})
-                                            </span>
-                                          </div>
-                                          {it.isOverflowHold && (
-                                            <div className="text-[8px] text-red-400 flex items-center justify-between mt-0.5 pt-0.5 border-t border-red-900/40">
-                                              <div className="flex items-center gap-1 truncate pr-1">
-                                                <AlertTriangle size={9} className="shrink-0 text-red-400" />
-                                                <span className="truncate">{it.overflowWarning || 'Held with overflow; heavier/bulkier items drop first.'}</span>
-                                              </div>
-                                              {it.dropChancePercent !== undefined && (
-                                                <span className="font-mono font-bold text-red-200 shrink-0">
-                                                  {it.dropChancePercent}% drop
+                                      {pStats.currentlyHolding
+                                        .filter((it, idx, arr) => {
+                                          const cleanName = (it.name || '')
+                                            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?[:=\s-]*/i, '')
+                                            .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]\s*/i, '')
+                                            .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
+                                            .trim()
+                                            .toLowerCase();
+                                          const key = `${(it.holdingLimb || '').toLowerCase()}|${cleanName}|${it.weight}`;
+                                          return (
+                                            idx ===
+                                            arr.findIndex(other => {
+                                              const otherClean = (other.name || '')
+                                                .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?[:=\s-]*/i, '')
+                                                .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]\s*/i, '')
+                                                .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
+                                                .trim()
+                                                .toLowerCase();
+                                              return `${(other.holdingLimb || '').toLowerCase()}|${otherClean}|${other.weight}` === key;
+                                            })
+                                          );
+                                        })
+                                        .map((it, hi) => {
+                                          let cleanDisplayName = it.name
+                                            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?[:=\s-]*/i, '')
+                                            .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]\s*/i, '')
+                                            .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
+                                            .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
+                                            .trim();
+                                          if (!cleanDisplayName || cleanDisplayName === '(Two-Handed)' || cleanDisplayName === '/ Arms' || cleanDisplayName.toLowerCase() === 'two-handed' || cleanDisplayName.toLowerCase() === 'hands') {
+                                            cleanDisplayName = it.holdingLimb?.includes('Two-Handed') ? 'Two-Handed Item' : 'Held Item';
+                                          }
+                                          return (
+                                            <div key={hi} className={`p-1 rounded ${it.isOverflowHold ? 'bg-red-950/40 border border-red-900/60' : 'bg-neutral-950/60'}`}>
+                                              <div className="flex justify-between items-center">
+                                                <span className="font-medium text-amber-200">
+                                                  • {it.holdingLimb ? <span className="text-neutral-400 font-normal">[{it.holdingLimb}] </span> : null}
+                                                  {cleanDisplayName}
                                                 </span>
+                                                <span className="font-mono text-gray-400 text-[8.5px]">
+                                                  {it.weight} lbs ({(() => {
+                                                    const raw = it.dimensions?.raw || '';
+                                                    const dimMatch = raw.match(/([0-9.]+\s*x\s*[0-9.]+(?:\s*x\s*[0-9.]+)?\s*(?:in|inch|inches|cm|m|ft)?)/i);
+                                                    if (dimMatch) return dimMatch[1].trim();
+                                                    if (raw.length <= 25 && !raw.includes(':') && !raw.toLowerCase().includes('overflow')) return raw;
+                                                    if (it.dimensions?.height !== undefined && it.dimensions?.width !== undefined) {
+                                                      return `${it.dimensions.height}x${it.dimensions.width}${it.dimensions.depth !== undefined ? `x${it.dimensions.depth}` : ''} in`;
+                                                    }
+                                                    return 'Standard size';
+                                                  })()})
+                                                </span>
+                                              </div>
+                                              {it.isOverflowHold && (
+                                                <div className="text-[8px] text-red-400 flex items-center justify-between mt-0.5 pt-0.5 border-t border-red-900/40">
+                                                  <div className="flex items-center gap-1 truncate pr-1">
+                                                    <AlertTriangle size={9} className="shrink-0 text-red-400" />
+                                                    <span className="truncate">{it.overflowWarning || 'Held with overflow; heavier/bulkier items drop first.'}</span>
+                                                  </div>
+                                                  {it.dropChancePercent !== undefined && (
+                                                    <span className="font-mono font-bold text-red-200 shrink-0">
+                                                      {it.dropChancePercent}% drop
+                                                    </span>
+                                                  )}
+                                                </div>
                                               )}
                                             </div>
-                                          )}
-                                        </div>
-                                      ))}
+                                          );
+                                        })}
                                     </div>
                                   ) : (
                                     <div className="text-[9px] text-gray-500 italic pl-1">

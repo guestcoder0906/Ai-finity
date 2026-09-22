@@ -3749,7 +3749,18 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // 3. File-System Player Verification:
     // Ensure every player with a character file is on AT LEAST ONE map page
     try {
-      const allFiles = (typeof this.fs.listFiles === 'function' ? this.fs.listFiles() : this.fs.list());
+      let allFiles: string[] = [];
+      if (this.fs) {
+        if (typeof (this.fs as any).list === 'function') {
+          allFiles = (this.fs as any).list();
+        } else if (typeof (this.fs as any).listFiles === 'function') {
+          allFiles = (this.fs as any).listFiles();
+        } else if (typeof (this.fs as any).getAll === 'function') {
+          allFiles = Object.keys((this.fs as any).getAll() || {});
+        } else if ((this.fs as any).files && typeof (this.fs as any).files === 'object') {
+          allFiles = Object.keys((this.fs as any).files);
+        }
+      }
       const characterFiles = allFiles.filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
       
       const allMapUsernames = new Set<string>();
