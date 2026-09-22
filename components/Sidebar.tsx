@@ -808,7 +808,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                                     </span>
                                   </div>
 
-                                  {(pStats.holdingCapacity.hasOverflowHold || (pStats.totalOverflowCount && pStats.totalOverflowCount > 0)) && (
+                                  {Boolean(pStats.holdingCapacity.hasOverflowHold || (pStats.totalOverflowCount && pStats.totalOverflowCount > 0)) && (
                                     <div className="text-[8px] bg-red-950/60 border border-red-800/70 text-red-300 rounded px-1.5 py-0.5 flex items-center justify-between">
                                       <span className="flex items-center gap-1 truncate">
                                         <AlertTriangle size={9} className="text-red-400 shrink-0" />
@@ -846,13 +846,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                                         })
                                         .map((it, hi) => {
                                           let cleanDisplayName = it.name
-                                            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?[:=\s-]*/i, '')
-                                            .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]\s*/i, '')
+                                            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?[:=\s-]*/i, '')
+                                            .replace(/^(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip)\s*[:=-]\s*/i, '')
                                             .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
                                             .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
                                             .trim();
-                                          if (!cleanDisplayName || cleanDisplayName === '(Two-Handed)' || cleanDisplayName === '/ Arms' || cleanDisplayName.toLowerCase() === 'two-handed' || cleanDisplayName.toLowerCase() === 'hands') {
-                                            cleanDisplayName = it.holdingLimb?.includes('Two-Handed') ? 'Two-Handed Item' : 'Held Item';
+                                          if (!cleanDisplayName || WeightInventoryEngine.isLimbOrGripResidue(cleanDisplayName) || /grip|two[- ]handed|\(two[- ]handed\)/i.test(cleanDisplayName)) {
+                                            const matchingEq = pStats.equippedGear?.find(e => Math.abs(e.weight - it.weight) < 0.05 && !WeightInventoryEngine.isLimbOrGripResidue(e.name)) ||
+                                              pStats.carriedItems?.find(c => Math.abs(c.weight - it.weight) < 0.05 && !WeightInventoryEngine.isLimbOrGripResidue(c.name));
+                                            cleanDisplayName = matchingEq ? matchingEq.name : (it.holdingLimb?.includes('Two-Handed') ? 'Two-Handed Weapon' : 'Held Item');
                                           }
                                           return (
                                             <div key={hi} className={`p-1 rounded ${it.isOverflowHold ? 'bg-red-950/40 border border-red-900/60' : 'bg-neutral-950/60'}`}>

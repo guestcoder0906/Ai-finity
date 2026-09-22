@@ -189,32 +189,85 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     }
   }
 
-  // Ensure every player with a character file is represented on at least one map page
+  // Ensure every player and NPC with a character file is represented on the map
   if (pages.length > 0) {
-    const characterFiles = (files || []).filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
     const allUsernamesOnMap = new Set<string>();
+    const allNpcNamesOnMap = new Set<string>();
+
     pages.forEach(p => {
       (p.players || []).forEach((pl: any) => {
         const u = (pl.username || pl.name || pl.characterName || '').trim().toLowerCase();
         if (u) allUsernamesOnMap.add(u);
       });
+      (p.npcs || []).forEach((n: any) => {
+        const nName = (n.name || '').trim().toLowerCase();
+        if (nName) {
+          allNpcNamesOnMap.add(nName);
+          allNpcNamesOnMap.add(nName.replace(/-npc$/, ''));
+        }
+      });
     });
 
-    characterFiles.forEach(cf => {
-      const parts = cf.replace(/\.txt$/, '').split('-');
-      const charUsername = parts[parts.length - 1].trim();
-      const charName = parts.slice(0, -1).join('-').trim();
-      if (charUsername && !allUsernamesOnMap.has(charUsername.toLowerCase()) && !allUsernamesOnMap.has((charName || '').toLowerCase())) {
+    const playerFiles: { filename: string; charName: string; username: string }[] = [];
+    const npcFiles: { filename: string; charName: string }[] = [];
+
+    (files || []).forEach(f => {
+      if (!f.endsWith('.txt')) return;
+      if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat')) return;
+
+      const base = f.replace(/\.txt$/, '');
+      const lower = f.toLowerCase();
+
+      if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
+        const charName = base.replace(/[-_]npc$/i, '').trim();
+        npcFiles.push({ filename: f, charName: charName || base });
+      } else if (f.includes('-')) {
+        const parts = base.split('-');
+        const suffix = parts[parts.length - 1].trim();
+        const charName = parts.slice(0, -1).join('-').trim();
+        if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
+          npcFiles.push({ filename: f, charName: charName || base });
+        } else {
+          playerFiles.push({ filename: f, charName: charName || suffix, username: suffix });
+        }
+      } else {
+        const content = fileSystem.read(f);
+        if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]') || content.includes('[CURRENTLY HOLDING]'))) {
+          npcFiles.push({ filename: f, charName: base });
+        }
+      }
+    });
+
+    playerFiles.forEach(pf => {
+      if (pf.username && !allUsernamesOnMap.has(pf.username.toLowerCase()) && !allUsernamesOnMap.has(pf.charName.toLowerCase())) {
         if (!pages[0].players) pages[0].players = [];
         const offset = pages[0].players.length;
         pages[0].players.push({
-          username: charUsername,
-          characterName: charName || charUsername,
+          username: pf.username,
+          characterName: pf.charName || pf.username,
           x: 10 + (offset * 8),
           y: 15 + (offset * 6),
           facing: 0
         });
-        allUsernamesOnMap.add(charUsername.toLowerCase());
+        allUsernamesOnMap.add(pf.username.toLowerCase());
+      }
+    });
+
+    npcFiles.forEach(nf => {
+      const checkKey = nf.charName.toLowerCase();
+      if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`)) {
+        if (!pages[0].npcs) pages[0].npcs = [];
+        const offset = pages[0].npcs.length;
+        const displayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
+        pages[0].npcs.push({
+          name: displayName,
+          type: 'npc',
+          x: 15 + (offset * 7) % 60,
+          y: 18 + (offset * 5) % 60,
+          description: `NPC from ${nf.filename}`
+        });
+        allNpcNamesOnMap.add(checkKey);
+        allNpcNamesOnMap.add(`${checkKey}-npc`);
       }
     });
   }
@@ -287,7 +340,34 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       }
     }
   }
-  const activeNpcs = (currentPage?.npcs || currentPage?.creatures || currentPage?.entities || mapData?.npcs || mapData?.creatures || []) as any[];
+  // Aggregate all NPCs across pages, creatures, entities, and NPC-type areas
+  const rawNpcList = [
+    ...(Array.isArray(currentPage?.npcs) ? currentPage.npcs : []),
+    ...(Array.isArray(currentPage?.creatures) ? currentPage.creatures : []),
+    ...(Array.isArray(currentPage?.entities) ? currentPage.entities : []),
+    ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : []),
+    ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.npcs) ? mapData.npcs : []),
+    ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.creatures) ? mapData.creatures : [])
+  ];
+
+  const activeNpcs: any[] = [];
+  const seenNpcKeys = new Set<string>();
+
+  for (const n of rawNpcList) {
+    if (!n) continue;
+    let name = (n.name || n.id || 'NPC').trim();
+    if (!name.toLowerCase().endsWith('-npc')) {
+      name = `${name}-npc`;
+    }
+    const key = name.toLowerCase();
+    if (!seenNpcKeys.has(key)) {
+      seenNpcKeys.add(key);
+      activeNpcs.push({
+        ...n,
+        name
+      });
+    }
+  }
 
   // Pan and Zoom Handlers
   const handleResetPanZoom = () => {
@@ -402,6 +482,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     if (!name) return 'Unknown Area';
     const res = resolveMapEntityName(name, username, debugMode);
     return res.displayName;
+  };
+
+  const parseNpcName = (name: string) => {
+    if (!name) return 'NPC-npc';
+    const res = resolveMapEntityName(name, username, debugMode);
+    let displayName = res.displayName;
+    if (displayName && !displayName.toLowerCase().endsWith('-npc')) {
+      displayName = `${displayName}-npc`;
+    }
+    return displayName;
   };
 
   const isEntityHidden = (name: string) => {
@@ -1069,7 +1159,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             if (isEntityHidden(npc.name)) return null;
             const nx = Number(npc.x) || 0;
             const ny = Number(npc.y) || 0;
-            const nName = parseName(npc.name || 'NPC');
+            const nName = parseNpcName(npc.name || 'NPC');
             const nType = npc.type || 'npc';
             const isHostile = /enemy|monster|hostile|boss|bandit/i.test(nType);
 

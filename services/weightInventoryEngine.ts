@@ -554,6 +554,43 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Tests whether an item name or fragment is actually limb, handedness, or grip residue
+   * (e.g. "Both Hands (Two-Handed Grip)", "Two-Handed Grip", "(Two-Handed)", "Right Hand", "Hands", "/ Arms").
+   */
+  public static isLimbOrGripResidue(name: string): boolean {
+    if (!name) return true;
+    const trimmed = name.trim().replace(/^\[|\]$/g, '').trim();
+    if (!trimmed) return true;
+    const lower = trimmed.toLowerCase();
+    if (
+      lower === 'hands' ||
+      lower === 'hand' ||
+      lower === 'arms' ||
+      lower === '/ arms' ||
+      lower === 'two-handed' ||
+      lower === '(two-handed)' ||
+      lower === 'two-handed grip' ||
+      lower === '(two-handed grip)' ||
+      lower === 'both hands (two-handed grip)' ||
+      lower === 'both hands (two-handed)' ||
+      lower === 'both hands' ||
+      lower === 'one-handed' ||
+      lower === 'one-handed grip' ||
+      lower === 'right hand' ||
+      lower === 'left hand' ||
+      lower === 'main hand' ||
+      lower === 'off hand' ||
+      lower === 'held in jaws' ||
+      lower === 'held item' ||
+      lower === 'two-handed weapon' ||
+      lower === 'overflow hold'
+    ) {
+      return true;
+    }
+    return /^(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|both\s*hands(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|one[- ]handed(?:\s*grip)?|\(one[- ]handed(?:\s*grip)?\)|grip|\/\s*arms?|arms?|hands?|held\s*item|two[- ]handed\s*weapon|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)$/i.test(trimmed);
+  }
+
+  /**
    * Unwraps recursively nested held item strings and detects the true holding limb and item description.
    * Cleans chains like "Hands: Weight: 0.2 lbs. Dimensions: Hands: Weight: ... Held in Jaws: ... Red Rubber Ball..."
    * Also filters out rule lines, mandates, status headers, and repeated overflow warnings.
@@ -622,8 +659,8 @@ export class WeightInventoryEngine {
     let detectedLimb = defaultLimb;
     let explicitOverflow = false;
 
-    // Detect if "Held in Jaws", "Jaws", "Mouth", "Right Hand", "Left Hand", etc. is mentioned in the line
-    const limbSearch = text.match(/\b(held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+teeth|held\s+in\s+beak|held\s+in\s+talons?|held\s+in\s+hands?|in\s+jaws?|in\s+mouth|both\s+hands\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)?|two[- ]handed|right\s+hand|left\s+hand|main\s+hand|off\s+hand|jaws?|mouth|teeth|beak|talons?|tentacles?\s*\d*|claws?\s*\d*|trunk|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)\b/i);
+    // Detect if "Held in Jaws", "Jaws", "Mouth", "Right Hand", "Left Hand", "Both Hands (Two-Handed Grip)", etc. is mentioned in the line
+    const limbSearch = text.match(/\b(held\s+in\s+jaws?|held\s+in\s+mouth|held\s+in\s+teeth|held\s+in\s+beak|held\s+in\s+talons?|held\s+in\s+hands?|in\s+jaws?|in\s+mouth|both\s+hands\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip)?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|right\s+hand(?:\s*\(one[- ]handed(?:\s*grip)?\))?|left\s+hand(?:\s*\(one[- ]handed(?:\s*grip)?\))?|main\s+hand(?:\s*grip)?|off\s+hand(?:\s*grip)?|jaws?|mouth|teeth|beak|talons?|tentacles?\s*\d*|claws?\s*\d*|trunk|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)\b/i);
     if (limbSearch) {
       const matchLower = limbSearch[1].toLowerCase();
       if (matchLower.includes('jaw') || matchLower.includes('mouth') || matchLower.includes('teeth')) {
@@ -656,15 +693,15 @@ export class WeightInventoryEngine {
       }
     }
 
-    // 2. Iteratively strip leading limb, handedness, brackets, and wrapper prefixes
+    // 2. Iteratively strip leading limb, handedness, brackets, grip, and wrapper prefixes
     let prevText = '';
     while (text !== prevText) {
       prevText = text;
       text = text
         .replace(/^[-*•>\s]+/, '')
-        .replace(/^\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)\](?:\s*(?:\/\s*arms?|\(two[- ]handed\)|two[- ]handed))?\s*[:=-]?\s*/i, '')
-        .replace(/^(?:(?:right|left|main|off|both)\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)(?:\s*(?:\/\s*arms?|\(two[- ]handed\)|two[- ]handed))?\s*[:=-]\s*/i, '')
-        .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]?\s*/i, '')
+        .replace(/^\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)\](?:\s*(?:\/\s*arms?|\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|grip))?\s*[:=-]?\s*/i, '')
+        .replace(/^(?:(?:right|left|main|off|both)\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|both\s*hands(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|one[- ]handed(?:\s*grip)?|\(one[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)(?:\s*(?:\/\s*arms?|\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|grip))?\s*[:=-]\s*/i, '')
+        .replace(/^(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip)\s*[:=-]?\s*/i, '')
         .trim();
     }
 
@@ -701,9 +738,14 @@ export class WeightInventoryEngine {
       cleanLower === 'hand' ||
       cleanLower === '(two-handed)' ||
       cleanLower === 'two-handed' ||
+      cleanLower === '(two-handed grip)' ||
+      cleanLower === 'two-handed grip' ||
+      cleanLower === 'both hands (two-handed grip)' ||
+      cleanLower === 'both hands (two-handed)' ||
       cleanLower === '/ arms' ||
       cleanLower === 'arms' ||
-      cleanLower === ''
+      cleanLower === '' ||
+      WeightInventoryEngine.isLimbOrGripResidue(text)
     ) {
       return null;
     }
@@ -1608,17 +1650,17 @@ export class WeightInventoryEngine {
       }
     }
 
-    // If the extracted "name" is actually a limb prefix (e.g. "Hands", "Held in Jaws", "Both Hands (Two-Handed)", "[Both Hands (Two-Handed)]"), strip it and continue extracting the real item name from rest
-    const isLimbPrefix = /^(?:\[)?(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|\(two[- ]handed\)|\/\s*arms?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)(?:\])?$/i.test(name);
+    // If the extracted "name" is actually a limb prefix (e.g. "Hands", "Held in Jaws", "Both Hands (Two-Handed)", "[Both Hands (Two-Handed)]", "Both Hands (Two-Handed Grip)"), strip it and continue extracting the real item name from rest
+    const isLimbPrefix = WeightInventoryEngine.isLimbOrGripResidue(name) || /^(?:\[)?(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|both\s*hands(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|one[- ]handed(?:\s*grip)?|\(one[- ]handed(?:\s*grip)?\)|grip|\/\s*arms?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)(?:\])?$/i.test(name);
     if (isLimbPrefix) {
       let prevRest = '';
       while (rest !== prevRest) {
         prevRest = rest;
         rest = rest
           .replace(/^[-*•>\s]+/, '')
-          .replace(/^\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)\](?:\s*(?:\/\s*arms?|\(two[- ]handed\)|two[- ]handed))?\s*[:=-]?\s*/i, '')
-          .replace(/^(?:(?:right|left|main|off|both)\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)(?:\s*(?:\/\s*arms?|\(two[- ]handed\)|two[- ]handed))?\s*[:=-]\s*/i, '')
-          .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]?\s*/i, '')
+          .replace(/^\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)\](?:\s*(?:\/\s*arms?|\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|grip))?\s*[:=-]?\s*/i, '')
+          .replace(/^(?:(?:right|left|main|off|both)\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|both\s*hands(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|one[- ]handed(?:\s*grip)?|\(one[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold|hands?)(?:\s*(?:\/\s*arms?|\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|grip))?\s*[:=-]\s*/i, '')
+          .replace(/^(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip)\s*[:=-]?\s*/i, '')
           .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
           .trim();
       }
@@ -1645,6 +1687,10 @@ export class WeightInventoryEngine {
       name.toLowerCase() === 'hand' ||
       name.toLowerCase() === '(two-handed)' ||
       name.toLowerCase() === 'two-handed' ||
+      name.toLowerCase() === '(two-handed grip)' ||
+      name.toLowerCase() === 'two-handed grip' ||
+      name.toLowerCase() === 'both hands (two-handed grip)' ||
+      name.toLowerCase() === 'both hands (two-handed)' ||
       name.toLowerCase() === '/ arms' ||
       name.toLowerCase() === 'arms' ||
       name.toLowerCase().includes('overflow rule') ||
@@ -2661,12 +2707,14 @@ export class WeightInventoryEngine {
         if (item) {
           item.category = 'equipped';
 
-          // If name is corrupted or contains limb residue, recover from equippedGear or clean
-          if (/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?|both\s*hands(?:\s*\(two[- ]handed\))?|held\s*item)$/i.test(item.name)) {
+          // If name is corrupted or contains limb/grip residue, recover from equippedGear or carriedItems
+          if (WeightInventoryEngine.isLimbOrGripResidue(item.name) || /grip|two[- ]handed|\(two[- ]handed\)/i.test(item.name)) {
             const matchingEquipped = equippedGear.find(
-              e => Math.abs(e.weight - item.weight) < 0.001 || e.properties?.toLowerCase().includes('two-handed')
+              e => Math.abs(e.weight - item.weight) < 0.05 || (e.properties?.toLowerCase().includes('two-handed') && unwrapped.holdingLimb.includes('Two-Handed'))
+            ) || carriedItems.find(
+              c => Math.abs(c.weight - item.weight) < 0.05
             );
-            if (matchingEquipped) {
+            if (matchingEquipped && !WeightInventoryEngine.isLimbOrGripResidue(matchingEquipped.name)) {
               item.name = matchingEquipped.name;
             } else {
               item.name = unwrapped.holdingLimb.includes('Two-Handed') ? 'Two-Handed Weapon' : 'Held Item';
@@ -3231,16 +3279,17 @@ export class WeightInventoryEngine {
       } else {
         const seenHeld = new Set<string>();
         for (const h of stats.currentlyHolding) {
-          // Clean name of any existing limb prefixes, repeated 'Hands:', and repeated overflow suffixes
+          // Clean name of any existing limb prefixes, repeated 'Hands:', grip phrasing, and repeated overflow suffixes
           let cleanName = h.name
-            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?|two[- ]handed|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?))?[:=\s-]*/i, '')
-            .replace(/^(?:\(two[- ]handed\)|two[- ]handed|\/\s*arms?)\s*[:=-]\s*/i, '')
+            .replace(/^[-*•>\s]*(?:\[(?:(?:right|left|main|off|both)?\s*hands?(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?|two[- ]handed(?:\s*grip)?|\(two[- ]handed(?:\s*grip)?\)|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow(?:\s*hold)?)\]|(?:(?:right|left|main|off|both)\s*hands?|jaws?|mouth|teeth|talons?|beak|claws?\s*\d*|tentacles?\s*\d*|trunk|held\s+in\s+[a-z]+|in\s+[a-z]+|under\s+arm(?:\s*\(overflow\))?|overflow\s*hold)\s*[:=-])(?:\s*(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip))?[:=\s-]*/i, '')
+            .replace(/^(?:\(two[- ]handed(?:\s*grip)?\)|two[- ]handed(?:\s*grip)?|\/\s*arms?|grip)\s*[:=-]\s*/i, '')
             .replace(/^weight\s*[:=]\s*[0-9.]+\s*lbs?\.?\s*(?:dimensions?\s*[:=]\s*)?/i, '')
             .replace(/(?:\s*\.?\s*\(Overflow:\s*Yes[^)]*\))+/gi, '')
             .trim();
 
-          if (!cleanName || cleanName === '(Two-Handed)' || cleanName === '/ Arms' || cleanName.toLowerCase() === 'two-handed' || cleanName.toLowerCase() === 'hands') {
-            const matchingEq = stats.equippedGear.find(e => Math.abs(e.weight - h.weight) < 0.001 && e.name.toLowerCase() !== 'hands');
+          if (!cleanName || WeightInventoryEngine.isLimbOrGripResidue(cleanName) || /grip|two[- ]handed|\(two[- ]handed\)/i.test(cleanName)) {
+            const matchingEq = stats.equippedGear.find(e => Math.abs(e.weight - h.weight) < 0.05 && !WeightInventoryEngine.isLimbOrGripResidue(e.name)) ||
+              stats.carriedItems.find(c => Math.abs(c.weight - h.weight) < 0.05 && !WeightInventoryEngine.isLimbOrGripResidue(c.name));
             cleanName = matchingEq ? matchingEq.name : (h.holdingLimb?.includes('Two-Handed') ? 'Two-Handed Weapon' : 'Held Item');
           }
           if (cleanName.toLowerCase().includes('overflow rule') || cleanName.toLowerCase().includes('holding anatomy')) {

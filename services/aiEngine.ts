@@ -558,9 +558,11 @@ CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
 - Do NOT hardcode require NPCs in every scenario. When the context of the setting naturally calls for solitude (e.g. waking up alone in a deep cave, stranded on an isolated island, adrift in deep space, or exploring an empty ancient ruin), it is completely valid and appropriate to start with zero NPCs or creatures.
 - However, when the context of the initialized world or location naturally makes sense to have inhabitants (such as a town, tavern, city, market, camp, settlement, active road, outpost, or wilderness with fauna/mounts), the AI is strongly encouraged to populate the scene with fitting NPCs, companions, travelers, shopkeepers, creatures, or mounts:
   * Give any present NPCs or creatures a distinct name, personality, role, motivations, and gear.
-  * Create their individual character/entity files (e.g., "Garrick_Blacksmith.txt", "TavernKeep_Maeve.txt", "ChestnutWarhorse.txt") with complete stats, physical dimensions, body weight, speed, and inventory.
-  * Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" with coordinates, distinct icon/type, and facing.
-  * Integrate them into the narrative with exact clickable references (e.g. [Maeve], [Garrick], [ChestnutWarhorse]).
+  * NPC FILE NAMING CONVENTION: All NPC character files MUST have "-npc.txt" appended (e.g., "Maeve_TavernKeep-npc.txt", "Garrick_Blacksmith-npc.txt", "TownGuard-npc.txt"). Never omit the "-npc" suffix from NPC filenames!
+  * Create their individual character/entity files with complete stats, physical dimensions, body weight, speed, and inventory.
+  * PERSISTENCE & MAP NAMING: Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" under "npcs" (or on the appropriate page) with coordinates, distinct icon/type, and facing. Their name in CurrentMap.json MUST have "-npc" appended (e.g., "Maeve-npc", "Garrick-npc"). NEVER forget or drop previously established NPCs from CurrentMap.json across turns!
+  * Integrate them into the narrative with exact clickable references (e.g. [Maeve-npc] or [Maeve], [Garrick-npc] or [Garrick]).
+  * HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Steel Broadsword", "Iron Shield", "Oak Staff", "Torch") with their weight and dimensions. Never list limbs, grips, anatomy labels, or duplicate lines as item names (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name!). Limbs belong in brackets: e.g. "• [Both Hands (Two-Handed)] Steel Greatsword - 8.5 lbs".
 
 CONTEXT-AWARE AUTO ACTION RECOMMENDATIONS (CRITICAL):
 - The "recommendations" array MUST contain 2 to 4 dynamic, immersive, highly relevant action options SPECIFICALLY FOR THE ACTIVE PLAYER CHARACTER (the character controlled by the player submitting the action).
@@ -826,7 +828,7 @@ export class AIEngine {
             ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. If the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY: Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Iron Shortsword", "Wooden Shield", "Oak Staff"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Both Hands (Two-Handed)].\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
           const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
           resolve(res);
         } catch (e) {
@@ -1014,9 +1016,11 @@ CRITICAL REMINDERS:
 3. MAP UPDATE: Fully update CurrentMap.json. 
    - CRITICAL: Do NOT omit pages for players who did not take this turn. If players are separated, return ALL pages in the "pages" array.
    - NOTHING MISSING: All players' observable and known areas, landmarks, items, npcs, structures, terrain, hazards, containers, and loot MUST be on the map with everything updated correctly.
+   - NPC PERSISTENCE & NAMING: Every NPC present in the scene MUST be plotted in "npcs" on CurrentMap.json with their name having "-npc" appended (e.g. "Barkeep-npc", "TownGuard-npc"). All NPC files MUST end in "-npc.txt" (e.g. "Barkeep-npc.txt"). Never forget or drop previously established NPCs from CurrentMap.json across turns!
    - FLEXIBLE SHAPES & HIGH DETAIL: Generate flexible shapes (not just circles/squares): use oblong ellipses (shape: "ellipse" with cx, cy, rx, ry, rotation) for oblong forests/groves/clearings, polygons for irregular terrain/rivers, and high-detail architectural buildings (such as individual market stalls, shops, and taverns in a market).
    - Every entity, NPC, obstacle, item, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
 4. INVENTORY, CONTAINERS & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
+   - HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Oak Shortbow", "Iron Broadsword", "Torch") with weight and dimensions. Never use limbs or grip phrasing as the item name (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name).
    - CONTAINER INTEGRITY (CRITICAL): If the player picks up, finds, loots, or places an item in a container (e.g. backpack, satchel, pouch), you MUST update the player's character file ("CharacterName-USERNAME.txt").
    - Under [CONTAINERS & CARRIED GEAR], under "- Carried Inventory (Inside Containers):", add the item formatted with detectable weight, dimensions, and container name: e.g. "- Iron Dagger: 2 lbs, 10x2 inches. Container: [Backpack]". Ensure the container exists under "- Containers Equipped/Carried:".
    - If an item would overflow or exceeds container capacity, or is wearable and contextually sensible, equip under [Equipped Gear & Armor].
@@ -1301,6 +1305,23 @@ CRITICAL REMINDERS:
             const oy = Number(other.y) || 0;
             const dist = Math.sqrt((px - ox) ** 2 + (py - oy) ** 2);
             distLines.push(`  → Player ${other.username}: ${dist.toFixed(1)}m away on [${pageLabel}] at (${ox.toFixed(1)}, ${oy.toFixed(1)})`);
+          }
+
+          const npcs = [
+            ...(Array.isArray(page.npcs) ? page.npcs : []),
+            ...(Array.isArray(page.creatures) ? page.creatures : []),
+            ...(Array.isArray(page.entities) ? page.entities : [])
+          ];
+          for (const npc of npcs) {
+            if (!npc) continue;
+            const nx = Number(npc.x) || 0;
+            const ny = Number(npc.y) || 0;
+            const dist = Math.sqrt((px - nx) ** 2 + (py - ny) ** 2);
+            let nName = (npc.name || npc.id || 'NPC').trim();
+            if (!nName.toLowerCase().endsWith('-npc')) {
+              nName = `${nName}-npc`;
+            }
+            distLines.push(`  → NPC/Creature [${nName}] (${npc.type || 'npc'}): ${dist.toFixed(1)}m away on [${pageLabel}] at (${nx.toFixed(1)}, ${ny.toFixed(1)})${npc.description ? ` - ${npc.description}` : ''}`);
           }
 
           lines.push(`${pageLabel} at (${px.toFixed(1)}, ${py.toFixed(1)}), facing ${player.facing || 0}°:`);
@@ -3548,6 +3569,42 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     this.syncPlayerCurrency(data, username, auditContext);
 
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
+      // 0. Enforce -npc.txt naming convention on NPC character files
+      const fileNames = Object.keys(data.files);
+      for (const filename of fileNames) {
+        if (!filename.endsWith('.txt')) continue;
+        const fLower = filename.toLowerCase();
+        if (
+          fLower.endsWith('-npc.txt') ||
+          fLower.endsWith('_npc.txt') ||
+          fLower.startsWith('world') ||
+          fLower.startsWith('guide') ||
+          fLower.startsWith('log') ||
+          fLower.startsWith('history') ||
+          fLower.startsWith('event') ||
+          fLower.startsWith('combat')
+        ) {
+          continue;
+        }
+
+        // Do not touch player files
+        const isPlayer = username && (fLower.endsWith(`-${username.toLowerCase()}.txt`) || fLower.endsWith(`_${username.toLowerCase()}.txt`) || fLower === `${username.toLowerCase()}.txt`);
+        if (isPlayer) {
+          continue;
+        }
+
+        const fileData = data.files[filename];
+        const contentStr = typeof fileData === 'string' ? fileData : (fileData as any)?.content;
+        if (typeof contentStr === 'string' && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CURRENTLY HOLDING]'))) {
+          const newFilename = filename.replace(/\.txt$/, '-npc.txt');
+          data.files[newFilename] = fileData;
+          delete data.files[filename];
+          if (this.fs.exists(filename)) {
+            this.fs.delete(filename);
+          }
+        }
+      }
+
       // 1. Check for player file duplicates/naming changes if we have a username
       if (username) {
         const uLower = username.toLowerCase();
@@ -3978,18 +4035,43 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             }
           }
 
-          // Merge NPCs: ensure persistent NPCs aren't dropped
-          if (Array.isArray(matchingOldPage.npcs)) {
-            if (!Array.isArray(newPage.npcs)) {
-              newPage.npcs = [];
+          // Merge NPCs: ensure persistent NPCs aren't dropped across turns
+          const oldNpcCandidates = [
+            ...(Array.isArray(matchingOldPage.npcs) ? matchingOldPage.npcs : []),
+            ...(Array.isArray(matchingOldPage.creatures) ? matchingOldPage.creatures : []),
+            ...(Array.isArray(matchingOldPage.entities) ? matchingOldPage.entities : []),
+            ...(Array.isArray(matchingOldPage.areas) ? matchingOldPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : [])
+          ];
+
+          if (!Array.isArray(newPage.npcs)) {
+            newPage.npcs = [];
+          }
+
+          // Ensure all current page NPCs have -npc appended
+          newPage.npcs = newPage.npcs.map((n: any) => {
+            if (!n || typeof n !== 'object') return n;
+            let nName = (n.name || '').trim();
+            if (nName && !nName.toLowerCase().endsWith('-npc')) {
+              nName = `${nName}-npc`;
             }
-            const newNpcNames = new Set(newPage.npcs.map((n: any) => (n.name || '').trim().toLowerCase()));
-            for (const oldNpc of matchingOldPage.npcs) {
-              const oldNpcName = (oldNpc.name || '').trim().toLowerCase();
-              if (oldNpcName && !newNpcNames.has(oldNpcName)) {
-                newPage.npcs.push(oldNpc);
-                newNpcNames.add(oldNpcName);
-              }
+            return { ...n, name: nName };
+          });
+
+          const newNpcNames = new Set(newPage.npcs.map((n: any) => (n.name || '').trim().toLowerCase()));
+          for (const oldNpc of oldNpcCandidates) {
+            if (!oldNpc) continue;
+            let rawOldName = (oldNpc.name || '').trim();
+            if (!rawOldName) continue;
+            if (!rawOldName.toLowerCase().endsWith('-npc')) {
+              rawOldName = `${rawOldName}-npc`;
+            }
+            const oldNpcKey = rawOldName.toLowerCase();
+            if (!newNpcNames.has(oldNpcKey) && !newNpcNames.has(oldNpcKey.replace(/-npc$/, ''))) {
+              newPage.npcs.push({
+                ...oldNpc,
+                name: rawOldName
+              });
+              newNpcNames.add(oldNpcKey);
             }
           }
 
@@ -4030,8 +4112,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // Clean any duplicates across or within pages (removes player's stale last position)
     this.cleanDuplicatePlayerPositions(normalized, oldPlayerLocations, username);
 
-    // 3. File-System Player Verification:
-    // Ensure every player with a character file is on AT LEAST ONE map page
+    // 3. File-System Player & NPC Verification:
+    // Ensure every player and NPC with a character file is represented on the map
     try {
       let allFiles: string[] = [];
       if (this.fs) {
@@ -4045,8 +4127,39 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           allFiles = Object.keys((this.fs as any).files);
         }
       }
-      const characterFiles = allFiles.filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
-      
+
+      const playerFiles: { filename: string; charName: string; username: string }[] = [];
+      const npcFiles: { filename: string; charName: string }[] = [];
+
+      for (const f of allFiles) {
+        if (!f.endsWith('.txt')) continue;
+        if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') continue;
+
+        const base = f.replace(/\.txt$/, '');
+        const lower = f.toLowerCase();
+
+        if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
+          const charName = base.replace(/[-_]npc$/i, '').trim();
+          npcFiles.push({ filename: f, charName: charName || base });
+        } else if (f.includes('-')) {
+          const parts = base.split('-');
+          const suffix = parts[parts.length - 1].trim();
+          const charName = parts.slice(0, -1).join('-').trim();
+          if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
+            npcFiles.push({ filename: f, charName: charName || base });
+          } else {
+            playerFiles.push({ filename: f, charName: charName || suffix, username: suffix });
+          }
+        } else {
+          // File without hyphen: check if it's an NPC character sheet
+          const content = this.fs ? this.fs.read(f) : null;
+          if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]') || content.includes('[CURRENTLY HOLDING]'))) {
+            npcFiles.push({ filename: f, charName: base });
+          }
+        }
+      }
+
+      // Reconcile players
       const allMapUsernames = new Set<string>();
       for (const p of normalized.pages) {
         if (Array.isArray(p.players)) {
@@ -4057,28 +4170,59 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
       }
 
-      for (const cf of characterFiles) {
-        const parts = cf.replace(/\.txt$/, '').split('-');
-        const charUsername = parts[parts.length - 1].trim();
-        const charName = parts.slice(0, -1).join('-').trim();
-        
-        if (charUsername && !allMapUsernames.has(charUsername.toLowerCase()) && !allMapUsernames.has((charName || '').toLowerCase())) {
+      for (const pf of playerFiles) {
+        if (pf.username && !allMapUsernames.has(pf.username.toLowerCase()) && !allMapUsernames.has(pf.charName.toLowerCase())) {
           if (!Array.isArray(normalized.pages[0].players)) {
             normalized.pages[0].players = [];
           }
           const existingCount = normalized.pages[0].players.length;
           normalized.pages[0].players.push({
-            username: charUsername,
-            characterName: charName || charUsername,
+            username: pf.username,
+            characterName: pf.charName || pf.username,
             x: 10 + (existingCount * 8),
             y: 15 + (existingCount * 6),
             facing: 0
           });
-          allMapUsernames.add(charUsername.toLowerCase());
+          allMapUsernames.add(pf.username.toLowerCase());
+        }
+      }
+
+      // Reconcile NPCs (ensure no NPCs are forgotten on the map)
+      const allMapNpcNames = new Set<string>();
+      for (const p of normalized.pages) {
+        if (Array.isArray(p.npcs)) {
+          for (const n of p.npcs) {
+            const nKey = (n.name || '').trim().toLowerCase();
+            if (nKey) {
+              allMapNpcNames.add(nKey);
+              allMapNpcNames.add(nKey.replace(/-npc$/, ''));
+            }
+          }
+        }
+      }
+
+      for (const nf of npcFiles) {
+        const checkKey = nf.charName.toLowerCase();
+        if (!allMapNpcNames.has(checkKey) && !allMapNpcNames.has(`${checkKey}-npc`)) {
+          const targetPage = normalized.pages[0];
+          if (!Array.isArray(targetPage.npcs)) {
+            targetPage.npcs = [];
+          }
+          const existingCount = targetPage.npcs.length;
+          const npcDisplayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
+          targetPage.npcs.push({
+            name: npcDisplayName,
+            type: 'npc',
+            x: 15 + (existingCount * 7) % 60,
+            y: 18 + (existingCount * 5) % 60,
+            description: `NPC from ${nf.filename}`
+          });
+          allMapNpcNames.add(checkKey);
+          allMapNpcNames.add(`${checkKey}-npc`);
         }
       }
     } catch (err) {
-      console.warn('Player verification guard encountered non-fatal issue', err);
+      console.warn('Player and NPC verification guard encountered non-fatal issue', err);
     }
 
     // Final deduplication pass
