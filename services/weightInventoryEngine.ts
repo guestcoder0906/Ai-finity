@@ -61,12 +61,26 @@ export interface ContainerInfo {
   weight: number; // empty weight in lbs
   dimensions: ParsedDimensions;
   maxDimensions: ParsedDimensions;
+  currentDimensions?: ParsedDimensions; // dynamic active size (updates when stretched!)
+  stretchedDimensions?: ParsedDimensions; // size when stretched
+  currentStretchRatio?: number; // current stretch multiplier (e.g. 1.35x)
   maxWeightCapacity?: number;
+  maxVolume?: number; // base internal volume in cubic inches
+  stretchFactor?: number; // dynamically determined by AI/context (1.0 for rigid, 1.5 for wallet, 1.3 for pouch, etc.)
+  effectiveMaxVolume?: number; // maxVolume * stretchFactor (stretchable space limit)
+  isRigid?: boolean; // true if rigid - only holds 1.0x space
+  isStretched?: boolean; // true if currentVolume > maxVolume but <= effectiveMaxVolume
+  stretchReason?: string;
+  currentVolume?: number; // current volume used by items + physical currency
+  currencyCount?: number;
+  currencyWeight?: number;
+  currencyVolume?: number;
   items: ItemInfo[];
   currentItemsWeight: number;
   totalWeight: number; // container weight + items weight
   hasOverflow: boolean;
   hasDoesNotFit?: boolean;
+  overflowReason?: string;
   overflowDropChancePercent?: number;
   rawText: string;
 }
@@ -92,9 +106,17 @@ export interface HoldingCapacityInfo {
 }
 
 export interface CurrencyEntry {
-  name: string; // e.g. "Gold Coin", "Silver Coin", "Copper Coin", "Credits", "Bottle Caps", "Dollars"
+  name: string; // e.g. "1921 Morgan Dollar Coin", "Gold Coin", "Digital Credits", "Dollars"
   amount: number;
-  weight?: number; // lbs
+  worth?: string; // e.g. "$1.00", "1 GP", "50 Credits", "$1.00 each ($1.00 total)"
+  worthValue?: number; // numeric face value/worth per unit or total
+  dimensions?: ParsedDimensions; // dimensions of a single unit of currency
+  singleDimensionsRaw?: string; // e.g. "1.5x1.5x0.09 inches"
+  isDigital?: boolean; // true if digital money, taking 0 volume/dimensions
+  unitVolume?: number; // cubic inches per single unit
+  totalVolume?: number; // total cubic inches occupied by this stack in container
+  singleWeight?: number; // weight of a single coin/unit in lbs
+  weight?: number; // total lbs for this stack
   container?: string; // e.g. "Coin Pouch", "Wallet", "Backpack"
   location?: string; // Attached location e.g. "Player's Cottage, Riverwood", "Gringotts Vault 687"
   isHiddenLocation?: boolean; // true if location is wrapped in hide[...]
@@ -171,14 +193,214 @@ export interface CharacterPhysicalStats {
 
 export class WeightInventoryEngine {
   /**
+   * Infers single-unit dimensions, volume, weight, and digital status for currency items.
+   * Physical currency is NOT infinite space and has dimensions/volume.
+   * Digital money (credits, crypto, bank deposits) takes 0 volume/space.
+   */
+  public static inferCurrencyDefaults(
+    name: string,
+    explicitDims?: string,
+    explicitWeight?: number,
+    amount: number = 1
+  ): {
+    dimensions: ParsedDimensions;
+    isDigital: boolean;
+    singleWeight: number;
+    totalWeight: number;
+    unitVolume: number;
+    totalVolume: number;
+    defaultWorth?: string;
+  } {
+    const lower = (name || '').toLowerCase();
+    const explicitLower = (explicitDims || '').toLowerCase();
+
+    // Check if explicitly digital or matching digital keywords
+    const isDigital =
+      explicitLower.includes('digital') ||
+      explicitLower.includes('incorporeal') ||
+      explicitLower.includes('none') ||
+      explicitLower.includes('0x0') ||
+      /digital|credit|creds|cyber|crypto|electronic|virtual|bank|account|wire|direct\s*deposit|ethereal|ledger/i.test(lower);
+
+    if (isDigital) {
+      const dim: ParsedDimensions = {
+        height: 0,
+        width: 0,
+        depth: 0,
+        raw: explicitDims || 'Digital (None)',
+        applies: false,
+        unit: 'inches'
+      };
+      return {
+        dimensions: dim,
+        isDigital: true,
+        singleWeight: 0,
+        totalWeight: 0,
+        unitVolume: 0,
+        totalVolume: 0,
+        defaultWorth: lower.includes('credit') ? 'Credits' : 'Digital'
+      };
+    }
+
+    // If explicit dimensions are supplied, parse them
+    if (explicitDims && explicitDims.trim()) {
+      const parsedDim = this.parseDimensions(explicitDims);
+      const h = parsedDim.height || 1.2;
+      const w = parsedDim.width || 1.2;
+      const d = parsedDim.depth || 0.08;
+      const unitVol = Math.round(h * w * d * 10000) / 10000;
+      const singleW = explicitWeight !== undefined && amount > 0
+        ? Math.round((explicitWeight / amount) * 10000) / 10000
+        : (lower.includes('morgan') || lower.includes('dollar') ? 0.06 : 0.02);
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: parsedDim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol
+      };
+    }
+
+    // Inferred physical defaults based on currency name/type:
+    // 1. Large historical coins (e.g. Morgan Dollar, Peace Dollar, Silver Dollar, Double Eagle)
+    if (/morgan|silver\s*dollar|large\s*dollar|trade\s*dollar|peace\s*dollar|double\s*eagle/i.test(lower)) {
+      const dim = this.parseDimensions('1.5x1.5x0.09 inches');
+      const singleW = 0.06; // ~26.7g
+      const unitVol = 0.2025;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: '$1.00'
+      };
+    }
+
+    // 2. Paper currency / Banknotes / Dollar bills / Scrip / Cash
+    if (/banknote|bill|cash|scrip|paper\s*money|dollar\s*bill/i.test(lower)) {
+      const dim = this.parseDimensions('3x2.6x0.02 inches');
+      const singleW = 0.002;
+      const unitVol = 0.156;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: '$1.00'
+      };
+    }
+
+    // 3. Small coins (penny, cent, dime, nickel, quarter)
+    if (/penny|cent|dime|nickel|quarter|small\s*coin/i.test(lower)) {
+      const dim = this.parseDimensions('0.95x0.95x0.07 inches');
+      const singleW = 0.012;
+      const unitVol = 0.063;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: '$0.01'
+      };
+    }
+
+    // 4. Bullion / Ingots / Bars
+    if (/bar|ingot|bullion/i.test(lower)) {
+      const dim = this.parseDimensions('7x3.6x1.75 inches');
+      const singleW = explicitWeight !== undefined && amount > 0 ? explicitWeight / amount : 27.0;
+      const unitVol = 44.1;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: 'Bullion'
+      };
+    }
+
+    // 5. Gems / Jewels / Trade stones
+    if (/gem|jewel|ruby|diamond|emerald|sapphire/i.test(lower)) {
+      const dim = this.parseDimensions('0.8x0.8x0.8 inches');
+      const singleW = 0.03;
+      const unitVol = 0.512;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: 'Gem'
+      };
+    }
+
+    // 6. Bottle caps
+    if (/cap|bottle\s*cap/i.test(lower)) {
+      const dim = this.parseDimensions('1.2x1.2x0.2 inches');
+      const singleW = 0.005;
+      const unitVol = 0.288;
+      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+      return {
+        dimensions: dim,
+        isDigital: false,
+        singleWeight: singleW,
+        totalWeight: totalW,
+        unitVolume: unitVol,
+        totalVolume: totalVol,
+        defaultWorth: '1 Cap'
+      };
+    }
+
+    // 7. Standard fantasy/historical coins (Gold, Silver, Copper, Electrum, Platinum, Crowns, Ducats, etc.)
+    const dim = this.parseDimensions('1.2x1.2x0.08 inches');
+    const singleW = 0.02; // ~50 coins per pound
+    const unitVol = 0.115;
+    const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
+    const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+    return {
+      dimensions: dim,
+      isDigital: false,
+      singleWeight: singleW,
+      totalWeight: totalW,
+      unitVolume: unitVol,
+      totalVolume: totalVol,
+      defaultWorth: lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : '1 Coin')
+    };
+  }
+
+  /**
    * Parses currency entries from lines, item descriptions, and balance notes:
    * e.g.:
+   * - "* 1x 1921 Morgan Dollar Coin | Worth: $1.00 | Dimensions: 1.5x1.5x0.09 inches | Weight: 0.06 lbs [Container: Coin Pouch]"
+   * - "1921 Morgan Dollar Coin" (Quantity: 1, NOT 1,921 coins!)
+   * - "1 1921 Morgan Dollar Coin" (Quantity: 1)
    * - "1 Gold Coin, 5 Silver Coins: 0.15 lbs. Container: [Coin Pouch]"
    * - "150 Gold Coins: Location: [Iron Treasure Chest in Player's Cottage]"
    * - "50 Silver Coins: Location: hide[Buried under tree at coords (120, 340)]"
    * - "250 Credits"
    * - "$500" / "500 Dollars"
-   * - "Contains: 1 Gold Coin, 5 Silver Coins"
    */
   public static parseCurrencyEntries(
     line: string,
@@ -267,35 +489,235 @@ export class WeightInventoryEngine {
 
     // Extract container if present
     let container = defaultContainer;
-    const contMatch = cleanedLine.match(/container[:=\s]+\[?([a-zA-Z0-9_\s'-]+)\]?/i);
-    if (contMatch) {
-      container = contMatch[1].trim();
+    const bracketedContMatch = cleanedLine.match(/(?:\[\s*)?container[:=\s]+\[([^\]]+)\]/i) || cleanedLine.match(/\[\s*container[:=\s]+([^\]]+)\]/i);
+    if (bracketedContMatch) {
+      container = bracketedContMatch[1].trim();
     } else {
-      const bracketMatch = cleanedLine.match(/\[([a-zA-Z0-9_\s'-]+)\]/i);
-      if (bracketMatch && !locMatch) {
-        const inner = bracketMatch[1].trim();
-        if (/pouch|wallet|purse|backpack|chest|bag|sack/i.test(inner)) {
-          container = inner;
+      const contMatch = cleanedLine.match(/container[:=\s]+([^|;,\(\)\[\]\r\n]+)/i);
+      if (contMatch) {
+        container = contMatch[1].trim();
+      } else {
+        const bracketMatch = cleanedLine.match(/\[([a-zA-Z0-9_\s'&-]+)\]/i);
+        if (bracketMatch && !locMatch) {
+          const inner = bracketMatch[1].trim();
+          if (/pouch|wallet|purse|backpack|chest|bag|sack|bankroll/i.test(inner)) {
+            container = inner;
+          }
         }
       }
     }
 
     // Extract weight if specified
     let entryWeight: number | undefined;
-    const weightMatch = cleanedLine.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i);
+    const weightMatch = cleanedLine.match(/(?:weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i) || cleanedLine.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i);
     if (weightMatch) {
       entryWeight = parseFloat(weightMatch[1]);
     }
 
+    // Extract dimensions if specified on line
+    let entryDimsStr: string | undefined;
+    const dimMatch = cleanedLine.match(/(?:dimensions?|dims?|size)[:=\s]+([^|;,\(\)]+)/i);
+    if (dimMatch) {
+      entryDimsStr = dimMatch[1].trim();
+    }
+
+    // Extract worth if specified on line: e.g. "Worth: $1.00" or "Value: 1 GP"
+    let entryWorthStr: string | undefined;
+    const worthMatch = cleanedLine.match(/(?:worth|value|face\s*value|market\s*value)[:=\s]+([^|;,()]+)/i);
+    if (worthMatch) {
+      entryWorthStr = worthMatch[1].trim();
+    }
+
+    // Extract explicit quantity if specified: e.g. "Quantity: 1", "Qty: 5", "Count: 10"
+    let explicitQty: number | undefined;
+    const qtyMatch = cleanedLine.match(/(?:quantity|qty|count|amount)[:=\s]+([0-9]+)/i);
+    if (qtyMatch) {
+      explicitQty = parseInt(qtyMatch[1], 10);
+    }
+
+    // Prepare contentToScan:
+    // CRITICAL: Strip out "Worth: ..." so that dollar signs inside "Worth: $1.00" are NOT parsed as separate phantom dollar entries!
     let contentToScan = cleanedLine;
     const containsMatch = cleanedLine.match(/contains[:=\s]+([^)]+)/i);
     if (containsMatch) {
       contentToScan = containsMatch[1];
     } else {
       contentToScan = contentToScan
-        .replace(/location[:=\s]+(?:hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/gi, '')
-        .replace(/container[:=\s]+\[?[a-zA-Z0-9_\s'-]+\]?/gi, '')
-        .replace(/:?\s*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, '');
+        .replace(/(?:\[\s*)?location[:=\s]+(?:hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/gi, ' ')
+        .replace(/(?:\[\s*)?container[:=\s]+\[[^\]]+\]/gi, ' ')
+        .replace(/\[\s*container[:=\s]+[^\]]+\]/gi, ' ')
+        .replace(/container[:=\s]+[^|;,\(\)\[\]\r\n]+/gi, ' ')
+        .replace(/(?:worth|value|face\s*value|market\s*value)[:=\s]+[^|;,()]+/gi, ' ')
+        .replace(/(?:dimensions?|dims?|size)[:=\s]+[^|;,()]+/gi, ' ')
+        .replace(/(?:weight|wt)[:=\s]*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, ' ')
+        .replace(/:?\s*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, ' ');
+    }
+
+    // Clean pipes, brackets, and delimiters for structured lines
+    const strippedScan = contentToScan.replace(/[|;()\[\]]+/g, ' ').replace(/^[-*•>\s]+/, '').replace(/\s+/g, ' ').trim();
+
+    // =========================================================================
+    // Format A: Explicit Name format and Amount format separated!
+    // e.g.:
+    // "* Name: [1921 Morgan Dollar Coin] | Amount: 1 | Worth: $1.00 | Dimensions: ... | Weight: ... [Container: ...]"
+    // "* Name: 1921 Morgan Dollar Coin | Amount: 1 | Worth: ..."
+    // User Mandate: "the year of the coin should be in the name format part of the currency while the amount is separate format for that coin and etc."
+    // =========================================================================
+    const explicitNameMatch = cleanedLine.match(/(?:^|\||;)\s*name[:=\s]+(?:\[([^\]]+)\]|"([^"]+)"|'([^']+)'|([^|;,()\[\]]+))/i);
+    const explicitAmtMatch = cleanedLine.match(/(?:^|\||;)\s*(?:amount|quantity|qty|count)[:=\s]+([0-9]+(?:\.[0-9]+)?)/i);
+
+    if (explicitNameMatch) {
+      const rawName = (explicitNameMatch[1] || explicitNameMatch[2] || explicitNameMatch[3] || explicitNameMatch[4] || '').trim();
+      if (rawName) {
+        let amt = explicitAmtMatch ? parseFloat(explicitAmtMatch[1]) : (explicitQty !== undefined ? explicitQty : 1);
+        if (isNaN(amt) || amt <= 0) amt = 1;
+        const defs = this.inferCurrencyDefaults(rawName, entryDimsStr, entryWeight, amt);
+        entries.push({
+          name: rawName,
+          amount: amt,
+          worth: entryWorthStr || defs.defaultWorth,
+          dimensions: defs.dimensions,
+          singleDimensionsRaw: defs.dimensions.raw,
+          isDigital: defs.isDigital,
+          unitVolume: defs.unitVolume,
+          totalVolume: defs.totalVolume,
+          singleWeight: defs.singleWeight,
+          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: cleanedLine
+        });
+        return entries;
+      }
+    }
+
+    // Format B: Bracketed name enclosing coin name & year: e.g. "1x [1921 Morgan Dollar Coin]" or "[1921 Morgan Dollar Coin] x1"
+    const bracketCoinMatch = cleanedLine.match(/(?:([0-9]+(?:\.[0-9]+)?)\s*x\s*)?\[([0-9]{4}\s+[^\]]+|[^\]]+)\](?:\s*x?\s*([0-9]+(?:\.[0-9]+)?))?/i);
+    if (bracketCoinMatch) {
+      const innerName = bracketCoinMatch[2].trim();
+      if (
+        !/chase|bank account|vault|stash|home|safe|hide\[/i.test(innerName) &&
+        /coin|dollar|morgan|cent|penny|dime|quarter|credit|gold|silver|copper|ingot|bar|cash|money|\b\d{4}\b/i.test(innerName)
+      ) {
+        let amt = 1;
+        if (bracketCoinMatch[1]) {
+          amt = parseFloat(bracketCoinMatch[1]);
+        } else if (bracketCoinMatch[3]) {
+          amt = parseFloat(bracketCoinMatch[3]);
+        } else if (explicitAmtMatch) {
+          amt = parseFloat(explicitAmtMatch[1]);
+        } else if (explicitQty !== undefined) {
+          amt = explicitQty;
+        }
+
+        const defs = this.inferCurrencyDefaults(innerName, entryDimsStr, entryWeight, amt);
+        entries.push({
+          name: innerName,
+          amount: amt,
+          worth: entryWorthStr || defs.defaultWorth,
+          dimensions: defs.dimensions,
+          singleDimensionsRaw: defs.dimensions.raw,
+          isDigital: defs.isDigital,
+          unitVolume: defs.unitVolume,
+          totalVolume: defs.totalVolume,
+          singleWeight: defs.singleWeight,
+          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: cleanedLine
+        });
+        return entries;
+      }
+    }
+
+    // =========================================================================
+    // Check for Coin Year Pattern (e.g. "1921 Morgan Dollar Coin", "1 1921 Morgan Dollar Coin", "1x 1921 Morgan Dollar Coin")
+    // MANDATE: The year of a coin is NEVER its quantity!
+    // =========================================================================
+    const yearCoinPattern = /^(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:x\s*)?(.*)$/i;
+    const yMatch = strippedScan.match(yearCoinPattern);
+    if (yMatch) {
+      const firstNum = parseFloat(yMatch[1].replace(/,/g, ''));
+      const restText = yMatch[2].replace(/[\[\]]+$/, '').trim();
+
+      // Check if restText starts with a 4-digit year like "1 1921 Morgan Dollar Coin" or "5x 1921 Morgan Dollar Coins"
+      const secondNumMatch = restText.match(/^(\d{4})\b/);
+      // Check if firstNum is itself a 4-digit year (1000 to 2999) without comma
+      const isFirstNumYear = firstNum >= 1000 && firstNum <= 2999 && !yMatch[1].includes(',');
+
+      const isCoinDenom = /^(?:morgan|peace|liberty|walking\s*liberty|saint[- ]gaudens|flowing\s*hair|seated\s*liberty|barber|mercury|buffalo|indian\s*head|steel|silver\s*dollar|trade\s*dollar|dollar|gold\s*coin|silver\s*coin|copper\s*coin|double\s*eagle|eagle|half\s*dollar|quarter|dime|nickel|penny|cent|sovereign|ducat|florin|denarius|drachma|shekel|thaler|peseta|peso|franc|mark|shilling|crown)\b/i;
+
+      if (secondNumMatch) {
+        // Example: "1 1921 Morgan Dollar Coin" or "5 1921 Morgan Dollar Coins"
+        // firstNum is the actual quantity, restText is "1921 Morgan Dollar Coin"
+        const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
+        const cName = restText.replace(/[\[\]]+$/, '').replace(/:$/, '').trim();
+        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+        entries.push({
+          name: cName,
+          amount: amt,
+          worth: entryWorthStr || defs.defaultWorth,
+          dimensions: defs.dimensions,
+          singleDimensionsRaw: defs.dimensions.raw,
+          isDigital: defs.isDigital,
+          unitVolume: defs.unitVolume,
+          totalVolume: defs.totalVolume,
+          singleWeight: defs.singleWeight,
+          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: cleanedLine
+        });
+        return entries;
+      } else if (isFirstNumYear && isCoinDenom.test(restText)) {
+        // Example: "1921 Morgan Dollar Coin"
+        // 1921 is the YEAR in the coin's name! Quantity is 1!
+        const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : 1;
+        const cName = `${yMatch[1]} ${restText}`.replace(/:$/, '').trim();
+        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+        entries.push({
+          name: cName,
+          amount: amt,
+          worth: entryWorthStr || defs.defaultWorth,
+          dimensions: defs.dimensions,
+          singleDimensionsRaw: defs.dimensions.raw,
+          isDigital: defs.isDigital,
+          unitVolume: defs.unitVolume,
+          totalVolume: defs.totalVolume,
+          singleWeight: defs.singleWeight,
+          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: cleanedLine
+        });
+        return entries;
+      } else if (cleanedLine.includes('|') && restText && !secondNumMatch) {
+        // Structured pipe format e.g. "1x Morgan Dollar | Worth: $1.00" or "50x Gold Coins | Worth: 50 GP"
+        const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
+        const cName = restText.replace(/:$/, '').trim();
+        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+        entries.push({
+          name: cName,
+          amount: amt,
+          worth: entryWorthStr || defs.defaultWorth,
+          dimensions: defs.dimensions,
+          singleDimensionsRaw: defs.dimensions.raw,
+          isDigital: defs.isDigital,
+          unitVolume: defs.unitVolume,
+          totalVolume: defs.totalVolume,
+          singleWeight: defs.singleWeight,
+          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+          container,
+          location,
+          isHiddenLocation,
+          rawText: cleanedLine
+        });
+        return entries;
+      }
     }
 
     // Dollar sign pattern: e.g. "$50", "-$20", "+$100", "$50 Cash", "-$20 (from wallet)"
@@ -306,10 +728,18 @@ export class WeightInventoryEngine {
       if (!isNaN(dAmt) && dAmt > 0) {
         const subName = dMatch[2] ? (/cash/i.test(dMatch[2]) ? 'Cash' : (/scrip/i.test(dMatch[2]) ? 'Scrip' : 'Dollars')) : 'Dollars';
         if (!entries.some(e => e.amount === dAmt)) {
+          const defs = this.inferCurrencyDefaults(subName, entryDimsStr, entryWeight, dAmt);
           entries.push({
             name: subName,
             amount: dAmt,
-            weight: entryWeight,
+            worth: entryWorthStr || `$${dAmt.toFixed(2)}`,
+            dimensions: defs.dimensions,
+            singleDimensionsRaw: defs.dimensions.raw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
             container,
             location,
             isHiddenLocation,
@@ -325,9 +755,9 @@ export class WeightInventoryEngine {
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
       const rawNum = match[1].replace(/[$,\s+-]/g, '');
-      const amt = parseFloat(rawNum);
+      const rawAmt = parseFloat(rawNum);
       const name = match[2].trim();
-      if (!isNaN(amt) && amt > 0 && name) {
+      if (!isNaN(rawAmt) && rawAmt > 0 && name) {
         const lowerName = name.toLowerCase();
         if (
           lowerName.includes('inch') ||
@@ -355,11 +785,26 @@ export class WeightInventoryEngine {
         if (/^cash$/i.test(cleanName)) cleanName = 'Cash';
         if (/^scrip$/i.test(cleanName)) cleanName = 'Scrip';
 
-        if (!entries.some(e => e.amount === amt && (e.name.toLowerCase() === cleanName.toLowerCase() || (e.name === 'Dollars' && /dollar/i.test(cleanName))))) {
+        // Check if rawAmt is a 4-digit coin mintage year (1000-2999) e.g. "1921 Morgan Dollar"
+        let actualAmt = rawAmt;
+        if (rawAmt >= 1000 && rawAmt <= 2999 && !rawNum.includes(',') && /^(?:morgan|peace|liberty|dollar|steel|gold|silver)/i.test(cleanName)) {
+          cleanName = `${rawNum} ${cleanName}`;
+          actualAmt = explicitQty !== null && explicitQty !== undefined ? explicitQty : 1;
+        }
+
+        if (!entries.some(e => e.amount === actualAmt && (e.name.toLowerCase() === cleanName.toLowerCase() || (e.name === 'Dollars' && /dollar/i.test(cleanName))))) {
+          const defs = this.inferCurrencyDefaults(cleanName, entryDimsStr, entryWeight, actualAmt);
           entries.push({
             name: cleanName,
-            amount: amt,
-            weight: entryWeight,
+            amount: actualAmt,
+            worth: entryWorthStr || defs.defaultWorth,
+            dimensions: defs.dimensions,
+            singleDimensionsRaw: defs.dimensions.raw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
             container,
             location,
             isHiddenLocation,
@@ -378,10 +823,18 @@ export class WeightInventoryEngine {
       if (!isNaN(pAmt) && pAmt > 0) {
         const cleanName = /cash|money/i.test(pName) ? 'Cash' : (/scrip/i.test(pName) ? 'Scrip' : pName);
         if (!entries.some(e => e.amount === pAmt && e.name.toLowerCase() === cleanName.toLowerCase())) {
+          const defs = this.inferCurrencyDefaults(cleanName, entryDimsStr, entryWeight, pAmt);
           entries.push({
             name: cleanName,
             amount: pAmt,
-            weight: entryWeight,
+            worth: entryWorthStr || defs.defaultWorth,
+            dimensions: defs.dimensions,
+            singleDimensionsRaw: defs.dimensions.raw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
             container,
             location,
             isHiddenLocation,
@@ -420,7 +873,13 @@ export class WeightInventoryEngine {
       }
       totals[norm] = (totals[norm] || 0) + e.amount;
     }
-    const parts = Object.entries(totals).map(([name, amt]) => `${amt.toLocaleString()} ${name}`);
+    const parts = Object.entries(totals).map(([name, amt]) => {
+      // User mandate: the year of the coin is in the name part, while amount is separate format
+      if (/^\d{4}\b/i.test(name) || /morgan|dollar\s*coin|commemorative/i.test(name)) {
+        return `${amt.toLocaleString()}x [${name}]`;
+      }
+      return `${amt.toLocaleString()} ${name}`;
+    });
     return parts.length > 0 ? parts.join(', ') : '0';
   }
 
@@ -925,6 +1384,123 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Evaluates container elasticity and stretch factor dynamically:
+   * - AI-driven: reads explicit stretch multipliers (e.g. "Stretch: 1.5x", "1.3x stretch", "Elasticity: 1.4x", "Capacity: 1.5x")
+   * - Rigid containers: reads explicit rigid tags (e.g. "Rigid (1.0x)", "Rigid", "Hard-shell") or rigid context (1.0x space max)
+   * - Stretchable containers: expands up to the AI-defined multiplier (e.g. wallet = 1.5x, pouch = 1.3x, soft bag = 1.25x)
+   */
+  public static getContainerStretchability(containerName: string, rawText: string = ''): {
+    isRigid: boolean;
+    stretchFactor: number;
+    description: string;
+  } {
+    const combined = `${containerName} ${rawText}`.toLowerCase();
+
+    // 1. Explicit stretch/elasticity/multiplier tag set dynamically by AI or context:
+    // e.g. "stretch: 1.5x", "stretch: 1.3", "1.5x stretch", "max stretch: 1.5x", "elasticity: 1.4x"
+    const explicitStretch = combined.match(/(?:stretch(?:able|ability)?|elastic(?:ity)?|expand(?:able|ability)?|flex(?:ibility)?|hold\s*(?:multiplier|factor)|stretch\s*factor|capacity\s*multiplier)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*x?/i)
+      || combined.match(/([0-9]+(?:\.[0-9]+)?)\s*x\s*(?:stretch|elastic|expandable)/i);
+    if (explicitStretch) {
+      const factor = parseFloat(explicitStretch[1]);
+      if (factor <= 1.0) {
+        return { isRigid: true, stretchFactor: 1.0, description: 'Rigid container (1.0x capacity max)' };
+      }
+      return {
+        isRigid: false,
+        stretchFactor: Math.round(factor * 100) / 100,
+        description: `Stretchable container (${factor}x capacity max)`
+      };
+    }
+
+    // 2. Explicit rigid notation (e.g. "rigid: yes", "rigid (1.0x)", "rigid", "hard-sided", "inflexible")
+    if (/(?:^|[^a-z])(?:rigid|hard[- ]sided|inflexible|solid|unyielding|stiff)(?:[^a-z]|$)/i.test(combined)) {
+      return { isRigid: true, stretchFactor: 1.0, description: 'Rigid container (1.0x capacity max)' };
+    }
+
+    // 3. Dynamic contextual fallback based on container name/context:
+    // Hard/rigid materials/containers:
+    if (/\b(?:box|chest|crate|bottle|vial|safe|cage)\b/i.test(combined)) {
+      return { isRigid: true, stretchFactor: 1.0, description: 'Rigid container (1.0x capacity max)' };
+    }
+
+    // Wallets & bankrolls: 1.5x dynamic default
+    if (/\b(?:wallet|billfold|bankroll)\b/i.test(combined)) {
+      return { isRigid: false, stretchFactor: 1.5, description: 'Stretchable wallet / bankroll (1.5x max space)' };
+    }
+
+    // Pouches & coin purses: 1.3x dynamic default
+    if (/\b(?:pouch|purse)\b/i.test(combined)) {
+      return { isRigid: false, stretchFactor: 1.3, description: 'Stretchable pouch (1.3x max space)' };
+    }
+
+    // General flexible / soft containers: 1.25x
+    return { isRigid: false, stretchFactor: 1.25, description: 'Stretchable container (1.25x max space)' };
+  }
+
+  /**
+   * Dynamically updates a container's physical size and dimensions based on how much it is stretched.
+   * If current volume exceeds max base volume (while within effectiveMaxVolume):
+   * - Calculates currentStretchRatio = currentVolume / maxVolume
+   * - Dynamically expands dimensions (bulging thickness/depth and overall size based on stretch ratio)
+   * - Updates cont.stretchedDimensions and cont.currentDimensions
+   */
+  public static updateContainerStretchDimensions(cont: ContainerInfo): void {
+    if (!cont.maxVolume || cont.maxVolume <= 0 || !cont.currentVolume || cont.currentVolume <= cont.maxVolume) {
+      cont.isStretched = false;
+      cont.currentStretchRatio = 1.0;
+      cont.currentDimensions = cont.dimensions;
+      cont.stretchedDimensions = undefined;
+      return;
+    }
+
+    cont.isStretched = true;
+    const maxStretch = cont.stretchFactor || 1.3;
+    const rawRatio = cont.currentVolume / cont.maxVolume;
+    const stretchRatio = Math.round(Math.min(rawRatio, maxStretch) * 100) / 100;
+    cont.currentStretchRatio = stretchRatio;
+
+    const baseH = cont.dimensions?.height || 12;
+    const baseW = cont.dimensions?.width || 8;
+    const baseD = cont.dimensions?.depth || 4;
+    const unit = cont.dimensions?.unit || 'inches';
+
+    let stretchedH = baseH;
+    let stretchedW = baseW;
+    let stretchedD = baseD;
+
+    if (baseD <= 1.5 || baseD < Math.min(baseH, baseW) / 2) {
+      // Thin / flat container (wallet, pouch, pocket, bankroll):
+      // Stretches primarily by bulging outward in depth/thickness, with slight strain on height and width
+      const sDepth = Math.pow(stretchRatio, 0.7);
+      const sFace = Math.pow(stretchRatio, 0.15);
+      stretchedH = Math.round(baseH * sFace * 10) / 10;
+      stretchedW = Math.round(baseW * sFace * 10) / 10;
+      stretchedD = Math.round(baseD * sDepth * 10) / 10;
+      if (stretchedD <= baseD) {
+        stretchedD = Math.round(baseD * stretchRatio * 10) / 10;
+      }
+    } else {
+      // 3D volumetric container (backpack, bag, sack):
+      // Expands uniformly in 3D volume based on cube root of stretch ratio
+      const k = Math.cbrt(stretchRatio);
+      stretchedH = Math.round(baseH * k * 10) / 10;
+      stretchedW = Math.round(baseW * k * 10) / 10;
+      stretchedD = Math.round(baseD * k * 10) / 10;
+    }
+
+    const stretchedRaw = `${stretchedH}x${stretchedW}x${stretchedD} ${unit}`;
+    cont.stretchedDimensions = {
+      height: stretchedH,
+      width: stretchedW,
+      depth: stretchedD,
+      raw: stretchedRaw,
+      applies: true,
+      unit
+    };
+    cont.currentDimensions = cont.stretchedDimensions;
+  }
+
+  /**
    * Evaluates container fit and overflow:
    * 1. Foldable items (leather tunic, cloth clothing, robes, cloaks, blankets) fold and compress
    *    to fit inside containers without overflowing, provided total container volume/weight is not exceeded.
@@ -935,16 +1511,27 @@ export class WeightInventoryEngine {
    * 4. Protruding Overflow Rule: If a rigid item can enter (its cross section fits through the opening),
    *    but its length exceeds container depth (e.g. 60-inch staff in 18-inch backpack), it protrudes/overflows
    *    and risks dropping during movement or combat.
+   * 5. Elasticity / Stretchability: Rigid containers hold strictly 1.0x their volume. Stretchable containers
+   *    (wallets = 1.5x, pouches = 1.3x) can stretch beyond base space up to their multiplier before overflowing.
    */
   public static checkContainerFit(
     item: { name: string; weight?: number; dimensions: ParsedDimensions; rawText?: string },
     containerMaxDim: ParsedDimensions,
-    containerCapacity?: { maxWeight?: number; currentWeight?: number }
+    containerCapacity?: {
+      maxWeight?: number;
+      currentWeight?: number;
+      maxVolume?: number;
+      currentVolume?: number;
+      stretchFactor?: number;
+      effectiveMaxVolume?: number;
+      isRigid?: boolean;
+    }
   ): {
     canFit: boolean;
     isOverflow: boolean;
     doesNotFit: boolean;
     isFoldable: boolean;
+    isStretched?: boolean;
     status: 'fits' | 'overflow' | 'does_not_fit';
     reason?: string;
   } {
@@ -1005,6 +1592,41 @@ export class WeightInventoryEngine {
           status: 'overflow',
           reason: `Container weight capacity exceeded (${current + itWeight} lbs > ${containerCapacity.maxWeight} lbs max).`
         };
+      }
+    }
+
+    // Check container volume limit with stretchability / elasticity
+    const itemVol = itemDims.reduce((a, b) => a * b, 1);
+    let itemIsStretched = false;
+    if (containerCapacity?.maxVolume && containerCapacity.maxVolume > 0) {
+      const baseVol = containerCapacity.maxVolume;
+      const curVol = containerCapacity.currentVolume || 0;
+      const isRigid = containerCapacity.isRigid ?? false;
+      const stretchFactor = containerCapacity.stretchFactor || (isRigid ? 1.0 : 1.15);
+      const effectiveMaxVol = containerCapacity.effectiveMaxVolume || Math.round(baseVol * stretchFactor * 100) / 100;
+
+      if (curVol + itemVol > effectiveMaxVol) {
+        if (isRigid) {
+          return {
+            canFit: true,
+            isOverflow: true,
+            doesNotFit: false,
+            isFoldable,
+            status: 'overflow',
+            reason: `Rigid container cannot stretch (strictly 1.0x space max). Exceeded volume capacity (${Math.round((curVol + itemVol) * 10) / 10} cu in > ${Math.round(baseVol * 10) / 10} cu in max).`
+          };
+        } else {
+          return {
+            canFit: true,
+            isOverflow: true,
+            doesNotFit: false,
+            isFoldable,
+            status: 'overflow',
+            reason: `Container exceeded maximum stretch capacity (${Math.round((curVol + itemVol) * 10) / 10} cu in > ${Math.round(effectiveMaxVol * 10) / 10} cu in at ${stretchFactor}x max stretch). Items overflow!`
+          };
+        }
+      } else if (curVol + itemVol > baseVol) {
+        itemIsStretched = true;
       }
     }
 
@@ -1712,17 +2334,23 @@ export class WeightInventoryEngine {
     if (trimmed.startsWith('[') && closingBracket > 1) {
       name = trimmed.substring(1, closingBracket).trim();
       rest = trimmed.substring(closingBracket + 1).replace(/^[:\s-]+/, '').trim();
-    } else if (colonIdx > 0 && colonIdx < 100) {
-      name = trimmed.substring(0, colonIdx).trim();
-      rest = trimmed.substring(colonIdx + 1).trim();
     } else {
-      // e.g. "feather 0 weight 3x0 inch"
-      const weightIdx = trimmed.search(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:weight|pound|lbs?|kg|oz)/i);
-      if (weightIdx > 0) {
-        name = trimmed.substring(0, weightIdx).trim();
-        rest = trimmed.substring(weightIdx).trim();
+      const pipeIdx = trimmed.indexOf('|');
+      if (pipeIdx > 0 && (colonIdx === -1 || pipeIdx < colonIdx)) {
+        name = trimmed.substring(0, pipeIdx).trim();
+        rest = trimmed.substring(pipeIdx + 1).trim();
+      } else if (colonIdx > 0 && colonIdx < 100) {
+        name = trimmed.substring(0, colonIdx).trim();
+        rest = trimmed.substring(colonIdx + 1).trim();
       } else {
-        name = trimmed.split(/[(,]/)[0].trim();
+        // e.g. "feather 0 weight 3x0 inch"
+        const weightIdx = trimmed.search(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:weight|pound|lbs?|kg|oz)/i);
+        if (weightIdx > 0) {
+          name = trimmed.substring(0, weightIdx).trim();
+          rest = trimmed.substring(weightIdx).trim();
+        } else {
+          name = trimmed.split(/[(,]/)[0].trim();
+        }
       }
     }
 
@@ -2589,12 +3217,7 @@ export class WeightInventoryEngine {
           if (!name) name = 'Backpack';
 
           // Distinguish container empty weight from max capacity
-          let containerWeight = 2.0;
-          if (lower.includes('pocket')) containerWeight = 0.0;
-          else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) containerWeight = 0.2;
-          else if (lower.includes('satchel')) containerWeight = 1.0;
-          else if (lower.includes('chest')) containerWeight = 15.0;
-
+          let containerWeight = 1.0;
           const emptyWeightMatch = line.match(/(?:empty\s*weight|weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (emptyWeightMatch) {
             containerWeight = parseFloat(emptyWeightMatch[1]);
@@ -2606,36 +3229,44 @@ export class WeightInventoryEngine {
           }
 
           let maxWeightCapacity: number | undefined;
-          const capMatch = line.match(/(?:max\s*(?:weight|capacity)|capacity|holds\s*up\s*to)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
+          const capMatch = line.match(/(?:max\s*(?:weight|capacity|space)|capacity|holds\s*up\s*to)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (capMatch) {
             maxWeightCapacity = parseFloat(capMatch[1]);
           } else {
-            // Sensible defaults
-            if (lower.includes('pocket')) maxWeightCapacity = 2.0;
-            else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) maxWeightCapacity = 3.0;
-            else if (lower.includes('satchel')) maxWeightCapacity = 20;
-            else if (lower.includes('quiver')) maxWeightCapacity = 10;
-            else if (lower.includes('chest')) maxWeightCapacity = 100;
-            else maxWeightCapacity = 40;
+            maxWeightCapacity = 25; // Standard fallback if AI omitted
           }
 
           let maxDim = this.parseDimensions(line);
           if (!maxDim.raw) {
-            if (lower.includes('pocket')) maxDim = this.parseDimensions('6x5x1.5 inches');
-            else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) maxDim = this.parseDimensions('6x4x3 inches');
-            else if (lower.includes('satchel')) maxDim = this.parseDimensions('12x10x4 inches');
-            else if (lower.includes('quiver')) maxDim = this.parseDimensions('24x4x4 inches');
-            else if (lower.includes('chest')) maxDim = this.parseDimensions('36x24x20 inches');
-            else maxDim = this.parseDimensions('18x12x8 inches');
+            maxDim = this.parseDimensions('12x8x4 inches');
           }
 
           activeContainerName = name;
+          const contMaxVol = maxDim.applies && (maxDim.height || 0) * (maxDim.width || 0) * (maxDim.depth || 0) > 0
+            ? Math.round((maxDim.height || 0) * (maxDim.width || 0) * (maxDim.depth || 0) * 100) / 100
+            : undefined;
+
+          const stretch = WeightInventoryEngine.getContainerStretchability(name, line);
+          const effectiveMaxVol = contMaxVol ? Math.round(contMaxVol * stretch.stretchFactor * 100) / 100 : undefined;
+
           containers.push({
             name,
             weight: containerWeight,
             dimensions: maxDim,
             maxDimensions: maxDim,
+            currentDimensions: maxDim,
             maxWeightCapacity,
+            maxVolume: contMaxVol,
+            stretchFactor: stretch.stretchFactor,
+            effectiveMaxVolume: effectiveMaxVol,
+            isRigid: stretch.isRigid,
+            isStretched: false,
+            currentStretchRatio: 1.0,
+            stretchReason: stretch.description,
+            currentVolume: 0,
+            currencyCount: 0,
+            currencyWeight: 0,
+            currencyVolume: 0,
             items: [],
             currentItemsWeight: 0,
             totalWeight: containerWeight,
@@ -2708,12 +3339,27 @@ export class WeightInventoryEngine {
               }
 
               const defaultDim = this.parseDimensions(defDimStr);
+              const autoVol = defaultDim.applies && (defaultDim.height || 0) * (defaultDim.width || 0) * (defaultDim.depth || 0) > 0
+                ? Math.round((defaultDim.height || 0) * (defaultDim.width || 0) * (defaultDim.depth || 0) * 100) / 100
+                : undefined;
+              const stretch = WeightInventoryEngine.getContainerStretchability(defaultName, '');
+              const effectiveMaxVol = autoVol ? Math.round(autoVol * stretch.stretchFactor * 100) / 100 : undefined;
               cont = {
                 name: defaultName,
                 weight: defWeight,
                 dimensions: defaultDim,
                 maxDimensions: defaultDim,
                 maxWeightCapacity: defCap,
+                maxVolume: autoVol,
+                stretchFactor: stretch.stretchFactor,
+                effectiveMaxVolume: effectiveMaxVol,
+                isRigid: stretch.isRigid,
+                isStretched: false,
+                stretchReason: stretch.description,
+                currentVolume: 0,
+                currencyCount: 0,
+                currencyWeight: 0,
+                currencyVolume: 0,
                 items: [],
                 currentItemsWeight: 0,
                 totalWeight: defWeight,
@@ -2727,9 +3373,15 @@ export class WeightInventoryEngine {
             item.category = 'carried';
             item.containerName = cont.name;
 
-            // Check container fit
+            // Check container fit with stretchability/elasticity
             const fitCheck = this.checkContainerFit(item, cont.maxDimensions, {
-              currentWeight: cont.currentItemsWeight
+              currentWeight: cont.currentItemsWeight,
+              maxWeight: cont.maxWeightCapacity,
+              maxVolume: cont.maxVolume,
+              currentVolume: cont.currentVolume,
+              stretchFactor: cont.stretchFactor,
+              effectiveMaxVolume: cont.effectiveMaxVolume,
+              isRigid: cont.isRigid
             });
 
             item.isFoldable = fitCheck.isFoldable;
@@ -2748,6 +3400,11 @@ export class WeightInventoryEngine {
             cont.items.push(item);
             cont.currentItemsWeight = Math.round((cont.currentItemsWeight + item.weight) * 100) / 100;
             cont.totalWeight = Math.round((cont.totalWeight + item.weight) * 100) / 100;
+            const itemVol = item.dimensions?.applies && (item.dimensions.height || 0) * (item.dimensions.width || 0) * (item.dimensions.depth || 0) > 0
+              ? (item.dimensions.height || 0) * (item.dimensions.width || 0) * (item.dimensions.depth || 0)
+              : 0;
+            cont.currentVolume = Math.round(((cont.currentVolume || 0) + itemVol) * 100) / 100;
+            WeightInventoryEngine.updateContainerStretchDimensions(cont);
           } else if (lower.includes('equipped') || lower.includes('wielding') || lower.includes('wearing') || lower.includes('armor:')) {
             item.category = 'equipped';
             equippedGear.push(item);
@@ -2924,9 +3581,22 @@ export class WeightInventoryEngine {
           currencyType = line.split(/[:=]/)[1]?.trim() || currencyType;
           continue;
         }
-        if (lower.includes('stored') || lower.includes('remote balance') || lower.includes('not on person') || lower.includes('vault') || lower.includes('cache') || lower.includes('chest') || lower.includes('bank')) {
+        if (
+          lower.startsWith('- stored') ||
+          lower.startsWith('* stored') ||
+          lower.startsWith('stored') ||
+          lower.includes('remote balance') ||
+          lower.includes('not on person') ||
+          lower.startsWith('- remote') ||
+          lower.startsWith('bank account')
+        ) {
           activeCurrencySub = 'stored';
-        } else if (lower.includes('carried balance') || lower.includes('carried currency') || (lower.includes('on person') && !lower.includes('not on person')) || lower.includes('pouch') || lower.includes('wallet')) {
+        } else if (
+          lower.startsWith('- carried') ||
+          lower.startsWith('* carried') ||
+          lower.startsWith('carried') ||
+          (lower.includes('on person') && !lower.includes('not on person'))
+        ) {
           activeCurrencySub = 'carried';
         }
 
@@ -3141,7 +3811,81 @@ export class WeightInventoryEngine {
       }
     }
 
+    // Process carried currencies into containers:
+    // Physical currency is NOT infinite space. It consumes weight and volume in containers.
+    // Digital currency (credits, crypto, bank deposits) occupies 0 volume and 0 weight.
+    const currencyInContainers = new Set<CurrencyEntry>();
+
+    for (const c of carriedCurrencies) {
+      let targetCont: ContainerInfo | undefined;
+      if (c.container) {
+        targetCont = this.findMatchingContainer(containers, c.container);
+      } else if (containers.length > 0) {
+        targetCont = containers.find(cnt => /pouch|purse|wallet/i.test(cnt.name));
+      }
+
+      if (targetCont) {
+        currencyInContainers.add(c);
+        if (!c.container) {
+          c.container = targetCont.name;
+        }
+
+        if (c.isDigital) {
+          targetCont.currencyCount = (targetCont.currencyCount || 0) + c.amount;
+        } else {
+          const curVol = c.totalVolume !== undefined ? c.totalVolume : Math.round(c.amount * (c.unitVolume || 0.115) * 1.25 * 100) / 100;
+          const curWt = c.weight !== undefined ? c.weight : Math.round(c.amount * (c.singleWeight || 0.02) * 100) / 100;
+
+          targetCont.currencyCount = (targetCont.currencyCount || 0) + c.amount;
+          targetCont.currencyWeight = Math.round(((targetCont.currencyWeight || 0) + curWt) * 100) / 100;
+          targetCont.currencyVolume = Math.round(((targetCont.currencyVolume || 0) + curVol) * 100) / 100;
+          targetCont.currentItemsWeight = Math.round((targetCont.currentItemsWeight + curWt) * 100) / 100;
+          targetCont.totalWeight = Math.round((targetCont.totalWeight + curWt) * 100) / 100;
+          targetCont.currentVolume = Math.round(((targetCont.currentVolume || 0) + curVol) * 100) / 100;
+
+          // Check container weight capacity
+          if (targetCont.maxWeightCapacity && targetCont.currentItemsWeight > targetCont.maxWeightCapacity) {
+            targetCont.hasOverflow = true;
+            targetCont.overflowReason = `Container weight capacity exceeded (${targetCont.currentItemsWeight} lbs > ${targetCont.maxWeightCapacity} lbs max). Carrying too much heavy currency and gear!`;
+          }
+
+          // Check container volume capacity (finite space vs digital money) with stretchability!
+          const maxVol = targetCont.maxVolume || 0;
+          const effMaxVol = targetCont.effectiveMaxVolume || maxVol;
+          const isRigid = targetCont.isRigid ?? false;
+          const stretchFactor = targetCont.stretchFactor || (isRigid ? 1.0 : 1.15);
+
+          if (effMaxVol > 0 && targetCont.currentVolume && targetCont.currentVolume > effMaxVol) {
+            targetCont.hasOverflow = true;
+            if (isRigid) {
+              targetCont.overflowReason = `Rigid container cannot stretch (strictly 1.0x space max). Exceeded volume capacity (${Math.round(targetCont.currentVolume)} cu in > ${Math.round(maxVol)} cu in max). Physical currency and items overflow!`;
+            } else {
+              targetCont.overflowReason = `Container volume capacity exceeded even at maximum stretch (${Math.round(targetCont.currentVolume)} cu in > ${Math.round(effMaxVol)} cu in at ${stretchFactor}x max stretch). Physical currency and items overflow!`;
+            }
+          } else if (maxVol > 0 && targetCont.currentVolume && targetCont.currentVolume > maxVol) {
+            targetCont.isStretched = true;
+          }
+
+          // Mirror into targetCont.items for container UI if not already mirrored
+          const alreadyMirrored = targetCont.items.some(it => it.name.toLowerCase().includes(c.name.toLowerCase()));
+          if (!alreadyMirrored) {
+            targetCont.items.push({
+              name: `Amount: ${c.amount}x Name: [${c.name}]${c.worth ? ` (Worth: ${c.worth})` : ''}`,
+              weight: curWt,
+              dimensions: c.dimensions || this.parseDimensions(c.singleDimensionsRaw || '1.2x1.2x0.08 inches'),
+              category: 'carried',
+              containerName: targetCont.name,
+              isOverflow: targetCont.hasOverflow,
+              overflowReason: targetCont.overflowReason,
+              rawText: `* Name: [${c.name}] | Amount: ${c.amount} | Worth: ${c.worth || c.name} | Dimensions: ${c.dimensions?.raw || '1.2x1.2x0.08 in'} | Weight: ${curWt} lbs`
+            });
+          }
+        }
+      }
+    }
+
     for (const cont of containers) {
+      WeightInventoryEngine.updateContainerStretchDimensions(cont);
       if (cont.hasOverflow) {
         const contOverflows = cont.items.filter(i => i.isOverflow);
         if (contOverflows.length > 0) {
@@ -3168,7 +3912,7 @@ export class WeightInventoryEngine {
     };
 
     // Calculate Total Carried Weight on Person:
-    // = Equipped Gear + Containers (empty weight) + Items inside containers + Carried loose items + Currently Held items
+    // = Equipped Gear + Containers (empty weight) + Items inside containers (including physical currency in containers) + Carried loose items + Currently Held items
     let totalCarriedWeight = 0;
     for (const eq of equippedGear) {
       totalCarriedWeight += eq.weight;
@@ -3194,13 +3938,15 @@ export class WeightInventoryEngine {
       explicitCarriedNone = false;
     }
 
-    // Add carried currency physical weight (if coins or physical money)
+    // Add loose carried currency physical weight (for currencies NOT already in containers)
     for (const c of carriedCurrencies) {
-      if (c.weight !== undefined && c.weight > 0) {
-        totalCarriedWeight += c.weight;
-      } else if (/coins?|gold|silver|copper/i.test(c.name)) {
-        // Standard realistic physical coin weight: ~0.02 lbs (approx 50 coins per pound)
-        totalCarriedWeight += Math.round(c.amount * 0.02 * 100) / 100;
+      if (!currencyInContainers.has(c) && !c.isDigital) {
+        if (c.weight !== undefined && c.weight > 0) {
+          totalCarriedWeight += c.weight;
+        } else if (/coins?|gold|silver|copper/i.test(c.name)) {
+          // Standard realistic physical coin weight: ~0.02 lbs (approx 50 coins per pound)
+          totalCarriedWeight += Math.round(c.amount * (c.singleWeight || 0.02) * 100) / 100;
+        }
       }
     }
 
@@ -3681,6 +4427,39 @@ export class WeightInventoryEngine {
       }
     }
 
+    // 5.5. Synchronize container stretch dimensions in file:
+    // If a container is stretched, update its size line under [CONTAINERS & CARRIED GEAR] to show active stretched dimensions
+    if (stats.containers && stats.containers.length > 0) {
+      for (const cont of stats.containers) {
+        if (!cont.name) continue;
+        const contEsc = cont.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const contLineRegex = new RegExp(`^([\\s*-]*\\[?${contEsc}\\]?[^:\\n]*:[^\\n]*)`, 'im');
+        const contLineMatch = updated.match(contLineRegex);
+        if (contLineMatch) {
+          const originalLine = contLineMatch[1];
+          if (cont.isStretched && cont.stretchedDimensions && cont.currentStretchRatio && cont.currentStretchRatio > 1.0) {
+            const stretchedDesc = ` (Currently stretched to ${cont.stretchedDimensions.height}x${cont.stretchedDimensions.width}x${cont.stretchedDimensions.depth} ${cont.stretchedDimensions.unit || 'inches'}, ${cont.currentStretchRatio}x)`;
+            let newLine = originalLine;
+            if (newLine.includes('(Currently stretched')) {
+              newLine = newLine.replace(/\(Currently stretched[^)]+\)/i, stretchedDesc.trim());
+            } else if (/dimensions?[:=\s]+[^,;\r\n]+/i.test(newLine)) {
+              newLine = newLine.replace(/(dimensions?[:=\s]+[^,;\r\n]+)/i, `$1${stretchedDesc}`);
+            } else {
+              newLine = `${newLine}${stretchedDesc}`;
+            }
+            if (newLine !== originalLine) {
+              updated = updated.replace(originalLine, newLine);
+              changes.push(`Updated ${cont.name} stretched size to ${cont.stretchedDimensions.raw}`);
+            }
+          } else if (!cont.isStretched && originalLine.includes('(Currently stretched')) {
+            const newLine = originalLine.replace(/\s*\(Currently stretched[^)]+\)/i, '');
+            updated = updated.replace(originalLine, newLine);
+            changes.push(`Relaxed ${cont.name} to un-stretched base size`);
+          }
+        }
+      }
+    }
+
     // 6. Ensure [CURRENCY & FINANCIAL BALANCE] section is present and accurate if currency exists or section was present
     const currHeaderRegex = /(?:\[\s*(?:CURRENCY\s*(?:&|AND)\s*(?:FINANCIAL\s*)?BALANCE|CURRENCY|FINANCIAL\s*BALANCE)\s*\]|(?:^|\n)\s*(?:#+\s*)?(?:CURRENCY\s*(?:&|AND)\s*(?:FINANCIAL\s*)?BALANCE|CURRENCY|FINANCIAL\s*BALANCE):?\s*(?=\n|$))/i;
     const hasCurrencySection = currHeaderRegex.test(updated);
@@ -3707,9 +4486,13 @@ export class WeightInventoryEngine {
         currencyLines.push(`  * None (0)`);
       } else {
         for (const c of dedupCarried) {
+          const worthPart = c.worth ? ` | Worth: ${c.worth}` : '';
+          const dimStr = c.dimensions?.raw ? c.dimensions.raw : (c.singleDimensionsRaw ? c.singleDimensionsRaw : (c.isDigital ? 'Digital' : '1.2x1.2x0.08 inches'));
+          const dimPart = c.isDigital ? ` | Dimensions: Digital` : ` | Dimensions: ${dimStr}`;
+          const wPart = c.weight !== undefined ? ` | Weight: ${c.weight} lbs` : '';
           const contSuffix = c.container ? ` [Container: ${c.container}]` : '';
-          const wSuffix = c.weight !== undefined ? ` (Weight: ${c.weight} lbs)` : '';
-          currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}${contSuffix}${wSuffix}`);
+          // User mandate: the year of the coin should be in the name format part of the currency while the amount is separate format for that coin
+          currencyLines.push(`  * Name: [${c.name}] | Amount: ${c.amount}${worthPart}${dimPart}${wPart}${contSuffix}`);
         }
       }
 
@@ -3741,10 +4524,14 @@ export class WeightInventoryEngine {
             if (closeB > openB && cleanLoc.endsWith(']')) {
               cleanLoc = cleanLoc.substring(0, cleanLoc.length - 1).trim();
             }
-            currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name} [Location: ${cleanLoc}]`);
-          } else {
-            currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}`);
           }
+          const worthPart = c.worth ? ` | Worth: ${c.worth}` : '';
+          const dimStr = c.dimensions?.raw ? c.dimensions.raw : (c.singleDimensionsRaw ? c.singleDimensionsRaw : (c.isDigital ? 'Digital' : '1.2x1.2x0.08 inches'));
+          const dimPart = c.isDigital ? ` | Dimensions: Digital` : ` | Dimensions: ${dimStr}`;
+          const wPart = c.weight !== undefined ? ` | Weight: ${c.weight} lbs` : '';
+          const locSuffix = cleanLoc ? ` [Location: ${cleanLoc}]` : '';
+          // User mandate: the year of the coin should be in the name format part of the currency while the amount is separate format for that coin
+          currencyLines.push(`  * Name: [${c.name}] | Amount: ${c.amount}${worthPart}${dimPart}${wPart}${locSuffix}`);
         }
       }
 

@@ -32,8 +32,14 @@ export interface HealthTransaction {
 export interface CurrencyTransaction {
   name: string;
   amount: number;
+  worth?: string;
+  worthValue?: number;
+  dimensions?: string;
+  singleWeight?: number;
+  isDigital?: boolean;
   operation: 'add' | 'deduct' | 'transfer';
   container?: string;
+  location?: string;
   giver?: string;
   recipient?: string;
   rawText?: string;

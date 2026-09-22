@@ -991,27 +991,49 @@ const Sidebar: React.FC<SidebarProps> = ({
                                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-950/70 border border-blue-800/40 text-blue-300 shrink-0 font-medium">
                                               {cont.items.length} {cont.items.length === 1 ? 'item' : 'items'}
                                             </span>
+                                            <span className={`text-[8px] px-1 py-0.2 rounded border font-mono shrink-0 ${cont.isRigid ? 'bg-neutral-800/80 text-neutral-300 border-neutral-700' : 'bg-emerald-950/70 text-emerald-300 border-emerald-800/40'}`}>
+                                              {cont.isRigid ? 'Rigid (1.0x)' : `Stretch (${cont.stretchFactor || 1.3}x)`}
+                                            </span>
                                           </div>
                                           <div className="text-right shrink-0">
                                             <span className="text-gray-400 font-mono text-[8.5px]">
                                               {cont.totalWeight} lbs
                                             </span>
-                                            <span className="text-gray-600 text-[8px] block">
-                                              Max: {cont.maxDimensions.raw || '18x12"'}
-                                            </span>
+                                            {cont.isStretched && cont.stretchedDimensions ? (
+                                              <span className="text-amber-300 font-mono text-[8px] block font-semibold" title={`Stretched size: ${cont.stretchedDimensions.raw} (Base: ${cont.dimensions.raw})`}>
+                                                ⚡ {cont.stretchedDimensions.height}x{cont.stretchedDimensions.width}x{cont.stretchedDimensions.depth}"
+                                              </span>
+                                            ) : (
+                                              <span className="text-gray-600 text-[8px] block">
+                                                Size: {cont.dimensions.raw || '18x12"'}
+                                              </span>
+                                            )}
                                           </div>
                                         </button>
 
+                                        {cont.isStretched && !cont.hasOverflow && (
+                                          <div className="mx-1.5 mb-1 flex flex-col gap-0.5 text-[8.5px] text-amber-300 bg-amber-950/40 p-1.5 rounded border border-amber-800/50">
+                                            <div className="flex items-center gap-1 font-medium">
+                                              <span className="text-[10px]">⚡</span>
+                                              <span>Stretched to {cont.currentStretchRatio || 1.3}x capacity</span>
+                                              <span className="text-amber-400/70 text-[8px] ml-auto">Max: {cont.stretchFactor || 1.3}x</span>
+                                            </div>
+                                            <div className="text-[8px] text-amber-200/90 pl-3.5">
+                                              Updated Size: <span className="font-mono font-semibold text-amber-300">{cont.stretchedDimensions?.raw || cont.currentDimensions?.raw}</span>
+                                              <span className="text-amber-400/60 ml-1">(Base: {cont.dimensions.raw})</span>
+                                            </div>
+                                          </div>
+                                        )}
                                         {cont.hasDoesNotFit && (
                                           <div className="mx-1.5 mb-1 flex items-center gap-1 text-[8.5px] text-red-400 bg-red-950/60 p-1 rounded border border-red-800/60">
                                             <AlertOctagon size={11} className="text-red-400 shrink-0" />
-                                            <span>Cannot Fit: Rigid item's dimensions exceed container opening!</span>
+                                            <span>{cont.overflowReason || "Cannot Fit: Rigid item's dimensions exceed container opening!"}</span>
                                           </div>
                                         )}
                                         {cont.hasOverflow && (
                                           <div className="mx-1.5 mb-1 flex items-center gap-1 text-[8.5px] text-amber-400 bg-amber-950/60 p-1 rounded border border-amber-800/60">
                                             <AlertTriangle size={11} className="text-amber-400 shrink-0" />
-                                            <span>Container Overflow: Rigid item protrudes and risks dropping!</span>
+                                            <span>{cont.overflowReason || (cont.isRigid ? "Rigid container cannot stretch (strictly 1.0x space max). Overflow!" : "Container Overflow: Exceeded maximum stretch capacity!")}</span>
                                           </div>
                                         )}
 
@@ -1075,35 +1097,73 @@ const Sidebar: React.FC<SidebarProps> = ({
                                     </div>
 
                                     <div className="grid grid-cols-1 gap-1 text-[9.5px]">
-                                      <div className="flex items-start justify-between gap-1 text-gray-300 bg-neutral-950/60 p-1 rounded border border-neutral-800/40">
-                                        <span className="text-gray-400 shrink-0 font-medium">💰 Carried (On Person):</span>
-                                        <span className="text-amber-200 font-mono text-right font-medium">
-                                          {pStats.currency.carriedSummary || 'None (0)'}
-                                        </span>
+                                      <div className="text-gray-300 bg-neutral-950/60 p-1.5 rounded border border-neutral-800/40 space-y-1">
+                                        <div className="flex items-start justify-between gap-1">
+                                          <span className="text-gray-400 shrink-0 font-medium">💰 Carried (On Person):</span>
+                                          <span className="text-amber-200 font-mono text-right font-medium">
+                                            {pStats.currency.carriedSummary || 'None (0)'}
+                                          </span>
+                                        </div>
+                                        {pStats.currency.carriedCurrencies.length > 0 && (
+                                          <div className="pt-1 border-t border-neutral-800/50 space-y-1 text-[8.5px]">
+                                            {pStats.currency.carriedCurrencies.map((c, ci) => (
+                                              <div key={ci} className="flex justify-between items-center text-gray-400">
+                                                <div className="truncate mr-1">
+                                                  <span className="text-amber-400 font-mono font-semibold">
+                                                    • {c.amount.toLocaleString()}x
+                                                  </span>{' '}
+                                                  <span className="text-amber-200/90 font-medium">
+                                                    [{c.name}]
+                                                  </span>
+                                                  {c.worth ? <span className="text-gray-400 font-normal"> (Worth: {c.worth})</span> : null}
+                                                  {c.container ? <span className="text-amber-500/80 font-normal"> [{c.container}]</span> : null}
+                                                </div>
+                                                <div className="text-right font-mono text-[8px] text-gray-500 shrink-0">
+                                                  {c.dimensions?.raw && !c.isDigital ? `${c.dimensions.raw} • ` : (c.isDigital ? 'Digital • ' : '')}
+                                                  {c.weight !== undefined ? `${c.weight} lbs` : ''}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
                                       </div>
 
                                       {pStats.currency.storedCurrencies.length > 0 && (
-                                        <div className="flex items-start justify-between gap-1 text-gray-300 bg-neutral-950/60 p-1 rounded border border-neutral-800/40">
-                                          <span className="text-gray-400 shrink-0 font-medium">🏦 Stored / Remote:</span>
-                                          <div className="text-right space-y-0.5">
-                                            <span className="text-gray-300 font-mono font-medium">
+                                        <div className="text-gray-300 bg-neutral-950/60 p-1.5 rounded border border-neutral-800/40 space-y-1">
+                                          <div className="flex items-start justify-between gap-1">
+                                            <span className="text-gray-400 shrink-0 font-medium">🏦 Stored / Remote:</span>
+                                            <span className="text-gray-300 font-mono font-medium text-right">
                                               {pStats.currency.storedSummary}
                                             </span>
-                                            {(() => {
-                                              const seen = new Set<string>();
-                                              return pStats.currency.storedCurrencies.map((sc, sci) => {
-                                                if (!sc.location) return null;
-                                                const res = parseSecretLocation(sc.location, username, debugMode);
-                                                const key = `${res.displayFormatted}_${res.isSecret}_${res.isVisibleToPlayer}`;
-                                                if (seen.has(key)) return null;
-                                                seen.add(key);
-                                                return (
-                                                  <div key={sci} className={`text-[8px] italic truncate ${res.isSecret ? (res.isVisibleToPlayer ? 'text-emerald-400 font-medium' : 'text-gray-500') : 'text-amber-400/90'}`}>
-                                                    📍 {res.displayFormatted}
+                                          </div>
+                                          <div className="pt-1 border-t border-neutral-800/50 space-y-1 text-[8.5px]">
+                                            {pStats.currency.storedCurrencies.map((sc, sci) => {
+                                              const res = sc.location ? parseSecretLocation(sc.location, username, debugMode) : null;
+                                              return (
+                                                <div key={sci} className="space-y-0.5">
+                                                  <div className="flex justify-between items-center text-gray-400">
+                                                    <div className="truncate mr-1">
+                                                      <span className="text-gray-300 font-mono font-semibold">
+                                                        • {sc.amount.toLocaleString()}x
+                                                      </span>{' '}
+                                                      <span className="text-gray-200 font-medium">
+                                                        [{sc.name}]
+                                                      </span>
+                                                      {sc.worth ? <span className="text-gray-400 font-normal"> (Worth: {sc.worth})</span> : null}
+                                                    </div>
+                                                    <div className="text-right font-mono text-[8px] text-gray-500 shrink-0">
+                                                      {sc.dimensions?.raw && !sc.isDigital ? `${sc.dimensions.raw} • ` : (sc.isDigital ? 'Digital • ' : '')}
+                                                      {sc.weight !== undefined ? `${sc.weight} lbs` : ''}
+                                                    </div>
                                                   </div>
-                                                );
-                                              });
-                                            })()}
+                                                  {res && (
+                                                    <div className={`text-[8px] italic pl-2 truncate ${res.isSecret ? (res.isVisibleToPlayer ? 'text-emerald-400 font-medium' : 'text-gray-500') : 'text-amber-400/90'}`}>
+                                                      📍 {res.displayFormatted}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         </div>
                                       )}
