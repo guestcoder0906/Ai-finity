@@ -1173,7 +1173,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                       className="group flex items-center justify-between gap-1 p-1 rounded bg-neutral-900/40 hover:bg-neutral-900/80 border border-neutral-800 transition-colors animate-in fade-in slide-in-from-left-2 duration-300"
                     >
                       <span className={`truncate ${isNeg ? 'text-red-400' : isPos ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {u.text}
+                        {typeof u.text === 'object' && u.text !== null
+                          ? ((u.text as any).text || (u.text as any).description || JSON.stringify(u.text))
+                          : String(u.text || '')}
                       </span>
                       <button
                         type="button"

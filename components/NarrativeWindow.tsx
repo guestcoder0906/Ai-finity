@@ -22,8 +22,12 @@ const NarrativeWindow: React.FC<NarrativeWindowProps> = ({ history = [], onRefer
   }, [history]);
 
   // Helper to parse text with [Links], hide:besides(...), target(...), and hide[...]
-  const parseText = (text: string) => {
-    let processed = text;
+  const parseText = (text: any) => {
+    let processed = typeof text === 'string'
+      ? text
+      : (typeof text === 'object' && text !== null)
+        ? (text.text || text.content || text.narrative || JSON.stringify(text))
+        : String(text || '');
 
     // 1. Handle visibility markup: hide:besides, hide:for, target, hide[]
     processed = formatVisibilityMarkup(processed, username, debugMode);

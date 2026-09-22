@@ -3225,6 +3225,37 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
   private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
+    // Normalize narrative to string if provided as object
+    if (data.narrative && typeof data.narrative === 'object') {
+      data.narrative = (data.narrative as any).text || (data.narrative as any).content || (data.narrative as any).narrative || JSON.stringify(data.narrative);
+    }
+
+    // Normalize recommendations to string array (preventing React child object errors)
+    if (data.recommendations && Array.isArray(data.recommendations)) {
+      data.recommendations = data.recommendations.map((r: any) => {
+        if (typeof r === 'string') return r;
+        if (typeof r === 'object' && r !== null) {
+          return r.text || r.label || r.action || r.recommendation || JSON.stringify(r);
+        }
+        return String(r || '');
+      }).filter((r: string) => typeof r === 'string' && r.trim().length > 0);
+    }
+
+    // Normalize updates texts to strings (preventing React child object errors)
+    if (data.updates && Array.isArray(data.updates)) {
+      data.updates = data.updates.map((u: any) => {
+        if (!u) return { type: 'misc', text: '', value: 0 };
+        let textStr = u.text;
+        if (typeof textStr === 'object' && textStr !== null) {
+          textStr = textStr.text || textStr.description || textStr.message || JSON.stringify(textStr);
+        }
+        return {
+          ...u,
+          text: typeof textStr === 'string' ? textStr : String(textStr || '')
+        };
+      });
+    }
+
     // Handle Time Travel & selective state reversion before applying this turn's new/modified files
     if (data.timeTravel) {
       this.handleTimeTravelReversion(data.timeTravel, username);
@@ -3718,7 +3749,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // 3. File-System Player Verification:
     // Ensure every player with a character file is on AT LEAST ONE map page
     try {
-      const allFiles = this.fs.listFiles();
+      const allFiles = (typeof this.fs.listFiles === 'function' ? this.fs.listFiles() : this.fs.list());
       const characterFiles = allFiles.filter(f => f.endsWith('.txt') && f.includes('-') && !f.startsWith('World') && !f.startsWith('Guide') && !f.startsWith('Log') && !f.startsWith('History') && !f.startsWith('Event'));
       
       const allMapUsernames = new Set<string>();

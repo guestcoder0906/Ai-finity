@@ -113,6 +113,10 @@ export class FileSystem {
     return Object.keys(this.files).sort();
   }
 
+  listFiles(): string[] {
+    return this.list();
+  }
+
   getAll(): FileMap {
     return { ...this.files };
   }

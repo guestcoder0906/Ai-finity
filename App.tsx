@@ -88,6 +88,47 @@ function parseActiveWorldTime(rawTime: string | null): string {
   return rawTime.trim().split('\n')[0] || '';
 }
 
+function sanitizeRecommendations(raw: any): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r: any) => {
+    if (typeof r === 'string') return r;
+    if (typeof r === 'object' && r !== null) {
+      return r.text || r.label || r.action || r.recommendation || JSON.stringify(r);
+    }
+    return String(r || '');
+  }).filter((r: string) => typeof r === 'string' && r.trim().length > 0);
+}
+
+function sanitizeUpdates(raw: any): UpdateItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((u: any) => {
+    if (!u) return { type: 'misc' as const, text: '', value: 0 };
+    let textStr = u.text;
+    if (typeof textStr === 'object' && textStr !== null) {
+      textStr = textStr.text || textStr.description || textStr.message || JSON.stringify(textStr);
+    }
+    return {
+      ...u,
+      text: typeof textStr === 'string' ? textStr : String(textStr || '')
+    };
+  });
+}
+
+function sanitizeNarrativeEntries(raw: any): NarrativeEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry: any) => {
+    if (!entry) return { id: Date.now().toString(), text: '', type: 'system' as const };
+    let textStr = entry.text;
+    if (typeof textStr === 'object' && textStr !== null) {
+      textStr = textStr.text || textStr.content || textStr.narrative || JSON.stringify(textStr);
+    }
+    return {
+      ...entry,
+      text: typeof textStr === 'string' ? textStr : String(textStr || '')
+    };
+  });
+}
+
 function App() {
   const [narrative, setNarrative] = useState<NarrativeEntry[]>(() => {
     try {
@@ -831,10 +872,10 @@ function App() {
       (state) => {
         setRoomState(state);
         roomStateRef.current = state;
-        setNarrative(state.narrative || []);
-        setUpdates(state.updates || []);
+        setNarrative(sanitizeNarrativeEntries(state.narrative || []));
+        setUpdates(sanitizeUpdates(state.updates || []));
         setWorldTime(state.worldTime || '');
-        setRecommendations(state.recommendations || []);
+        setRecommendations(sanitizeRecommendations(state.recommendations || []));
         syncFiles();
 
         // Check if we need to show character creation
@@ -953,13 +994,13 @@ function App() {
         syncFiles();
       }
       if (snapshotData.narrative) {
-        setNarrative(snapshotData.narrative);
+        setNarrative(sanitizeNarrativeEntries(snapshotData.narrative));
       }
       if (snapshotData.updates) {
-        setUpdates(snapshotData.updates);
+        setUpdates(sanitizeUpdates(snapshotData.updates));
       }
       if (snapshotData.recommendations) {
-        setRecommendations(snapshotData.recommendations);
+        setRecommendations(sanitizeRecommendations(snapshotData.recommendations));
       }
       if (snapshotData.worldTime) {
         setWorldTime(snapshotData.worldTime);
@@ -1183,13 +1224,18 @@ function App() {
 
         if (result) {
           if (result.narrative) {
-            setNarrative(prev => [...prev, { id: Date.now().toString() + 'ai', text: result.narrative, type: 'ai' }]);
+            const safeNarrative = typeof result.narrative === 'string'
+              ? result.narrative
+              : (typeof result.narrative === 'object' && result.narrative !== null)
+                ? ((result.narrative as any).text || (result.narrative as any).content || JSON.stringify(result.narrative))
+                : String(result.narrative);
+            setNarrative(prev => [...prev, { id: Date.now().toString() + 'ai', text: safeNarrative, type: 'ai' }]);
           }
           if (result.updates && Array.isArray(result.updates)) {
-            setUpdates(prev => [...result.updates, ...prev].slice(0, 50));
+            setUpdates(prev => [...sanitizeUpdates(result.updates), ...prev].slice(0, 50));
           }
           if (result.recommendations && Array.isArray(result.recommendations)) {
-            setRecommendations(result.recommendations);
+            setRecommendations(sanitizeRecommendations(result.recommendations));
           } else {
             setRecommendations([]);
           }
@@ -1213,18 +1259,23 @@ function App() {
         try {
           const result = await aiEngine.initialize(text);
           if (result) {
-            const finalNarrative = [...newNarrative, { id: Date.now().toString() + 'ai', text: result.narrative || '', type: 'ai' as const }];
+            const safeNarrative = typeof result.narrative === 'string'
+              ? result.narrative
+              : (typeof result.narrative === 'object' && result.narrative !== null)
+                ? ((result.narrative as any).text || (result.narrative as any).content || JSON.stringify(result.narrative))
+                : String(result.narrative || '');
+            const finalNarrative = [...newNarrative, { id: Date.now().toString() + 'ai', text: safeNarrative, type: 'ai' as const }];
             if (result.recommendations && Array.isArray(result.recommendations)) {
-              setRecommendations(result.recommendations);
+              setRecommendations(sanitizeRecommendations(result.recommendations));
             } else {
               setRecommendations([]);
             }
-            const safeUpdates = Array.isArray(result.updates) ? result.updates : [];
+            const safeUpdates = sanitizeUpdates(result.updates);
             multiplayerService.syncState({
               fileSystemState: fileSystem.exportState(),
               narrative: finalNarrative,
               updates: safeUpdates,
-              recommendations: result.recommendations || [],
+              recommendations: sanitizeRecommendations(result.recommendations || []),
               gameState: 'character_creation',
               worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt'))
             });
@@ -1313,17 +1364,17 @@ function App() {
         }
       ];
 
-      setNarrative(restoredNarrative);
-      setUpdates(snapshot.updates || []);
-      setRecommendations(snapshot.recommendations || []);
+      setNarrative(sanitizeNarrativeEntries(restoredNarrative));
+      setUpdates(sanitizeUpdates(snapshot.updates || []));
+      setRecommendations(sanitizeRecommendations(snapshot.recommendations || []));
       setGameOver(Boolean(snapshot.gameOver));
       if (snapshot.worldTime) setWorldTime(snapshot.worldTime);
 
       await multiplayerService.undoTurn({
         fileSystemState: snapshot.fileSystemState,
-        narrative: restoredNarrative,
-        updates: snapshot.updates || [],
-        recommendations: snapshot.recommendations || [],
+        narrative: sanitizeNarrativeEntries(restoredNarrative),
+        updates: sanitizeUpdates(snapshot.updates || []),
+        recommendations: sanitizeRecommendations(snapshot.recommendations || []),
         worldTime: snapshot.worldTime || '',
         turnNumber: snapshot.turnNumber
       });
@@ -1343,9 +1394,9 @@ function App() {
     fileSystem.importState(snapshot.fileSystemState);
     syncFiles();
 
-    setNarrative(snapshot.narrative);
-    setUpdates(snapshot.updates || []);
-    setRecommendations(snapshot.recommendations || []);
+    setNarrative(sanitizeNarrativeEntries(snapshot.narrative));
+    setUpdates(sanitizeUpdates(snapshot.updates || []));
+    setRecommendations(sanitizeRecommendations(snapshot.recommendations || []));
     setGameOver(Boolean(snapshot.gameOver));
     if (snapshot.worldTime) setWorldTime(snapshot.worldTime);
 

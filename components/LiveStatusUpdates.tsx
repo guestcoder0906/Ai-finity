@@ -245,7 +245,9 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
 
       {/* Status Update Text */}
       <span className="font-semibold tracking-tight truncate pr-1">
-        {item.update.text}
+        {typeof item.update?.text === 'object' && item.update?.text !== null
+          ? ((item.update.text as any).text || (item.update.text as any).description || JSON.stringify(item.update.text))
+          : String(item.update?.text || '')}
       </span>
 
       {/* Quick Close Button */}

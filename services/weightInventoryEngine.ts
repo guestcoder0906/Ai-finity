@@ -1167,7 +1167,7 @@ export class WeightInventoryEngine {
       return { updatedContent: fileContent, modified: false, handSlots: 2, maxAllowed: 4, totalCarriedCount: 0, movedItems: [] };
     }
 
-    const stats = WeightInventoryEngine.parseCharacterFile(fileContent);
+    const stats = WeightInventoryEngine.parseCharacterStatsAndInventory(fileContent);
     const handSlots = stats.handSlots !== undefined ? stats.handSlots : (stats.holdingCapacity.maxStandardHoldCount || 2);
     const maxAllowed = WeightInventoryEngine.getMaxStartingCarryingItems(handSlots);
 
@@ -1723,6 +1723,16 @@ export class WeightInventoryEngine {
       usage,
       temporaryEffect
     };
+  }
+
+  /**
+   * Alias for parseCharacterStatsAndInventory
+   */
+  public static parseCharacterFile(
+    fileContent: string,
+    currentTimestamp?: string
+  ): CharacterPhysicalStats {
+    return WeightInventoryEngine.parseCharacterStatsAndInventory(fileContent, currentTimestamp);
   }
 
   /**

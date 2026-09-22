@@ -20,15 +20,24 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled, recommendations
     <div className="flex flex-col border-t border-neutral-800 bg-neutral-900 safe-area-bottom shrink-0">
       {recommendations && recommendations.length > 0 && !disabled && (
         <div className="flex items-center gap-1.5 p-1.5 px-2.5 sm:px-4 bg-neutral-950 border-b border-neutral-800 overflow-x-auto no-scrollbar">
-          {recommendations.map((rec, idx) => (
-            <button
-              key={idx}
-              onClick={() => setInput(rec)}
-              className="text-[11px] sm:text-xs bg-neutral-800 hover:bg-neutral-700 text-blue-300 px-2.5 py-1 rounded-full border border-neutral-700 transition-colors font-mono whitespace-nowrap shrink-0 active:scale-95"
-            >
-              {rec}
-            </button>
-          ))}
+          {recommendations.map((rec: any, idx) => {
+            const recLabel = typeof rec === 'string'
+              ? rec
+              : (typeof rec === 'object' && rec !== null)
+                ? (rec.text || rec.label || rec.action || rec.recommendation || JSON.stringify(rec))
+                : String(rec || '');
+            if (!recLabel.trim()) return null;
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setInput(recLabel)}
+                className="text-[11px] sm:text-xs bg-neutral-800 hover:bg-neutral-700 text-blue-300 px-2.5 py-1 rounded-full border border-neutral-700 transition-colors font-mono whitespace-nowrap shrink-0 active:scale-95"
+              >
+                {recLabel}
+              </button>
+            );
+          })}
         </div>
       )}
       <form 
