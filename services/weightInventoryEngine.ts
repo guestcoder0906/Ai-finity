@@ -188,8 +188,17 @@ export class WeightInventoryEngine {
     const entries: CurrencyEntry[] = [];
     if (!line || !line.trim()) return entries;
 
-    const trimmed = line.replace(/^[-*•>\s]+/, '').trim();
-    const lower = trimmed.toLowerCase();
+    // Clean broken HTML artifacts, entity remnants, and tags that might have leaked into the line
+    let cleanedLine = line
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&#91;/gi, '[')
+      .replace(/&#93;/gi, ']')
+      .replace(/\[hidden\]">/gi, '[hidden] ')
+      .replace(/">/g, ' ')
+      .replace(/^[-*•>\s]+/, '')
+      .trim();
+
+    const lower = cleanedLine.toLowerCase();
 
     // Skip headers or instructions
     if (
@@ -209,43 +218,60 @@ export class WeightInventoryEngine {
       return entries;
     }
 
+    // Helper to sanitize extracted location
+    const sanitizeLoc = (locStr: string): string => {
+      let loc = locStr.trim();
+      loc = loc.replace(/^location[:=\s]+/i, '').trim();
+      loc = loc.replace(/^[">:\s]+/, '').trim();
+      // Remove trailing unbalanced bracket like "Account #****-9014]"
+      const openCount = (loc.match(/\[/g) || []).length;
+      const closeCount = (loc.match(/\]/g) || []).length;
+      if (closeCount > openCount && loc.endsWith(']')) {
+        loc = loc.substring(0, loc.length - 1).trim();
+      }
+      return loc;
+    };
+
     // Extract location if present
-    let location = defaultLocation;
+    let location = defaultLocation ? sanitizeLoc(defaultLocation) : undefined;
     let isHiddenLocation = false;
     const locPattern = /(?:\[\s*)?(?:location|secret)[:=\s]+(hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]|target\([^)]+\)\[[^\]]+\]|hide(?::all)?\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/i;
-    const locMatch = trimmed.match(locPattern);
+    const locMatch = cleanedLine.match(locPattern);
     if (locMatch) {
-      location = locMatch[1].trim();
-      if (/hide[:\[]|target\(/i.test(location)) {
+      location = sanitizeLoc(locMatch[1]);
+      if (/hide[:\[]|target\(|\[hidden\]/i.test(location)) {
         isHiddenLocation = true;
       }
-    } else if (/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i.test(trimmed)) {
-      const match = trimmed.match(/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i);
+    } else if (/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i.test(cleanedLine)) {
+      const match = cleanedLine.match(/hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]/i);
       if (match) {
-        location = match[0];
+        location = sanitizeLoc(match[0]);
         isHiddenLocation = true;
       }
-    } else if (/target\([^)]+\)\[[^\]]+\]/i.test(trimmed)) {
-      const match = trimmed.match(/target\([^)]+\)\[[^\]]+\]/i);
+    } else if (/target\([^)]+\)\[[^\]]+\]/i.test(cleanedLine)) {
+      const match = cleanedLine.match(/target\([^)]+\)\[[^\]]+\]/i);
       if (match) {
-        location = match[0];
+        location = sanitizeLoc(match[0]);
         isHiddenLocation = true;
       }
-    } else if (trimmed.toLowerCase().includes('hide[')) {
-      const hideMatch = trimmed.match(/hide\[([^\]]+)\]/i);
+    } else if (cleanedLine.toLowerCase().includes('hide[')) {
+      const hideMatch = cleanedLine.match(/hide\[([^\]]+)\]/i);
       if (hideMatch) {
         location = `hide[${hideMatch[1].trim()}]`;
         isHiddenLocation = true;
       }
+    } else if (cleanedLine.toLowerCase().includes('[hidden]')) {
+      location = '[hidden]';
+      isHiddenLocation = true;
     }
 
     // Extract container if present
     let container = defaultContainer;
-    const contMatch = trimmed.match(/container[:=\s]+\[?([a-zA-Z0-9_\s'-]+)\]?/i);
+    const contMatch = cleanedLine.match(/container[:=\s]+\[?([a-zA-Z0-9_\s'-]+)\]?/i);
     if (contMatch) {
       container = contMatch[1].trim();
     } else {
-      const bracketMatch = trimmed.match(/\[([a-zA-Z0-9_\s'-]+)\]/i);
+      const bracketMatch = cleanedLine.match(/\[([a-zA-Z0-9_\s'-]+)\]/i);
       if (bracketMatch && !locMatch) {
         const inner = bracketMatch[1].trim();
         if (/pouch|wallet|purse|backpack|chest|bag|sack/i.test(inner)) {
@@ -256,13 +282,13 @@ export class WeightInventoryEngine {
 
     // Extract weight if specified
     let entryWeight: number | undefined;
-    const weightMatch = trimmed.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i);
+    const weightMatch = cleanedLine.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?|kg|grams?)\b/i);
     if (weightMatch) {
       entryWeight = parseFloat(weightMatch[1]);
     }
 
-    let contentToScan = trimmed;
-    const containsMatch = trimmed.match(/contains[:=\s]+([^)]+)/i);
+    let contentToScan = cleanedLine;
+    const containsMatch = cleanedLine.match(/contains[:=\s]+([^)]+)/i);
     if (containsMatch) {
       contentToScan = containsMatch[1];
     } else {
@@ -273,12 +299,12 @@ export class WeightInventoryEngine {
     }
 
     // Dollar sign pattern: e.g. "$50", "-$20", "+$100", "$50 Cash", "-$20 (from wallet)"
-    const dollarRegex = /[-+]?\s*[$]\s*(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(cash|dollars?|bucks?|cents?|bills?))?/gi;
+    const dollarRegex = /[-+]?\s*[$]\s*(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(cash|dollars?|bucks?|cents?|bills?|scrip))?/gi;
     let dMatch;
     while ((dMatch = dollarRegex.exec(contentToScan)) !== null) {
       const dAmt = parseFloat(dMatch[1].replace(/,/g, ''));
       if (!isNaN(dAmt) && dAmt > 0) {
-        const subName = dMatch[2] ? (/cash/i.test(dMatch[2]) ? 'Cash' : 'Dollars') : 'Dollars';
+        const subName = dMatch[2] ? (/cash/i.test(dMatch[2]) ? 'Cash' : (/scrip/i.test(dMatch[2]) ? 'Scrip' : 'Dollars')) : 'Dollars';
         if (!entries.some(e => e.amount === dAmt)) {
           entries.push({
             name: subName,
@@ -293,7 +319,8 @@ export class WeightInventoryEngine {
       }
     }
 
-    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
+    // Comprehensive currency regex including Cash, Scrip, etc.
+    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
 
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
@@ -324,7 +351,9 @@ export class WeightInventoryEngine {
           continue;
         }
 
-        const cleanName = name.replace(/^of\s+/i, '').trim();
+        let cleanName = name.replace(/^of\s+/i, '').trim();
+        if (/^cash$/i.test(cleanName)) cleanName = 'Cash';
+        if (/^scrip$/i.test(cleanName)) cleanName = 'Scrip';
 
         if (!entries.some(e => e.amount === amt && (e.name.toLowerCase() === cleanName.toLowerCase() || (e.name === 'Dollars' && /dollar/i.test(cleanName))))) {
           entries.push({
@@ -341,13 +370,13 @@ export class WeightInventoryEngine {
     }
 
     // Also support prefix currency format: e.g. "Cash: $50" or "Gold Coins: 25" or "Money: $100"
-    const prefixRegex = /\b(cash|money|dollars?|coins?|gold(?:\s+coins?)?|silver(?:\s+coins?)?|copper(?:\s+coins?)?|credits?|funds?|wealth|balance)\s*[:=]\s*\$?\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
+    const prefixRegex = /\b(cash|money|dollars?|coins?|gold(?:\s+coins?)?|silver(?:\s+coins?)?|copper(?:\s+coins?)?|credits?|scrip|funds?|wealth|balance)\s*[:=]\s*\$?\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
     let pMatch;
     while ((pMatch = prefixRegex.exec(contentToScan)) !== null) {
       const pName = pMatch[1].trim();
       const pAmt = parseFloat(pMatch[2].replace(/,/g, ''));
       if (!isNaN(pAmt) && pAmt > 0) {
-        const cleanName = /cash|money/i.test(pName) ? 'Cash' : pName;
+        const cleanName = /cash|money/i.test(pName) ? 'Cash' : (/scrip/i.test(pName) ? 'Scrip' : pName);
         if (!entries.some(e => e.amount === pAmt && e.name.toLowerCase() === cleanName.toLowerCase())) {
           entries.push({
             name: cleanName,
@@ -371,16 +400,22 @@ export class WeightInventoryEngine {
    */
   public static formatCurrencySummary(entries: CurrencyEntry[]): string {
     if (!entries || entries.length === 0) return '0';
+    // Uncountable / mass currency nouns that should NEVER have an 's' appended
+    const UNCOUNTABLE = new Set(['cash', 'gold', 'silver', 'copper', 'platinum', 'electrum', 'money', 'scrip', 'currency', 'wealth', 'funds', 'yen', 'mana', 'credits']);
+
     const totals: { [name: string]: number } = {};
     for (const e of entries) {
       let norm = e.name;
+      const lowerNorm = norm.toLowerCase();
       if (e.amount === 1) {
         norm = norm.replace(/\bCoins\b/i, 'Coin').replace(/\bCredits\b/i, 'Credit').replace(/\bDollars\b/i, 'Dollar');
       } else {
-        if (!norm.toLowerCase().endsWith('s') && !norm.toLowerCase().endsWith('coin') && !norm.toLowerCase().endsWith('credit')) {
-          norm = `${norm}s`;
-        } else if (norm.toLowerCase().endsWith('coin')) {
-          norm = `${norm}s`;
+        if (!UNCOUNTABLE.has(lowerNorm)) {
+          if (!lowerNorm.endsWith('s') && !lowerNorm.endsWith('coin') && !lowerNorm.endsWith('credit')) {
+            norm = `${norm}s`;
+          } else if (lowerNorm.endsWith('coin')) {
+            norm = `${norm}s`;
+          }
         }
       }
       totals[norm] = (totals[norm] || 0) + e.amount;
@@ -2555,9 +2590,10 @@ export class WeightInventoryEngine {
 
           // Distinguish container empty weight from max capacity
           let containerWeight = 2.0;
-          if (lower.includes('pouch')) containerWeight = 0.5;
-          if (lower.includes('satchel')) containerWeight = 1.0;
-          if (lower.includes('chest')) containerWeight = 15.0;
+          if (lower.includes('pocket')) containerWeight = 0.0;
+          else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) containerWeight = 0.2;
+          else if (lower.includes('satchel')) containerWeight = 1.0;
+          else if (lower.includes('chest')) containerWeight = 15.0;
 
           const emptyWeightMatch = line.match(/(?:empty\s*weight|weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (emptyWeightMatch) {
@@ -2575,7 +2611,8 @@ export class WeightInventoryEngine {
             maxWeightCapacity = parseFloat(capMatch[1]);
           } else {
             // Sensible defaults
-            if (lower.includes('pouch')) maxWeightCapacity = 5;
+            if (lower.includes('pocket')) maxWeightCapacity = 2.0;
+            else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) maxWeightCapacity = 3.0;
             else if (lower.includes('satchel')) maxWeightCapacity = 20;
             else if (lower.includes('quiver')) maxWeightCapacity = 10;
             else if (lower.includes('chest')) maxWeightCapacity = 100;
@@ -2584,7 +2621,8 @@ export class WeightInventoryEngine {
 
           let maxDim = this.parseDimensions(line);
           if (!maxDim.raw) {
-            if (lower.includes('pouch')) maxDim = this.parseDimensions('6x4x3 inches');
+            if (lower.includes('pocket')) maxDim = this.parseDimensions('6x5x1.5 inches');
+            else if (lower.includes('pouch') || lower.includes('wallet') || lower.includes('purse')) maxDim = this.parseDimensions('6x4x3 inches');
             else if (lower.includes('satchel')) maxDim = this.parseDimensions('12x10x4 inches');
             else if (lower.includes('quiver')) maxDim = this.parseDimensions('24x4x4 inches');
             else if (lower.includes('chest')) maxDim = this.parseDimensions('36x24x20 inches');
@@ -2638,19 +2676,50 @@ export class WeightInventoryEngine {
             // or a named container was specified that doesn't exist yet, auto-create it so items are NEVER lost!
             if (!cont) {
               const defaultName = item.containerName || activeContainerName || 'Backpack';
-              const defaultDim = this.parseDimensions('18x12x8 inches');
+              const nameLower = defaultName.toLowerCase();
+              const isPocketOrGear =
+                nameLower.includes('pocket') ||
+                nameLower.includes('compartment') ||
+                equippedGear.some(eq => {
+                  const eqName = eq.name.toLowerCase();
+                  return nameLower.includes(eqName) || eqName.split(/[\s&/]+/g).some(part => part.length > 3 && nameLower.includes(part));
+                });
+
+              let defWeight = 2.0;
+              let defCap = 40;
+              let defDimStr = '18x12x8 inches';
+
+              if (isPocketOrGear) {
+                defWeight = 0.0; // Pockets and compartments in equipped clothing add 0 lbs empty weight
+                defCap = 2.0;
+                defDimStr = '6x5x1.5 inches';
+              } else if (nameLower.includes('pouch') || nameLower.includes('wallet') || nameLower.includes('purse')) {
+                defWeight = 0.2;
+                defCap = 2.5;
+                defDimStr = '6x4x2 inches';
+              } else if (nameLower.includes('satchel') || nameLower.includes('haversack')) {
+                defWeight = 1.0;
+                defCap = 15;
+                defDimStr = '12x10x4 inches';
+              } else if (nameLower.includes('holster') || nameLower.includes('sheath') || nameLower.includes('scabbard')) {
+                defWeight = 0.5;
+                defCap = 5;
+                defDimStr = '10x4x2 inches';
+              }
+
+              const defaultDim = this.parseDimensions(defDimStr);
               cont = {
                 name: defaultName,
-                weight: 2.0,
+                weight: defWeight,
                 dimensions: defaultDim,
                 maxDimensions: defaultDim,
-                maxWeightCapacity: 40,
+                maxWeightCapacity: defCap,
                 items: [],
                 currentItemsWeight: 0,
-                totalWeight: 2.0,
+                totalWeight: defWeight,
                 hasOverflow: false,
                 hasDoesNotFit: false,
-                rawText: `- ${defaultName}: Dimensions 18x12x8 inches, Max Capacity: 40 lbs, Weight: 2 lbs`
+                rawText: `- ${defaultName}: Dimensions ${defDimStr}, Max Capacity: ${defCap} lbs, Weight: ${defWeight} lbs`
               };
               containers.push(cont);
             }
@@ -2869,9 +2938,41 @@ export class WeightInventoryEngine {
         const entries = WeightInventoryEngine.parseCurrencyEntries(line);
         if (entries.length > 0) {
           if (activeCurrencySub === 'stored') {
-            storedCurrencies.push(...entries);
+            for (const ent of entries) {
+              const matchIdx = storedCurrencies.findIndex(existing =>
+                existing.amount === ent.amount &&
+                (existing.name.toLowerCase() === ent.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ent.name))) &&
+                (!ent.location || !existing.location || existing.location.toLowerCase().includes(ent.location.toLowerCase()) || ent.location.toLowerCase().includes(existing.location.toLowerCase()) || (existing.isHiddenLocation && ent.isHiddenLocation))
+              );
+              if (matchIdx >= 0) {
+                if (!storedCurrencies[matchIdx].location && ent.location) {
+                  storedCurrencies[matchIdx].location = ent.location;
+                }
+                if (!storedCurrencies[matchIdx].weight && ent.weight) {
+                  storedCurrencies[matchIdx].weight = ent.weight;
+                }
+              } else {
+                storedCurrencies.push(ent);
+              }
+            }
           } else {
-            carriedCurrencies.push(...entries);
+            for (const ent of entries) {
+              const matchIdx = carriedCurrencies.findIndex(existing =>
+                existing.amount === ent.amount &&
+                (existing.name.toLowerCase() === ent.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ent.name))) &&
+                (!ent.container || !existing.container || existing.container.toLowerCase().includes(ent.container.toLowerCase()) || ent.container.toLowerCase().includes(existing.container.toLowerCase()))
+              );
+              if (matchIdx >= 0) {
+                if (!carriedCurrencies[matchIdx].container && ent.container) {
+                  carriedCurrencies[matchIdx].container = ent.container;
+                }
+                if (!carriedCurrencies[matchIdx].weight && ent.weight) {
+                  carriedCurrencies[matchIdx].weight = ent.weight;
+                }
+              } else {
+                carriedCurrencies.push(ent);
+              }
+            }
           }
           continue;
         }
@@ -2884,7 +2985,7 @@ export class WeightInventoryEngine {
         if (cEntries.length > 0) {
           for (const ce of cEntries) {
             const existingIdx = carriedCurrencies.findIndex(existing =>
-              existing.name.toLowerCase() === ce.name.toLowerCase() &&
+              (existing.name.toLowerCase() === ce.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ce.name))) &&
               (!ce.container || !existing.container || existing.container.toLowerCase().includes(ce.container.toLowerCase()) || ce.container.toLowerCase().includes(existing.container.toLowerCase()))
             );
             if (existingIdx >= 0) {
@@ -2912,7 +3013,23 @@ export class WeightInventoryEngine {
         }
         const sCurr = WeightInventoryEngine.parseCurrencyEntries(line, item?.location);
         if (sCurr.length > 0) {
-          storedCurrencies.push(...sCurr);
+          for (const ent of sCurr) {
+            const matchIdx = storedCurrencies.findIndex(existing =>
+              existing.amount === ent.amount &&
+              (existing.name.toLowerCase() === ent.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ent.name))) &&
+              (!ent.location || !existing.location || existing.location.toLowerCase().includes(ent.location.toLowerCase()) || ent.location.toLowerCase().includes(existing.location.toLowerCase()) || (existing.isHiddenLocation && ent.isHiddenLocation))
+            );
+            if (matchIdx >= 0) {
+              if (!storedCurrencies[matchIdx].location && ent.location) {
+                storedCurrencies[matchIdx].location = ent.location;
+              }
+              if (!storedCurrencies[matchIdx].weight && ent.weight) {
+                storedCurrencies[matchIdx].weight = ent.weight;
+              }
+            } else {
+              storedCurrencies.push(ent);
+            }
+          }
         }
       }
 
@@ -3221,14 +3338,13 @@ export class WeightInventoryEngine {
   }
 
   /**
-   * Helper to find the index of the next top-level section header like `\n[HEADER]`
+   * Helper to find the index of the next top-level section header like `\n[HEADER]` or canonical headers
    */
   public static findNextSectionHeaderIndex(text: string, fromIndex: number): number {
     const sub = text.substring(fromIndex);
-    const m = sub.match(/\n\s*\[[A-Z0-9_\s&/()'-]+\]/);
+    const m = sub.match(/\n\s*(?:\[[A-Za-z0-9_\s&/()'-]+\]|(?:#+\s*)?(?:NAME\s*(?:&|AND)\s*DESCRIPTION|STATS\s*(?:&|AND)\s*MODIFIERS|ATTRIBUTES|ATTACKS\s*(?:&|AND)\s*COMBAT\s*ACTIONS|COMBAT\s*ACTIONS|ABILITIES\s*(?:&|AND)\s*MAGIC|CURRENTLY\s*HOLDING|CONTAINERS\s*(?:&|AND)\s*CARRIED\s*GEAR|INVENTORY\s*(?:&|AND)\s*EQUIPMENT|INVENTORY|OWNED\s*(?:\/|AND)?\s*STORED\s*ITEMS|STORED\s*ITEMS|CURRENCY\s*(?:&|AND)\s*(?:FINANCIAL\s*)?BALANCE|STATUS\s*EFFECTS\s*(?:&|AND)\s*LORE|STATUS\s*EFFECTS|MOUNT,\s*VEHICLE\s*(?:&|AND)\s*TRANSPORT\s*STATUS|TRANSPORT\s*(?:&|AND)\s*MOUNTS)\b:?)/i);
     if (m && m.index !== undefined) {
-      const bracketOffset = m[0].indexOf('[');
-      return fromIndex + m.index + bracketOffset;
+      return fromIndex + m.index + 1;
     }
     return -1;
   }
@@ -3566,42 +3682,85 @@ export class WeightInventoryEngine {
     }
 
     // 6. Ensure [CURRENCY & FINANCIAL BALANCE] section is present and accurate if currency exists or section was present
-    if (stats.currency.hasCurrency || updated.includes('[CURRENCY & FINANCIAL BALANCE]') || updated.includes('[CURRENCY') || updated.includes('[NAME & DESCRIPTION]') || updated.includes('[STATS & MODIFIERS]') || updated.includes('[INVENTORY')) {
+    const currHeaderRegex = /(?:\[\s*(?:CURRENCY\s*(?:&|AND)\s*(?:FINANCIAL\s*)?BALANCE|CURRENCY|FINANCIAL\s*BALANCE)\s*\]|(?:^|\n)\s*(?:#+\s*)?(?:CURRENCY\s*(?:&|AND)\s*(?:FINANCIAL\s*)?BALANCE|CURRENCY|FINANCIAL\s*BALANCE):?\s*(?=\n|$))/i;
+    const hasCurrencySection = currHeaderRegex.test(updated);
+
+    if (stats.currency.hasCurrency || hasCurrencySection || updated.includes('[NAME & DESCRIPTION]') || updated.includes('[STATS & MODIFIERS]') || updated.includes('[INVENTORY')) {
       const currencyLines: string[] = [];
       currencyLines.push(`- Currency Type: ${stats.currency.currencyType}`);
       currencyLines.push(`- Carried Balance (On Person):`);
-      if (stats.currency.carriedCurrencies.length === 0) {
+
+      // De-duplicate carried currencies before writing
+      const dedupCarried: CurrencyEntry[] = [];
+      for (const c of stats.currency.carriedCurrencies) {
+        const match = dedupCarried.find(d =>
+          d.amount === c.amount &&
+          (d.name.toLowerCase() === c.name.toLowerCase() || (d.name === 'Dollars' && /dollar|usd|cash/i.test(c.name))) &&
+          ((!d.container && !c.container) || d.container?.toLowerCase() === c.container?.toLowerCase())
+        );
+        if (!match) {
+          dedupCarried.push(c);
+        }
+      }
+
+      if (dedupCarried.length === 0) {
         currencyLines.push(`  * None (0)`);
       } else {
-        for (const c of stats.currency.carriedCurrencies) {
+        for (const c of dedupCarried) {
           const contSuffix = c.container ? ` [Container: ${c.container}]` : '';
           const wSuffix = c.weight !== undefined ? ` (Weight: ${c.weight} lbs)` : '';
           currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}${contSuffix}${wSuffix}`);
         }
       }
+
       currencyLines.push(`- Stored / Remote Balance (Not on Person):`);
-      if (stats.currency.storedCurrencies.length === 0) {
-        currencyLines.push(`  * None (0)`);
-      } else {
-        for (const c of stats.currency.storedCurrencies) {
-          const locStr = c.location ? ` [Location: ${c.location}]` : '';
-          currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}${locStr}`);
+
+      // De-duplicate stored currencies before writing
+      const dedupStored: CurrencyEntry[] = [];
+      for (const c of stats.currency.storedCurrencies) {
+        const match = dedupStored.find(d =>
+          d.amount === c.amount &&
+          (d.name.toLowerCase() === c.name.toLowerCase() || (d.name === 'Dollars' && /dollar|usd|cash/i.test(c.name))) &&
+          ((!d.location && !c.location) || d.location?.toLowerCase() === c.location?.toLowerCase() || (d.isHiddenLocation && c.isHiddenLocation))
+        );
+        if (!match) {
+          dedupStored.push(c);
         }
       }
-      currencyLines.push(`- Total Net Worth: ${stats.currency.totalNetWorthSummary}`);
+
+      if (dedupStored.length === 0) {
+        currencyLines.push(`  * None (0)`);
+      } else {
+        for (const c of dedupStored) {
+          let cleanLoc = c.location?.trim();
+          if (cleanLoc) {
+            cleanLoc = cleanLoc.replace(/^location[:=\s]+/i, '').trim();
+            cleanLoc = cleanLoc.replace(/^[">:\s]+/, '').trim();
+            const openB = (cleanLoc.match(/\[/g) || []).length;
+            const closeB = (cleanLoc.match(/\]/g) || []).length;
+            if (closeB > openB && cleanLoc.endsWith(']')) {
+              cleanLoc = cleanLoc.substring(0, cleanLoc.length - 1).trim();
+            }
+            currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name} [Location: ${cleanLoc}]`);
+          } else {
+            currencyLines.push(`  * ${c.amount.toLocaleString()} ${c.name}`);
+          }
+        }
+      }
+
+      // Re-summarize with de-duplicated entries for pristine net worth line
+      const cleanCarriedSummary = WeightInventoryEngine.formatCurrencySummary(dedupCarried);
+      const cleanTotalSummary = WeightInventoryEngine.formatCurrencySummary([...dedupCarried, ...dedupStored]);
+      currencyLines.push(`- Total Net Worth: ${cleanTotalSummary}`);
 
       const currencyBlock = `[CURRENCY & FINANCIAL BALANCE]\n${currencyLines.join('\n')}\n\n`;
 
-      if (updated.includes('[CURRENCY & FINANCIAL BALANCE]')) {
-        const currIdx = updated.indexOf('[CURRENCY & FINANCIAL BALANCE]');
-        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, currIdx + 28);
+      const currMatch = updated.match(currHeaderRegex);
+      if (currMatch && currMatch.index !== undefined) {
+        const matchStart = currMatch.index + (currMatch[0].startsWith('\n') ? 1 : 0);
+        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, matchStart + currMatch[0].length);
         const replaceEnd = nextH > 0 ? nextH : updated.length;
-        updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
-      } else if (updated.includes('[CURRENCY')) {
-        const currIdx = updated.indexOf('[CURRENCY');
-        const nextH = WeightInventoryEngine.findNextSectionHeaderIndex(updated, currIdx + 10);
-        const replaceEnd = nextH > 0 ? nextH : updated.length;
-        updated = updated.substring(0, currIdx) + currencyBlock + updated.substring(replaceEnd);
+        updated = updated.substring(0, matchStart) + currencyBlock + updated.substring(replaceEnd);
       } else {
         const loreIdx = updated.indexOf('[STATUS EFFECTS & LORE]');
         const insertPos = loreIdx >= 0 ? loreIdx : updated.length;

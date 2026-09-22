@@ -978,7 +978,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => setExpandedContainers(prev => ({ ...prev, [containerKey]: !isExpanded }))}
-                                          className="w-full text-left p-1.5 flex items-center justify-between hover:bg-neutral-900/60 transition-colors cursor-pointer group select-none"
+                                          className="w-full text-left p-1.5 flex items-center justify-between hover:bg-neutral-900/60 transition-colors cursor-pointer group"
                                           title={isExpanded ? "Click to collapse container items" : "Click to expand container items"}
                                         >
                                           <div className="flex items-center gap-1.5 min-w-0 pr-2">
@@ -1089,15 +1089,21 @@ const Sidebar: React.FC<SidebarProps> = ({
                                             <span className="text-gray-300 font-mono font-medium">
                                               {pStats.currency.storedSummary}
                                             </span>
-                                            {pStats.currency.storedCurrencies.map((sc, sci) => {
-                                              if (!sc.location) return null;
-                                              const res = parseSecretLocation(sc.location, username, debugMode);
-                                              return (
-                                                <div key={sci} className={`text-[8px] italic truncate ${res.isSecret ? (res.isVisibleToPlayer ? 'text-emerald-400 font-medium' : 'text-gray-500') : 'text-amber-400/90'}`}>
-                                                  📍 {res.displayFormatted}
-                                                </div>
-                                              );
-                                            })}
+                                            {(() => {
+                                              const seen = new Set<string>();
+                                              return pStats.currency.storedCurrencies.map((sc, sci) => {
+                                                if (!sc.location) return null;
+                                                const res = parseSecretLocation(sc.location, username, debugMode);
+                                                const key = `${res.displayFormatted}_${res.isSecret}_${res.isVisibleToPlayer}`;
+                                                if (seen.has(key)) return null;
+                                                seen.add(key);
+                                                return (
+                                                  <div key={sci} className={`text-[8px] italic truncate ${res.isSecret ? (res.isVisibleToPlayer ? 'text-emerald-400 font-medium' : 'text-gray-500') : 'text-amber-400/90'}`}>
+                                                    📍 {res.displayFormatted}
+                                                  </div>
+                                                );
+                                              });
+                                            })()}
                                           </div>
                                         </div>
                                       )}
