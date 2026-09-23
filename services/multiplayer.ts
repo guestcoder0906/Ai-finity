@@ -7,6 +7,7 @@ export class MultiplayerService {
   private channel: RealtimeChannel | null = null;
   private roomId: string | null = null;
   private currentUsername: string | null = null;
+  private hostUsername: string | null = null;
   private currentUserMeta: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean } | null = null;
   private syncQueue: Promise<any> = Promise.resolve();
 
@@ -58,6 +59,7 @@ export class MultiplayerService {
     const roomId = this.generateRoomCode();
     this.roomId = roomId;
     this.currentUsername = username;
+    this.hostUsername = username;
     this.currentUserMeta = playerMeta || null;
 
     const initialState = {
@@ -101,7 +103,7 @@ export class MultiplayerService {
   ): Promise<any> {
     const { data: room, error } = await this.supabase
       .from('rooms')
-      .select('state')
+      .select('state, host_username')
       .eq('id', roomId)
       .single();
 
@@ -112,6 +114,7 @@ export class MultiplayerService {
     const state = room.state;
     this.roomId = roomId;
     this.currentUsername = username;
+    this.hostUsername = room.host_username || state.hostUsername || null;
     this.currentUserMeta = playerMeta || null;
 
     await this.setupChannel(roomId, username, false);
@@ -132,9 +135,20 @@ export class MultiplayerService {
       }
     });
 
+    const isTargetHost = (hostCandidate?: string) => {
+      const myUser = (this.currentUsername || '').trim().toLowerCase();
+      const hostA = (hostCandidate || '').trim().toLowerCase();
+      const hostB = (this.hostUsername || '').trim().toLowerCase();
+      return Boolean(myUser && (myUser === hostA || (hostB && myUser === hostB)));
+    };
+
     this.channel
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, (payload: any) => {
         const newState = payload.new.state;
+
+        if (newState?.hostUsername) {
+          this.hostUsername = newState.hostUsername;
+        }
 
         // Non-host players sync files strictly from DB updates
         if (this.currentUsername !== newState.hostUsername && newState.fileSystemState) {
@@ -144,17 +158,17 @@ export class MultiplayerService {
         this.onStateUpdate(newState);
       })
       .on('broadcast', { event: 'submit_action' }, (payload: any) => {
-        if (this.currentUsername === payload.payload.host) {
+        if (isTargetHost(payload?.payload?.host)) {
           this.handlePlayerActionAsHost(payload.payload.username, payload.payload.action);
         }
       })
       .on('broadcast', { event: 'execute_turn' }, (payload: any) => {
-        if (this.currentUsername === payload.payload.host) {
+        if (isTargetHost(payload?.payload?.host)) {
           this.onExecuteTurn(payload.payload.inputs);
         }
       })
       .on('broadcast', { event: 'create_character' }, (payload: any) => {
-        if (this.currentUsername === payload.payload.host) {
+        if (isTargetHost(payload?.payload?.host)) {
           this.onHostCreateCharacter({ username: payload.payload.username, description: payload.payload.description });
         }
       })
@@ -316,18 +330,22 @@ export class MultiplayerService {
   }
 
   async createCharacter(description: string) {
-    if (!this.roomId || !this.channel) return;
-    const { data } = await this.supabase.from('rooms').select('host_username').eq('id', this.roomId).single();
-    if (data && this.currentUsername) {
-      if (this.currentUsername === data.host_username) {
-        this.onHostCreateCharacter({ username: this.currentUsername, description });
-      } else {
-        this.channel.send({
-          type: 'broadcast',
-          event: 'create_character',
-          payload: { username: this.currentUsername, description, host: data.host_username }
-        });
-      }
+    if (!this.roomId || !this.channel || !this.currentUsername) return;
+    let targetHost = this.hostUsername;
+    if (!targetHost) {
+      const { data } = await this.supabase.from('rooms').select('host_username, state').eq('id', this.roomId).single();
+      targetHost = data?.host_username || data?.state?.hostUsername || null;
+      if (targetHost) this.hostUsername = targetHost;
+    }
+    const isCurrentHost = targetHost && (this.currentUsername.trim().toLowerCase() === targetHost.trim().toLowerCase());
+    if (isCurrentHost) {
+      this.onHostCreateCharacter({ username: this.currentUsername, description });
+    } else if (targetHost) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'create_character',
+        payload: { username: this.currentUsername, description, host: targetHost }
+      });
     }
   }
 
