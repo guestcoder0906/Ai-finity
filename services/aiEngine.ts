@@ -10,6 +10,12 @@ import {
   reconcileRegisteredPlayersOnMap,
   RegisteredPlayer
 } from "./mapPlayerEngine";
+import {
+  syncMapEntitiesVision,
+  resolveEntityVision,
+  resolveEntityFacing,
+  isEntityBlind
+} from "./visionEngine";
 
 interface DetectedModifier {
   label: string;
@@ -434,7 +440,7 @@ CRITICAL FILE MANAGEMENT RULES:
 - Create "WorldRules.txt" defining physics, magic, tech, logic, time costs, and encumbrance effects.
 - Create "CurrentMap.json" to track the live map of the player's current location (50-200 meter scale). MUST be valid JSON.
   * Update this file accurately in real-time based on context, location, dimensions, and speed.
-  * Structure: \`{ "pages": [{ "name": "Region/Area Name", "scale": "50m", "areas": [{ "id": "a1", "name": "Room Name", "type": "room|hallway|field|forest|water|building|furniture|npc|obstacle|vehicle|fire|lava|poison|treasure|tech|magic|nature|portal|terminal|hazard|shop|stall|item|landmark", "shape": "rect|circle|ellipse|oblong|polygon|path", "x": 0, "y": 0, "width": 10, "height": 10, "radius": 5, "rx": 15, "ry": 8, "rotation": 0, "points": "0,0 10,10 0,10", "visible": true}], "players": [{ "username": "PlayerName", "x": 5, "y": 5, "facing": 0, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 20, "maxRange": 50} }], "items": [{ "x": 8, "y": 12, "name": "Iron Dagger", "description": "Lying on table" }], "landmarks": [{ "x": 25, "y": 25, "name": "Town Square Fountain", "description": "Ornate stone fountain" }], "notes": [{ "x": 10, "y": 10, "text": "Fire", "type": "danger|info|warning|discovery"}] }] }\`
+  * Structure: \`{ "pages": [{ "name": "Region/Area Name", "scale": "50m", "areas": [{ "id": "a1", "name": "Room Name", "type": "room|hallway|field|forest|water|building|furniture|npc|obstacle|vehicle|fire|lava|poison|treasure|tech|magic|nature|portal|terminal|hazard|shop|stall|item|landmark", "shape": "rect|circle|ellipse|oblong|polygon|path", "x": 0, "y": 0, "width": 10, "height": 10, "radius": 5, "rx": 15, "ry": 8, "rotation": 0, "points": "0,0 10,10 0,10", "visible": true}], "players": [{ "username": "PlayerName", "x": 5, "y": 5, "facing": 0, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 20, "maxRange": 50} }], "npcs": [{ "name": "TownGuard-npc", "type": "npc", "x": 12, "y": 15, "facing": 270, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 15, "maxRange": 35} }], "items": [{ "x": 8, "y": 12, "name": "Iron Dagger", "description": "Lying on table" }], "landmarks": [{ "x": 25, "y": 25, "name": "Town Square Fountain", "description": "Ornate stone fountain" }], "notes": [{ "x": 10, "y": 10, "text": "Fire", "type": "danger|info|warning|discovery"}] }] }\`
   * NOTHING MISSING (CRITICAL): There MUST BE NOTHING MISSING within all players' observable and known areas. Every single landmark, loose item, weapon, treasure, NPC, creature, building, stall, obstacle, and environmental hazard MUST be plotted on the map. It should be EVERYTHING observable or known, with everything on the map updated correctly always.
   * ADVANCED, ACCURATE & FLEXIBLE SHAPES: Do NOT limit maps to just simple circles or squares. Use advanced, flexible, and accurate shapes:
     - Oblong / Elliptical shapes: for oblong forest groves, elongated clearings, oval glades, stretched ponds, or curved plazas, use shape: "ellipse" or shape: "oblong" with center (cx, cy or x, y), radii (rx, ry), and optional rotation in degrees.
@@ -445,11 +451,11 @@ CRITICAL FILE MANAGEMENT RULES:
   * \`visible\`: false means it's greyed out (fog of war).
   * Completely unknown/unseen elements MUST be omitted from the map entirely.
   * Ensure correct geometry and scale for all elements using \`shape\`, \`width\`, \`height\`, \`radius\`, \`rx\`, \`ry\`, or \`points\`.
-  * \`facing\`: angle in degrees (0 is right, 90 is down, 180 is left, 270 is up).
-  * \`vision\`: contains the player's dynamic vision capabilities.
+  * \`facing\`: angle in degrees (0 is right/East, 90 is down/South, 180 is left/West, 270 is up/North). Each NPC is rendered on the map as an arrow pointing where they are facing currently!
+  * \`vision\`: contains the entity's dynamic vision capabilities (applies fully to all players AND all NPCs).
   * Include all player-visible elements within the scale (npcs, furniture, buildings, vehicles, hazards, etc.).
   * You MUST show ALL active players on the map in the 'players' array.
-  * You MUST show all visible, sensed, or last known NPC locations on the map in the 'areas' array (type: 'npc').
+  * You MUST show all NPCs/creatures in the 'npcs' array (with names ending in '-npc') with valid (x, y), facing, and vision.
   * CRITICAL: Make the map highly detailed. Add small details like furniture, individual trees, hazards, or ground texture as separate areas or via the "notes" array. Use "notes" for anything that isn't a physical structure but is an important environmental effect (e.g., "Heavy Fire", "Poison Gas", "Strange Energy", "Digital Glitch").
   * Use "type: tech/terminal" for cyberpunk/sci-fi elements.
   * Use "type: magic/portal" for fantasy/supernatural elements.
@@ -508,10 +514,20 @@ MANDATORY MOVEMENT & MAP UPDATE RULE (CRITICAL):
   3. New coordinates: newX = oldX + (targetX - oldX) × (moveDist / totalDist), newY = oldY + (targetY - oldY) × (moveDist / totalDist).
   4. If now in range → action succeeds; narrate the approach and the action together.
   5. If still out of range → action is incomplete; narrate the partial approach and remaining distance.
-- FACING: Update the player's 'facing' field to point toward the interaction target: facing = atan2(targetY - playerY, targetX - playerX) × 180 / π.
-- NPC & ENTITY MOVEMENT: When NPCs engage in combat, pursue, flee, or patrol, update their (x, y) position in the 'areas' array proportional to their speed × time.
+- FACING & ARROW SHAPE (PLAYERS & ALL NPCS):
+  * Update 'facing' for players and ALL NPCs to point toward their target, movement vector, or line of sight: facing = atan2(targetY - y, targetX - x) × 180 / π (0° = East/Right, 90° = South/Down, 180° = West/Left, 270° = North/Up).
+  * CRITICAL: Each NPC is rendered on the map as an arrow pointing where they are facing currently!
+- DYNAMIC VIEW RANGE & SIGHT RULES (PLAYERS & ALL NPCS):
+  * View range fully applies to ALL players and ALL NPCs via their 'vision' object: \`{ "mainAngle": 66, "peripheralAngle": 90, "detailedRange": X, "maxRange": Y }\` and dynamically updates based on context, lighting, and conditions.
+  * BLINDNESS & SIGHT LOSS (CRITICAL): If ANY character or NPC is blind (e.g. from condition, eye injury, blindness spell/curse, flash, smoke, darkness, or closed eyes/unconscious/asleep), their view range is COMPLETELY GONE (\`detailedRange: 0, maxRange: 0\` or \`"blind": true\`). Their vision cone vanishes from the map completely!
+  * LIGHTING & ENVIRONMENTAL VISIBILITY:
+    - Pitch darkness without nightvision or light source: view range drops to 0 (or 1m touch range).
+    - Torches provide ~10-15m view range; lanterns ~15-25m; campfires ~15-20m.
+    - Weather effects: dense fog, heavy smoke, sandstorms, and blizzards reduce view range severely (e.g. 5-10m).
+    - Normal daylight / open field: 40-80m. Scopes, eagle eye, binoculars, or darkvision extend view range accordingly.
+  * Entities beyond a player's maxRange must not appear in their observable view.
+- NPC & ENTITY MOVEMENT: When NPCs engage in combat, pursue, flee, or patrol, update their (x, y) position and facing angle proportional to their speed × time.
 - PROJECTILE TRACKING: Any active projectile (arrow, bullet, fireball) MUST have its (x, y) updated in CurrentMap.json in every response until it hits or disappears.
-- VISION & DETECTION: Player vision ranges (detailedRange, maxRange) in CurrentMap.json must match perception stats. Entities beyond maxRange must not appear on the map.
 - COORDINATE INTEGRITY: All coordinates must be proportional to the declared map scale. A "10m × 10m" room = width:10, height:10. Never use arbitrary coordinates that violate the scale.
 - A screenshot of the current map may be attached. Use it to visually verify spatial consistency of your response.
 
@@ -1028,7 +1044,10 @@ CRITICAL REMINDERS:
 3. MAP UPDATE: Fully update CurrentMap.json. 
    - CRITICAL: Do NOT omit pages for players who did not take this turn. If players are separated, return ALL pages in the "pages" array.
    - NOTHING MISSING: All players' observable and known areas, landmarks, items, npcs, structures, terrain, hazards, containers, and loot MUST be on the map with everything updated correctly.
-   - NPC PERSISTENCE & NAMING: Every NPC present in the scene MUST be plotted in "npcs" on CurrentMap.json with their name having "-npc" appended (e.g. "Barkeep-npc", "TownGuard-npc"). All NPC files MUST end in "-npc.txt" (e.g. "Barkeep-npc.txt"). Never forget or drop previously established NPCs from CurrentMap.json across turns!
+   - NPC PERSISTENCE, ARROW FACING & RANGE OF SIGHT: Every NPC present in the scene MUST be plotted in "npcs" on CurrentMap.json with their name having "-npc" appended (e.g. "Barkeep-npc"). All NPC files MUST end in "-npc.txt". Never forget or drop established NPCs!
+     * Each NPC is rendered on the map as an ARROW pointing where they are facing currently! Always specify 'facing' (0°=East, 90°=South, 180°=West, 270°=North).
+     * View range fully applies to ALL NPCs and players via 'vision' ({ "mainAngle": 66, "peripheralAngle": 90, "detailedRange": X, "maxRange": Y }) and dynamically updates based on context.
+     * DYNAMIC SIGHT & BLINDNESS: If ANY character or NPC is blind (condition, eye injury, blindness spell, flash, pitch dark without light, or eyes closed/unconscious), view range is COMPLETELY GONE ('detailedRange: 0, maxRange: 0' or 'blind: true'). Their vision cone completely vanishes!
    - FLEXIBLE SHAPES & HIGH DETAIL: Generate flexible shapes (not just circles/squares): use oblong ellipses (shape: "ellipse" with cx, cy, rx, ry, rotation) for oblong forests/groves/clearings, polygons for irregular terrain/rivers, and high-detail architectural buildings (such as individual market stalls, shops, and taverns in a market).
    - Every entity, NPC, obstacle, item, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
 4. INVENTORY, CONTAINERS & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
@@ -4113,11 +4132,16 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           }
           const existingCount = targetPage.npcs.length;
           const npcDisplayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
+          const nfContent = this.fs ? this.fs.read(nf.filename) : null;
+          const npcVision = resolveEntityVision(null, nfContent, false);
+          const npcFacing = resolveEntityFacing(null, { defaultFacing: 0 });
           targetPage.npcs.push({
             name: npcDisplayName,
             type: 'npc',
             x: 15 + (existingCount * 7) % 60,
             y: 18 + (existingCount * 5) % 60,
+            facing: npcFacing,
+            vision: npcVision,
             description: `NPC from ${nf.filename}`
           });
           allMapNpcNames.add(checkKey);
@@ -4133,6 +4157,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       activeUsername: username,
       oldPlayerLocations
     });
+
+    // Synchronize and dynamically validate vision, blindness, and facing for all players and NPCs
+    syncMapEntitiesVision(normalized, this.fs);
 
     return normalized;
   }

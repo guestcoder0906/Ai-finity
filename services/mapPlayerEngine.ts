@@ -422,7 +422,8 @@ export function reconcileRegisteredPlayersOnMap(
         characterName: reg.fullName || reg.charName,
         x: 10 + (offset * 8),
         y: 15 + (offset * 6),
-        facing: 0
+        facing: 0,
+        vision: { mainAngle: 66, peripheralAngle: 90, detailedRange: 20, maxRange: 50 }
       });
       existingKeys.add(key);
     }

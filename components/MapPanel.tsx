@@ -8,6 +8,12 @@ import {
   deduplicatePlayersOnMap,
   reconcileRegisteredPlayersOnMap
 } from '../services/mapPlayerEngine';
+import {
+  resolveEntityFacing,
+  resolveEntityVision,
+  isEntityBlind,
+  syncMapEntitiesVision
+} from '../services/visionEngine';
 
 interface MapPanelProps {
   fileSystem: FileSystem;
@@ -218,17 +224,23 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         if (!pages[0].npcs) pages[0].npcs = [];
         const offset = pages[0].npcs.length;
         const displayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
+        const npcVision = resolveEntityVision(null, fileSystem.read(nf.filename), false);
         pages[0].npcs.push({
           name: displayName,
           type: 'npc',
           x: 15 + (offset * 7) % 60,
           y: 18 + (offset * 5) % 60,
+          facing: 0,
+          vision: npcVision,
           description: `NPC from ${nf.filename}`
         });
         allNpcNamesOnMap.add(checkKey);
         allNpcNamesOnMap.add(`${checkKey}-npc`);
       }
     });
+
+    // Synchronize and validate vision ranges and facing across all entities
+    syncMapEntitiesVision({ pages }, fileSystem);
   }
 
   const safePageIndex = pages.length > 0 ? Math.max(0, Math.min(currentPageIndex, pages.length - 1)) : 0;
@@ -704,6 +716,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   };
 
   const createConePath = (x: number, y: number, facing: number, paramAngle: number, radius: number) => {
+    if (!radius || radius <= 0 || !paramAngle || paramAngle <= 0) return '';
     let angle = Math.abs(paramAngle) / 2;
     if (angle >= 180) angle = 179.99;
 
@@ -720,6 +733,17 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
     return `M ${x} ${y} L ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY} Z`;
   };
+
+  const primaryPlayer = useMemo(() => {
+    if (!currentPage?.players || currentPage.players.length === 0) return null;
+    const userLower = (username || '').toLowerCase();
+    const me = currentPage.players.find((p: any) => {
+      const res = resolvePlayerIdentity(p, playerRegistry);
+      return res.canonicalKey === userLower;
+    });
+    const chosen = me || currentPage.players[0];
+    return chosen ? { x: Number(chosen.x) || 0, y: Number(chosen.y) || 0 } : null;
+  }, [currentPage, username, playerRegistry]);
 
   // Text scale counteracts zoom to keep text labels the exact same screen size regardless of zooming in/out
   const textScale = zoom > 0 ? +(1 / zoom).toFixed(4) : 1;
@@ -1119,19 +1143,93 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const nx = Number(npc.x) || 0;
             const ny = Number(npc.y) || 0;
             const nName = parseNpcName(npc.name || 'NPC');
+            const cleanName = nName.replace(/-npc$/i, '');
             const nType = npc.type || 'npc';
             const isHostile = /enemy|monster|hostile|boss|bandit/i.test(nType);
+            const isAlly = /ally|companion|pet|friend|friendly/i.test(nType);
+            const isBoss = /boss/i.test(nType);
+            const isBeast = /beast|creature|animal|mount|wolf|horse|dragon|drake/i.test(nType);
+
+            // Fetch NPC sheet content if available to detect conditions/blindness/senses
+            const npcFileContent = fileSystem.read(`${nName}.txt`) ||
+              fileSystem.read(`${cleanName}-npc.txt`) ||
+              fileSystem.read(`${cleanName}.txt`) ||
+              fileSystem.read(`${npc.name}.txt`);
+
+            const nFacing = resolveEntityFacing(
+              npc,
+              primaryPlayer ? { targetX: primaryPlayer.x, targetY: primaryPlayer.y } : undefined
+            );
+
+            const nVision = resolveEntityVision(npc, npcFileContent, false);
+            const isBlind = nVision.isBlind || nVision.maxRange <= 0;
 
             return (
               <g key={`page-npc-${i}`} className="group cursor-crosshair">
-                <circle
-                  cx={nx}
-                  cy={ny}
-                  r={3.8}
-                  className={isHostile ? "fill-red-900/80 stroke-red-400" : "fill-purple-900/80 stroke-purple-400"}
-                  strokeWidth={1.5}
-                />
-                <title>{`${nName} (${nType}${npc.description ? `: ${npc.description}` : ''})`}</title>
+                {/* NPC Vision Cones: only drawn if NOT blind and maxRange > 0 */}
+                {!isBlind && (
+                  <>
+                    {/* Peripheral Vision Cone */}
+                    <path
+                      d={createConePath(nx, ny, nFacing, nVision.peripheralAngle, nVision.maxRange)}
+                      className={`${
+                        isHostile ? 'fill-red-500/10' :
+                        isAlly ? 'fill-emerald-500/10' :
+                        isBeast ? 'fill-amber-500/10' :
+                        'fill-purple-500/10'
+                      } pointer-events-none transition-all duration-300`}
+                    />
+                    {/* Detailed Vision Cone */}
+                    <path
+                      d={createConePath(nx, ny, nFacing, nVision.mainAngle, nVision.detailedRange)}
+                      className={`${
+                        isHostile ? 'fill-red-500/20' :
+                        isAlly ? 'fill-emerald-500/20' :
+                        isBeast ? 'fill-amber-500/20' :
+                        'fill-purple-500/20'
+                      } pointer-events-none transition-all duration-300`}
+                    />
+                  </>
+                )}
+
+                {/* NPC Arrow Shape pointing in facing direction */}
+                <g transform={`translate(${nx}, ${ny}) rotate(${nFacing})`}>
+                  {isBoss && (
+                    <polygon
+                      points="-6,-5.5 8,0 -6,5.5 -2.5,0"
+                      className="fill-red-500/30 animate-ping"
+                    />
+                  )}
+                  <polygon
+                    points="-4.5,-4 6,0 -4.5,4 -1.8,0"
+                    fill={
+                      isHostile ? "#dc2626" :
+                      isAlly ? "#059669" :
+                      isBoss ? "#e11d48" :
+                      isBeast ? "#d97706" :
+                      "#7c3aed"
+                    }
+                    stroke={
+                      isHostile ? "#fca5a5" :
+                      isAlly ? "#6ee7b7" :
+                      isBoss ? "#fde047" :
+                      isBeast ? "#fde68a" :
+                      "#c4b5fd"
+                    }
+                    strokeWidth={isBoss ? 1.5 : 0.8}
+                    className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
+                  />
+                  {/* Center Pivot Dot */}
+                  <circle
+                    cx={-0.5}
+                    cy={0}
+                    r={1}
+                    fill={isBlind ? "#9ca3af" : "#ffffff"}
+                    fillOpacity={0.85}
+                  />
+                </g>
+
+                <title>{`${nName} (${nType}${isBlind ? ': Blind (No view range)' : ''}${npc.description ? `: ${npc.description}` : ''})`}</title>
                 <g
                   transform={`translate(${nx}, ${ny}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -1143,10 +1241,10 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     y={-7}
                     textAnchor="middle"
                     dominantBaseline="central"
-                    className={`${isHostile ? 'fill-red-300' : 'fill-purple-300'} text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]`}
+                    className={`${isHostile ? 'fill-red-300' : isAlly ? 'fill-emerald-300' : isBeast ? 'fill-amber-300' : 'fill-purple-300'} text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]`}
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
-                    {nName}
+                    {nName}{isBlind ? ' [Blind]' : ''}
                   </text>
                 </g>
               </g>
@@ -1157,26 +1255,34 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {currentPage.players?.map((player: any, i: number) => {
             const px = Number(player.x) || 0;
             const py = Number(player.y) || 0;
-            const pfacing = Number(player.facing) || 0;
+            const pfacing = resolveEntityFacing(player);
             const res = resolvePlayerIdentity(player, playerRegistry);
             const isMe = res.canonicalKey === String(username).toLowerCase();
             const displayName = res.characterName && res.characterName !== res.username
               ? `${res.characterName} (${res.username})`
               : res.characterName || res.username;
 
+            // Fetch player character sheet to detect conditions/blindness/senses
+            const pFileContent = fileSystem.read(`${res.characterName}-${res.username}.txt`) ||
+              fileSystem.read(`${res.characterName}.txt`) ||
+              fileSystem.read(`${res.username}.txt`);
+
+            const pVision = resolveEntityVision(player, pFileContent, true);
+            const isBlind = pVision.isBlind || pVision.maxRange <= 0;
+
             return (
               <g key={res.canonicalKey || player.username || i} className="group cursor-pointer">
-                {/* Vision Cones */}
-                {player.vision && (
+                {/* Vision Cones: only drawn if NOT blind and maxRange > 0 */}
+                {!isBlind && (
                   <>
                     {/* Max Range (Peripheral) */}
                     <path
-                      d={createConePath(px, py, pfacing, Number(player.vision.peripheralAngle) || 90, Number(player.vision.maxRange) || 100)}
+                      d={createConePath(px, py, pfacing, pVision.peripheralAngle, pVision.maxRange)}
                       className="fill-white/5 pointer-events-none"
                     />
                     {/* Detailed Range (Main) */}
                     <path
-                      d={createConePath(px, py, pfacing, Number(player.vision.mainAngle) || 66, Number(player.vision.detailedRange) || 50)}
+                      d={createConePath(px, py, pfacing, pVision.mainAngle, pVision.detailedRange)}
                       className="fill-white/10 pointer-events-none"
                     />
                   </>
@@ -1186,8 +1292,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 <polygon
                   points="-4,-4 6,0 -4,4"
                   fill={isMe ? "#3b82f6" : "#ef4444"}
+                  stroke={isMe ? "#93c5fd" : "#fca5a5"}
+                  strokeWidth={0.8}
                   transform={`translate(${px}, ${py}) rotate(${pfacing})`}
                 />
+                <title>{`${displayName}${isBlind ? ' (Blind - No view range)' : ''}`}</title>
                 <g
                   transform={`translate(${px}, ${py}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -1202,7 +1311,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                     className="fill-white text-[5.5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
                     style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '2px', strokeLinejoin: 'round' }}
                   >
-                    {displayName}
+                    {displayName}{isBlind ? ' [Blind]' : ''}
                   </text>
                 </g>
               </g>
