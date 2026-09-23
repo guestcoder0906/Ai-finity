@@ -21,6 +21,129 @@ export interface PlayerResolution {
 }
 
 /**
+ * Determines whether a file represents a human player character sheet rather than an NPC or world file.
+ */
+export function isPlayerCharacterFile(
+  filename: string,
+  content?: string | null
+): { isPlayer: boolean; username: string; charName: string; canonicalName: string } {
+  if (!filename || !filename.endsWith('.txt')) {
+    return { isPlayer: false, username: '', charName: '', canonicalName: '' };
+  }
+  if (
+    filename.startsWith('World') ||
+    filename.startsWith('Guide') ||
+    filename.startsWith('Log') ||
+    filename.startsWith('History') ||
+    filename.startsWith('Event') ||
+    filename.startsWith('Combat') ||
+    filename === 'CurrentMap.json'
+  ) {
+    return { isPlayer: false, username: '', charName: '', canonicalName: '' };
+  }
+
+  const base = filename.replace(/\.txt$/, '');
+  const cleanBase = base.replace(/[-_]npc$/i, '').trim();
+
+  let isPlayer = false;
+  let username = '';
+  let charName = '';
+
+  if (content) {
+    const playerMatch = content.match(/[-*•]?\s*Player\s*[:=]\s*([^\n\r]+)/i);
+    if (playerMatch && playerMatch[1]) {
+      const pVal = playerMatch[1].replace(/^[*-•\s]+/, '').trim();
+      if (pVal && !/^(?:none|n\/a|npc|bot|ai|unassigned)$/i.test(pVal)) {
+        isPlayer = true;
+        username = pVal;
+      }
+    }
+    const nameMatch = content.match(/[-*•]?\s*(?:Character\s+)?Name\s*[:=]\s*([^\n\r]+)/i);
+    if (nameMatch && nameMatch[1]) {
+      const nVal = nameMatch[1].replace(/^[*-•\s]+/, '').trim();
+      if (nVal && nVal.length > 1 && !/^(?:adventurer|player|npc)$/i.test(nVal)) {
+        charName = nVal;
+      }
+    }
+  }
+
+  if (!isPlayer && cleanBase.includes('-')) {
+    const parts = cleanBase.split('-');
+    const suffix = parts[parts.length - 1].trim();
+    const prefix = parts.slice(0, -1).join('-').trim();
+    const suffixLower = suffix.toLowerCase();
+    if (suffix && !['npc', 'bot', 'ai', 'boss', 'monster', 'creature', 'enemy', 'ally', 'guard', 'merchant'].includes(suffixLower)) {
+      isPlayer = true;
+      if (!username) username = suffix;
+      if (!charName) charName = prefix || suffix;
+    }
+  }
+
+  return {
+    isPlayer,
+    username: username.trim(),
+    charName: (charName || username).trim(),
+    canonicalName: cleanBase
+  };
+}
+
+/**
+ * Detects and repairs any human player character files that were incorrectly named or corrupted
+ * with an accidental "-npc" suffix (e.g., "MiraRavencrest-Chloe-npc.txt" -> "MiraRavencrest-Chloe.txt").
+ * Also cleans up duplicate player files for the same account.
+ */
+export function cleanAndRepairPlayerFiles(
+  fileSystem: {
+    list: () => string[];
+    read: (f: string) => string | null;
+    write: (f: string, c: string) => void;
+    delete: (f: string) => void;
+    exists?: (f: string) => boolean;
+  }
+): string[] {
+  if (!fileSystem || typeof fileSystem.list !== 'function') return [];
+  const files = fileSystem.list();
+
+  for (const f of files) {
+    if (!f.endsWith('.txt')) continue;
+    if (
+      f.startsWith('World') ||
+      f.startsWith('Guide') ||
+      f.startsWith('Log') ||
+      f.startsWith('History') ||
+      f.startsWith('Event') ||
+      f.startsWith('Combat') ||
+      f === 'CurrentMap.json'
+    ) continue;
+
+    const base = f.replace(/\.txt$/, '');
+    const lower = base.toLowerCase();
+
+    if (lower.endsWith('-npc') || lower.endsWith('_npc')) {
+      const content = fileSystem.read(f);
+      const detection = isPlayerCharacterFile(f, content);
+
+      if (detection.isPlayer) {
+        const cleanBase = base.replace(/[-_]npc$/i, '').trim();
+        const targetFilename = `${cleanBase}.txt`;
+
+        console.log(`[Player Engine] Repairing corrupted player character filename: "${f}" -> "${targetFilename}"`);
+        if (content) {
+          const cleanedContent = content
+            .replace(/[-*•]?\s*is_npc\s*[:=]\s*true[^\n\r]*/gi, '')
+            .replace(/[-*•]?\s*category\s*[:=]\s*npc[^\n\r]*/gi, '')
+            .replace(/[-*•]?\s*status\s*[:=]\s*npc[^\n\r]*/gi, '');
+          fileSystem.write(targetFilename, cleanedContent);
+        }
+        fileSystem.delete(f);
+      }
+    }
+  }
+
+  return fileSystem.list();
+}
+
+/**
  * Discovers and builds a registry of all human players from the character files in the project.
  */
 export function buildPlayerRegistry(
@@ -44,59 +167,31 @@ export function buildPlayerRegistry(
       continue;
     }
 
-    const base = f.replace(/\.txt$/, '');
-    const lower = base.toLowerCase();
+    const content = fileSystem ? fileSystem.read(f) : null;
+    const playerCheck = isPlayerCharacterFile(f, content);
 
-    // Skip NPC files
-    if (
-      lower.endsWith('-npc') ||
-      lower.endsWith('_npc') ||
-      lower.includes(' npc') ||
-      lower.startsWith('npc-') ||
-      lower.startsWith('npc_')
-    ) {
+    if (!playerCheck.isPlayer) {
       continue;
     }
 
-    let username = '';
-    let charName = '';
-
-    if (base.includes('-')) {
-      const parts = base.split('-');
-      const suffix = parts[parts.length - 1].trim();
-      const prefix = parts.slice(0, -1).join('-').trim();
-
-      const suffixLower = suffix.toLowerCase();
-      if (suffixLower === 'npc' || suffixLower === 'bot' || suffixLower === 'ai') {
-        continue;
-      }
-
-      username = suffix;
-      charName = prefix || suffix;
-    } else {
-      const content = fileSystem ? fileSystem.read(f) : null;
-      if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
-        const isNpcSheet = /is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content);
-        if (isNpcSheet) continue;
-        username = base;
-        charName = base;
-      } else {
-        continue;
-      }
-    }
+    const username = playerCheck.username;
+    let charName = playerCheck.charName;
+    const base = f.replace(/\.txt$/, '').replace(/[-_]npc$/i, '').trim();
 
     const uKey = username.toLowerCase();
     if (seenUsernames.has(uKey)) continue;
     seenUsernames.add(uKey);
 
     let fullName = charName;
-    const content = fileSystem ? fileSystem.read(f) : null;
     if (content) {
       const nameMatch = content.match(/[-*•]?\s*(?:Character\s+)?Name\s*[:=]\s*([^\n\r]+)/i);
       if (nameMatch) {
         const rawParsedName = nameMatch[1].replace(/^[*-•\s]+/, '').trim();
         if (rawParsedName && rawParsedName.length > 1) {
           fullName = rawParsedName;
+          if (!charName || charName === username) {
+            charName = rawParsedName;
+          }
         }
       }
     }
@@ -127,7 +222,7 @@ export function buildPlayerRegistry(
       username,
       charName,
       fullName,
-      filename: f,
+      filename: `${base}.txt`,
       aliases
     });
   }

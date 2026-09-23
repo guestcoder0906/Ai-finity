@@ -7,7 +7,8 @@ import {
   resolvePlayerIdentity,
   deduplicatePlayersOnMap,
   reconcileRegisteredPlayersOnMap,
-  purgePlayerDuplicatesFromNpcs
+  purgePlayerDuplicatesFromNpcs,
+  cleanAndRepairPlayerFiles
 } from '../services/mapPlayerEngine';
 import {
   resolveEntityFacing,
@@ -119,6 +120,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   }));
 
   const playerRegistry = useMemo(() => {
+    cleanAndRepairPlayerFiles(fileSystem);
     return buildPlayerRegistry(files, fileSystem);
   }, [files, fileSystem]);
 

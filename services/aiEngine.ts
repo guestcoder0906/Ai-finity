@@ -9,6 +9,8 @@ import {
   deduplicatePlayersOnMap,
   reconcileRegisteredPlayersOnMap,
   purgePlayerDuplicatesFromNpcs,
+  cleanAndRepairPlayerFiles,
+  isPlayerCharacterFile,
   RegisteredPlayer
 } from "./mapPlayerEngine";
 import {
@@ -597,6 +599,7 @@ CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
 - However, when the context of the initialized world or location naturally makes sense to have inhabitants (such as a town, tavern, city, market, camp, settlement, active road, outpost, or wilderness with fauna/mounts), the AI is strongly encouraged to populate the scene with fitting NPCs, companions, travelers, shopkeepers, creatures, or mounts:
   * Give any present NPCs or creatures a distinct name, personality, role, motivations, and gear.
   * NPC FILE NAMING CONVENTION: All NPC character files MUST have "-npc.txt" appended (e.g., "Maeve_TavernKeep-npc.txt", "Garrick_Blacksmith-npc.txt", "TownGuard-npc.txt"). Never omit the "-npc" suffix from NPC filenames!
+  * HUMAN PLAYER CHARACTER FILES (NEVER NPCS): Human player character files MUST be named "CharacterName-USERNAME.txt" (e.g. "LyraWhisperwind-Mep.txt", "MiraRavencrest-Chloe.txt") and MUST NEVER have "-npc" appended or be placed under "npcs" on CurrentMap.json!
   * Create their individual character/entity files with complete stats, physical dimensions, body weight, speed, and inventory.
   * PERSISTENCE & MAP NAMING: Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" under "npcs" (or on the appropriate page) with coordinates, distinct icon/type, and facing. Their name in CurrentMap.json MUST have "-npc" appended (e.g., "Maeve-npc", "Garrick-npc"). NEVER forget or drop previously established NPCs from CurrentMap.json across turns!
   * Integrate them into the narrative with exact clickable references (e.g. [Maeve-npc] or [Maeve], [Garrick-npc] or [Garrick]).
@@ -3609,11 +3612,32 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // Ensure currency transactions and balance changes are synchronized
     this.syncPlayerCurrency(data, username, auditContext);
 
+    // Dynamically repair any accidentally corrupted player files
+    cleanAndRepairPlayerFiles(this.fs);
+
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
-      // 0. Enforce -npc.txt naming convention on NPC character files
+      // 0. Enforce strict Player vs NPC file segregation
       const fileNames = Object.keys(data.files);
       for (const filename of fileNames) {
         if (!filename.endsWith('.txt')) continue;
+        const fileData = data.files[filename];
+        const contentStr = typeof fileData === 'string' ? fileData : (fileData as any)?.content;
+
+        // Check if this file represents a human player character sheet
+        const playerCheck = isPlayerCharacterFile(filename, contentStr);
+        if (playerCheck.isPlayer) {
+          // If the AI accidentally returned a player file with -npc.txt, strip -npc.txt!
+          if (filename.toLowerCase().endsWith('-npc.txt') || filename.toLowerCase().endsWith('_npc.txt')) {
+            const cleanFilename = `${filename.replace(/[-_]npc\.txt$/i, '')}.txt`;
+            data.files[cleanFilename] = fileData;
+            delete data.files[filename];
+            if (this.fs.exists(filename)) {
+              this.fs.delete(filename);
+            }
+          }
+          continue;
+        }
+
         const fLower = filename.toLowerCase();
         if (
           fLower.endsWith('-npc.txt') ||
@@ -3628,15 +3652,11 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           continue;
         }
 
-        // Do not touch player files
-        const isPlayer = username && (fLower.endsWith(`-${username.toLowerCase()}.txt`) || fLower.endsWith(`_${username.toLowerCase()}.txt`) || fLower === `${username.toLowerCase()}.txt`);
-        if (isPlayer) {
-          continue;
-        }
-
-        const fileData = data.files[filename];
-        const contentStr = typeof fileData === 'string' ? fileData : (fileData as any)?.content;
-        if (typeof contentStr === 'string' && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CURRENTLY HOLDING]'))) {
+        // Only add -npc.txt if this is genuinely a non-player entity/creature sheet
+        if (
+          typeof contentStr === 'string' &&
+          (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CURRENTLY HOLDING]'))
+        ) {
           const newFilename = filename.replace(/\.txt$/, '-npc.txt');
           data.files[newFilename] = fileData;
           delete data.files[filename];
