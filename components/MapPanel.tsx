@@ -734,7 +734,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     return `M ${x} ${y} L ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY} Z`;
   };
 
-  const primaryPlayer = useMemo(() => {
+  const primaryPlayer = (() => {
     if (!currentPage?.players || currentPage.players.length === 0) return null;
     const userLower = (username || '').toLowerCase();
     const me = currentPage.players.find((p: any) => {
@@ -743,7 +743,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     });
     const chosen = me || currentPage.players[0];
     return chosen ? { x: Number(chosen.x) || 0, y: Number(chosen.y) || 0 } : null;
-  }, [currentPage, username, playerRegistry]);
+  })();
 
   // Text scale counteracts zoom to keep text labels the exact same screen size regardless of zooming in/out
   const textScale = zoom > 0 ? +(1 / zoom).toFixed(4) : 1;
