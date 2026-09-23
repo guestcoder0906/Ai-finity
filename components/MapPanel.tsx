@@ -6,7 +6,8 @@ import {
   buildPlayerRegistry,
   resolvePlayerIdentity,
   deduplicatePlayersOnMap,
-  reconcileRegisteredPlayersOnMap
+  reconcileRegisteredPlayersOnMap,
+  purgePlayerDuplicatesFromNpcs
 } from '../services/mapPlayerEngine';
 import {
   resolveEntityFacing,
@@ -177,7 +178,17 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   // Ensure every NPC with a character file is represented on the map
   if (pages.length > 0) {
+    purgePlayerDuplicatesFromNpcs(pages, playerRegistry);
+
     const allNpcNamesOnMap = new Set<string>();
+    const registeredPlayerFiles = new Set(playerRegistry.map(r => r.filename.toLowerCase()));
+    const registeredPlayerNames = new Set<string>();
+    playerRegistry.forEach(r => {
+      if (r.username) registeredPlayerNames.add(r.username.toLowerCase());
+      if (r.charName) registeredPlayerNames.add(r.charName.toLowerCase());
+      if (r.fullName) registeredPlayerNames.add(r.fullName.toLowerCase());
+      r.aliases.forEach(a => registeredPlayerNames.add(a.toLowerCase()));
+    });
 
     pages.forEach(p => {
       (p.npcs || []).forEach((n: any) => {
@@ -194,25 +205,32 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     (files || []).forEach(f => {
       if (!f.endsWith('.txt')) return;
       if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') return;
+      if (registeredPlayerFiles.has(f.toLowerCase())) return;
 
       const base = f.replace(/\.txt$/, '');
       const lower = f.toLowerCase();
 
       if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
         const charName = base.replace(/[-_]npc$/i, '').trim();
-        npcFiles.push({ filename: f, charName: charName || base });
+        if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
+          npcFiles.push({ filename: f, charName: charName || base });
+        }
       } else if (f.includes('-')) {
         const parts = base.split('-');
         const suffix = parts[parts.length - 1].trim();
         const charName = parts.slice(0, -1).join('-').trim();
         if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
-          npcFiles.push({ filename: f, charName: charName || base });
+          if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
+            npcFiles.push({ filename: f, charName: charName || base });
+          }
         }
       } else {
         const content = fileSystem.read(f);
         if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
           if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
-            npcFiles.push({ filename: f, charName: base });
+            if (!registeredPlayerNames.has(base.toLowerCase())) {
+              npcFiles.push({ filename: f, charName: base });
+            }
           }
         }
       }
@@ -220,7 +238,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
     npcFiles.forEach(nf => {
       const checkKey = nf.charName.toLowerCase();
-      if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`)) {
+      if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
         if (!pages[0].npcs) pages[0].npcs = [];
         const offset = pages[0].npcs.length;
         const displayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
@@ -238,6 +256,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         allNpcNamesOnMap.add(`${checkKey}-npc`);
       }
     });
+
+    purgePlayerDuplicatesFromNpcs(pages, playerRegistry);
 
     // Synchronize and validate vision ranges and facing across all entities
     syncMapEntitiesVision({ pages }, fileSystem);

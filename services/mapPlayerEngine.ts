@@ -263,6 +263,81 @@ function pickBestPlayerToken(tokens: any[], activeUsername?: string): any {
 }
 
 /**
+ * Purges any NPC tokens from all map pages that match any registered human player's
+ * username, character name, full name, or aliases.
+ * Player characters are strictly players, NEVER NPCs.
+ */
+export function purgePlayerDuplicatesFromNpcs(
+  pages: any[],
+  registry: RegisteredPlayer[] = []
+): void {
+  if (!pages || !Array.isArray(pages) || pages.length === 0 || registry.length === 0) return;
+
+  const forbiddenKeys = new Set<string>();
+  for (const reg of registry) {
+    if (reg.username) {
+      const u = reg.username.toLowerCase().trim();
+      forbiddenKeys.add(u);
+      forbiddenKeys.add(`${u}-npc`);
+      forbiddenKeys.add(`${u}_npc`);
+      forbiddenKeys.add(`npc-${u}`);
+    }
+    if (reg.charName) {
+      const c = reg.charName.toLowerCase().trim();
+      forbiddenKeys.add(c);
+      forbiddenKeys.add(`${c}-npc`);
+      forbiddenKeys.add(`${c}_npc`);
+      forbiddenKeys.add(`npc-${c}`);
+    }
+    if (reg.fullName) {
+      const f = reg.fullName.toLowerCase().trim();
+      forbiddenKeys.add(f);
+      forbiddenKeys.add(`${f}-npc`);
+      forbiddenKeys.add(`${f}_npc`);
+      forbiddenKeys.add(`npc-${f}`);
+    }
+    reg.aliases.forEach(a => {
+      const al = a.toLowerCase().trim();
+      if (al && al.length >= 3) {
+        forbiddenKeys.add(al);
+        forbiddenKeys.add(`${al}-npc`);
+      }
+    });
+  }
+
+  for (const page of pages) {
+    if (Array.isArray(page.npcs)) {
+      page.npcs = page.npcs.filter((npc: any) => {
+        if (!npc || typeof npc !== 'object') return false;
+        const rawName = String(npc.name || npc.charName || npc.characterName || '').trim().toLowerCase();
+        if (!rawName) return true;
+
+        const cleanName = rawName.replace(/[-_]npc$/i, '').trim();
+        const baseName = cleanName.replace(/[^a-z0-9\s]/g, '').trim();
+
+        if (forbiddenKeys.has(rawName) || forbiddenKeys.has(cleanName) || forbiddenKeys.has(baseName)) {
+          return false;
+        }
+
+        for (const reg of registry) {
+          const regU = reg.username.toLowerCase();
+          const regC = reg.charName.toLowerCase();
+          const regF = reg.fullName.toLowerCase();
+          if (cleanName === regU || cleanName === regC || cleanName === regF) {
+            return false;
+          }
+          if (rawName.includes(regU) && rawName.includes(regC)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+  }
+}
+
+/**
  * Deduplicates players both within each page and across all pages of the map.
  * Ensures that each player exists EXACTLY ONCE on the entire map.
  */
@@ -275,6 +350,9 @@ export function deduplicatePlayersOnMap(
   } = {}
 ): void {
   if (!pages || !Array.isArray(pages) || pages.length === 0) return;
+
+  // Clean out any rogue NPCs that are actually players
+  purgePlayerDuplicatesFromNpcs(pages, registry);
 
   // 1. Canonicalize player identity on all tokens
   for (const page of pages) {

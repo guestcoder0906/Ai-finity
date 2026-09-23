@@ -8,6 +8,7 @@ import {
   resolvePlayerIdentity,
   deduplicatePlayersOnMap,
   reconcileRegisteredPlayersOnMap,
+  purgePlayerDuplicatesFromNpcs,
   RegisteredPlayer
 } from "./mapPlayerEngine";
 import {
@@ -171,7 +172,16 @@ CRITICAL JSON SYNTAX & BRACKET INTEGRITY (READ CAREFULLY):
 15. Update files dynamically and accurately
 16. NEVER forget to create/update character files for NPCs, groups of NPCs, weapons, attacks, items, locations, or any entities. If a group appears, you MUST create a shared group file. Items and Attacks MUST NOT be vague; they MUST contain technical rules from the relevant schemas.
 17. KNOWN INVENTORY & EQUIPMENT (CRITICAL): If an item is a general/standard world item (e.g. "Dagger"), create a SEPARATE global technical file for it. If an item is UNIQUE or CUSTOM to a specific entity (e.g. "MakeshiftGauntlet"), define its full TECHNICAL RULES (damage, stamina cost, modifiers) directly within that entity's character file under [INVENTORY & EQUIPMENT]. Vague items are a failure.
-18. The game starts by generating the world. THEN, players will provide character descriptions. You MUST create their character files using EXACTLY this name format: "CharacterName-USERNAME.txt" (e.g., if USERNAME is Bob and his character is an elf named Legolas, the file MUST be "Legolas-Bob.txt").
+18. PLAYER CHARACTER VS USERNAME DISTINCTION & NAMING (CRITICAL):
+- USERNAME is the account handle of the person playing (e.g., 'bob123', 'chloe', 'ShadowSlayer99').
+- CHARACTER NAME is the in-world fictional persona's name (e.g., 'Legolas', 'Eldrin Moonshadow', 'Thorne Ironbreaker', 'Lyra Whisperwind').
+- The character's in-world Name MUST be a realistic, setting-appropriate fictional character name. NEVER name the character 'Adventurer', 'Player', or after their account username.
+- Under [NAME & DESCRIPTION] in the character file:
+  - Name: [Fictional In-World Character Name] (e.g. 'Legolas' or 'Kaelen Thorne')
+  - Player: [Account Username] (e.g. 'bob123')
+- The filename MUST be formatted as: "CharacterName-USERNAME.txt" (e.g., "Legolas-bob123.txt", "Kaelen-chloe.txt").
+- MAP PLACEMENT RULE: On CurrentMap.json, player characters MUST be in the "players" array with: username: "bob123", characterName: "Legolas".
+- PLAYER CHARACTERS ARE NEVER NPCS: NEVER put a player character into the "npcs" array on CurrentMap.json! The "npcs" array is strictly reserved for non-player characters and creatures whose files end in "-npc.txt".
 
 STAT PERSISTENCE RULE (CRITICAL):
 - The files are the ONLY persistent memory. Any change mentioned in the narrative or 'updates' array MUST be reflected in the updated content of the relevant file.
@@ -853,7 +863,7 @@ export class AIEngine {
       this.taskQueue = this.taskQueue.then(async () => {
         try {
           const charRequirement = username
-            ? `CRITICAL: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. If the prompt doesn't specify their character traits, generate a highly-varied random character (class, appearance, background, name) that fits the starting context. The file MUST be named EXACTLY "CharacterName-${username}.txt" (e.g. "Legolas-${username}.txt").`
+            ? `CRITICAL CHARACTER CREATION RULE: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "Kaelen Thorne", "Lyra Whisperwind", "Valerius") fitting the world setting. The character's name MUST NOT be the account username "${username}" and MUST NOT be a generic label like "Adventurer" or "Player". The file MUST be named EXACTLY "[CharacterName]-${username}.txt" (e.g. "Kaelen-${username}.txt"). Inside the file under [NAME & DESCRIPTION], specify '- Name: [CharacterName]' and '- Player: ${username}'. On CurrentMap.json, place this character in "players" with username: "${username}" and characterName: "[CharacterName]". PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!`
             : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
           const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY: Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Iron Shortsword", "Wooden Shield", "Oak Staff"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Both Hands (Two-Handed)].\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
@@ -4081,30 +4091,49 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       // Reconcile players cleanly using player registry
       reconcileRegisteredPlayersOnMap(normalized.pages, playerRegistry);
 
+      // Purge any accidental player duplicates from npcs
+      purgePlayerDuplicatesFromNpcs(normalized.pages, playerRegistry);
+
       // Reconcile NPCs (ensure no NPCs are forgotten on the map)
+      const registeredPlayerFiles = new Set(playerRegistry.map(r => r.filename.toLowerCase()));
+      const registeredPlayerNames = new Set<string>();
+      playerRegistry.forEach(r => {
+        if (r.username) registeredPlayerNames.add(r.username.toLowerCase());
+        if (r.charName) registeredPlayerNames.add(r.charName.toLowerCase());
+        if (r.fullName) registeredPlayerNames.add(r.fullName.toLowerCase());
+        r.aliases.forEach(a => registeredPlayerNames.add(a.toLowerCase()));
+      });
+
       const npcFiles: { filename: string; charName: string }[] = [];
       for (const f of allFileNames) {
         if (!f.endsWith('.txt')) continue;
         if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') continue;
+        if (registeredPlayerFiles.has(f.toLowerCase())) continue;
 
         const base = f.replace(/\.txt$/, '');
         const lower = f.toLowerCase();
 
         if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
           const charName = base.replace(/[-_]npc$/i, '').trim();
-          npcFiles.push({ filename: f, charName: charName || base });
+          if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
+            npcFiles.push({ filename: f, charName: charName || base });
+          }
         } else if (f.includes('-')) {
           const parts = base.split('-');
           const suffix = parts[parts.length - 1].trim();
           const charName = parts.slice(0, -1).join('-').trim();
           if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
-            npcFiles.push({ filename: f, charName: charName || base });
+            if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
+              npcFiles.push({ filename: f, charName: charName || base });
+            }
           }
         } else {
           const content = this.fs ? this.fs.read(f) : null;
           if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
             if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
-              npcFiles.push({ filename: f, charName: base });
+              if (!registeredPlayerNames.has(base.toLowerCase())) {
+                npcFiles.push({ filename: f, charName: base });
+              }
             }
           }
         }
@@ -4125,7 +4154,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
       for (const nf of npcFiles) {
         const checkKey = nf.charName.toLowerCase();
-        if (!allMapNpcNames.has(checkKey) && !allMapNpcNames.has(`${checkKey}-npc`)) {
+        if (!allMapNpcNames.has(checkKey) && !allMapNpcNames.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
           const targetPage = normalized.pages[0];
           if (!Array.isArray(targetPage.npcs)) {
             targetPage.npcs = [];
@@ -4148,6 +4177,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           allMapNpcNames.add(`${checkKey}-npc`);
         }
       }
+
+      purgePlayerDuplicatesFromNpcs(normalized.pages, playerRegistry);
     } catch (err) {
       console.warn('Player and NPC verification guard encountered non-fatal issue', err);
     }

@@ -129,6 +129,36 @@ function sanitizeNarrativeEntries(raw: any): NarrativeEntry[] {
   });
 }
 
+function extractOrGenerateCharacterName(description?: string, username?: string): string {
+  const cleanUser = (username || '').trim();
+  if (description) {
+    const directNameMatch =
+      description.match(/(?:named|name is|character named|called|character:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
+      description.match(/^(?:I am|I'm|Name:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
+      description.match(/\[(?:Name|Character Name)\]:?\s*([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i);
+    if (directNameMatch && directNameMatch[1]) {
+      const cand = directNameMatch[1].trim();
+      const candLower = cand.toLowerCase();
+      if (
+        candLower !== cleanUser.toLowerCase() &&
+        candLower !== 'adventurer' &&
+        candLower !== 'player' &&
+        candLower !== 'hero'
+      ) {
+        return cand;
+      }
+    }
+  }
+
+  const fantasyNames = [
+    'Kaelen Thorne', 'Lyra Whisperwind', 'Valerius Vance', 'Aria Shadowglen',
+    'Theron Ironwood', 'Elira Dawnseeker', 'Darius Stormborn', 'Sylas Nightshade',
+    'Caelum Drake', 'Rowan Ashford', 'Mira Ravencrest', 'Orion Sterling'
+  ];
+  const seed = (cleanUser || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + (description ? description.length : 0);
+  return fantasyNames[seed % fantasyNames.length];
+}
+
 function App() {
   const [narrative, setNarrative] = useState<NarrativeEntry[]>(() => {
     try {
@@ -971,7 +1001,21 @@ function App() {
         // Host creates character for new player
         updateProcessing(1);
         try {
-          const prompt = `Create a highly detailed, rich, and extensive character file for player "${newUsername}" based on this description: ${description}. The file MUST be named in the format "CharacterName-${newUsername}.txt".
+          const suggestedCharName = extractOrGenerateCharacterName(description, newUsername);
+          const prompt = `Create a highly detailed, rich, and extensive character file for player "${newUsername}" based on this description: ${description}.
+
+CHARACTER IDENTITY RULE (CRITICAL):
+- The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "${suggestedCharName}") fitting their class, appearance, background, and world lore.
+- NEVER use the player's account username "${newUsername}" as their character name!
+- NEVER name the character generic placeholders like "Adventurer" or "Player".
+- The file MUST be named EXACTLY in the format "[CharacterName]-${newUsername}.txt" (e.g. "${suggestedCharName.replace(/\s+/g, '')}-${newUsername}.txt").
+- Under [NAME & DESCRIPTION] in the character file:
+  - Name: [Fictional In-World Character Name] (e.g. "${suggestedCharName}")
+  - Player: ${newUsername}
+- Place this player character in "CurrentMap.json" under "players" with:
+  username: "${newUsername}",
+  characterName: "[Fictional In-World Character Name]"
+- PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!
 
 CRITICAL ANTI-LAZINESS MANDATE:
 - Do NOT be lazy, rushed, or cut corners. Never use placeholders (like "...", "// etc", "[same as before]"), abbreviations, or incomplete summaries.
@@ -1004,9 +1048,10 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           });
 
           if (!hasCharFile) {
-            const fallbackFileName = `Adventurer-${newUsername}.txt`;
+            const fallbackCharName = extractOrGenerateCharacterName(description, newUsername);
+            const fallbackFileName = `${fallbackCharName.replace(/[^a-zA-Z0-9]/g, '')}-${newUsername}.txt`;
             const fallbackContent = `[NAME & DESCRIPTION]
-- Name: Adventurer (${newUsername})
+- Name: ${fallbackCharName}
 - Player: ${newUsername}
 - Description: ${description || 'A skilled adventurer ready to embark into the unknown.'}
 - Physical Dimensions: Height 5'10", Weight 170 lbs
