@@ -24,6 +24,7 @@ import { HistoryService } from './services/historyService';
 import GoldenName from './components/GoldenName';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
+import { ShareRoomModal } from './components/ShareRoomModal';
 import { PurchaseNotificationBanner } from './components/PurchaseNotificationBanner';
 import { LiveStatusUpdates } from './components/LiveStatusUpdates';
 import { auth, db } from './services/firebase';
@@ -66,7 +67,8 @@ import {
   PanelLeftClose,
   RotateCcw,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Share2
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -203,6 +205,8 @@ function App() {
     return (saved === 'multiplayer' ? 'multiplayer' : 'singleplayer');
   });
   const [showMultiplayerModal, setShowMultiplayerModal] = useState<'host' | 'join' | null>(null);
+  const [shareRoomModalCode, setShareRoomModalCode] = useState<string | null>(null);
+  const [urlRoomToJoin, setUrlRoomToJoin] = useState<string>('');
   const [multiplayerService, setMultiplayerService] = useState<MultiplayerService | null>(null);
   const [roomState, setRoomState] = useState<any>(null);
   const roomStateRef = useRef<any>(null);
@@ -894,6 +898,22 @@ function App() {
     };
   }, []);
 
+  // Check for room invitation in URL parameters
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomParam = urlParams.get('room') || urlParams.get('join') || urlParams.get('r');
+      if (roomParam && roomParam.trim()) {
+        const cleanRoom = roomParam.trim().toUpperCase();
+        setUrlRoomToJoin(cleanRoom);
+        setShowMultiplayerModal('join');
+      }
+    } catch (e) {
+      console.warn('Error reading room from URL:', e);
+    }
+  }, []);
+
   const handleEnterGame = () => {
     if (typeof window !== 'undefined') {
       if (isWelcomeRouteActive()) {
@@ -1254,6 +1274,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
     localStorage.setItem('aimud_roomId', roomId);
     setGameMode('multiplayer');
     setShowMultiplayerModal(null);
+    setShareRoomModalCode(roomId);
     setNarrative([{
       id: 'init',
       text: `Hosting Room: ${roomId}. Enter world description to start adventure....`,
@@ -1632,8 +1653,12 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         <MainMenu
           onHostGame={handleHostGame}
           onJoinGame={handleJoinGame}
-          onCancel={() => setShowMultiplayerModal(null)}
+          onCancel={() => {
+            setShowMultiplayerModal(null);
+            setUrlRoomToJoin('');
+          }}
           initialMode={showMultiplayerModal}
+          initialRoomId={urlRoomToJoin}
           defaultUsername={getMultiplayerUsername(roomState?.players || [])}
           currentUser={currentUser}
           guestName={guestName}
@@ -1773,6 +1798,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         onOpenAccount={() => setIsAccountModalOpen(true)}
         onOpenAdventures={() => setIsAdventuresModalOpen(true)}
         onOpenCommunity={() => setIsCommunityModalOpen(true)}
+        onOpenShareCode={() => setShareRoomModalCode(roomState?.id || null)}
         isMobileOpen={isMobilePanelOpen}
         onCloseMobile={() => setIsMobilePanelOpen(false)}
         mobileTab={mobilePanelTab}
@@ -1924,9 +1950,16 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
 
             <div className="flex items-center gap-2">
               {gameMode === 'multiplayer' && roomState && (
-                <span className="text-emerald-400 text-[11px]">
-                  Room: {roomState.id} | {(roomState.players || []).filter((p: any) => p.status === 'active').length} Players
-                </span>
+                <button
+                  onClick={() => setShareRoomModalCode(roomState.id)}
+                  className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-800/60 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer"
+                  title="Click to view & share room code"
+                >
+                  <Share2 size={11} className="text-emerald-400" />
+                  <span>Room: {roomState.id}</span>
+                  <span className="text-neutral-600">|</span>
+                  <span>{(roomState.players || []).filter((p: any) => p.status === 'active').length} Players</span>
+                </button>
               )}
 
               {currentUser ? (
@@ -2035,9 +2068,14 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
                 {worldTime || "TIME"}
               </span>
               {gameMode === 'multiplayer' && roomState && (
-                <span className="text-emerald-400 text-[9px] bg-emerald-950/70 border border-emerald-800/60 px-1 py-0.2 rounded truncate">
-                  {roomState.id}
-                </span>
+                <button
+                  onClick={() => setShareRoomModalCode(roomState.id)}
+                  className="text-emerald-400 hover:text-emerald-300 text-[9px] bg-emerald-950/70 border border-emerald-800/60 px-1.5 py-0.5 rounded truncate flex items-center gap-1 cursor-pointer font-mono"
+                  title="Click to view & share room code"
+                >
+                  <Share2 size={9} />
+                  <span>{roomState.id}</span>
+                </button>
               )}
             </div>
 
@@ -2467,6 +2505,15 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         onClose={() => setIsReceiptModalOpen(false)}
         transaction={verifiedReceiptTransaction}
         currentUser={currentUser}
+      />
+
+      {/* Multiplayer Share Room Code Modal */}
+      <ShareRoomModal
+        isOpen={!!shareRoomModalCode}
+        onClose={() => setShareRoomModalCode(null)}
+        roomId={shareRoomModalCode || ''}
+        hostUsername={roomState?.hostUsername || username}
+        isHost={isHost}
       />
     </div>
   );

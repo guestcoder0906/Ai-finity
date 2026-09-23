@@ -13,6 +13,7 @@ interface MainMenuProps {
   onJoinGame: (roomId: string, username: string) => void;
   onCancel: () => void;
   initialMode: 'host' | 'join';
+  initialRoomId?: string;
   defaultUsername?: string;
   currentUser?: UserProfile | null;
   guestName?: string | null;
@@ -25,6 +26,7 @@ export default function MainMenu({
   onJoinGame,
   onCancel,
   initialMode,
+  initialRoomId,
   defaultUsername,
   currentUser,
   guestName,
@@ -33,11 +35,17 @@ export default function MainMenu({
 }: MainMenuProps) {
   const [mode, setMode] = useState<'host' | 'join'>(initialMode);
   const [username, setUsername] = useState('');
-  const [roomId, setRoomId] = useState('');
+  const [roomId, setRoomId] = useState(initialRoomId || '');
   const [apiKey, setApiKey] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const isLoggedIn = !!currentUser;
+
+  useEffect(() => {
+    if (initialRoomId) {
+      setRoomId(initialRoomId);
+    }
+  }, [initialRoomId]);
 
   useEffect(() => {
     const savedApiKey = localStorage.getItem('aimud_apikey');

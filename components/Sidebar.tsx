@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Share2, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -43,6 +43,7 @@ interface SidebarProps {
   onOpenMarket?: (tab?: 'packs' | 'subscriptions' | 'apikey') => void;
   onOpenAdventures?: () => void;
   onOpenCommunity?: () => void;
+  onOpenShareCode?: () => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
   mobileTab?: 'files' | 'map';
@@ -86,6 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onOpenMarket,
   onOpenAdventures,
   onOpenCommunity,
+  onOpenShareCode,
   isMobileOpen,
   onCloseMobile,
   mobileTab,
@@ -598,8 +600,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       {gameMode === 'multiplayer' && roomState && (
         <div className="flex flex-col border-b border-neutral-800">
           <div className="p-2 bg-neutral-950 border-b border-neutral-800 flex justify-between items-center text-gray-400 font-bold uppercase tracking-wider text-[10px]">
-            <span className="flex items-center gap-1"><Users size={12} /> Players</span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="flex items-center gap-1"><Users size={12} /> Players</span>
+              {roomState?.id && (
+                <button
+                  onClick={onOpenShareCode}
+                  className="bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-800/60 px-1.5 py-0.5 rounded text-[9.5px] font-mono flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Share / Copy Room Code"
+                >
+                  <span>{roomState.id}</span>
+                  <Share2 size={9} />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
               {isHost && (
                 <button onClick={onForceTurn} className="hover:text-blue-400 transition-colors flex items-center gap-1" title="Force Turn">
                   <Play size={12} /> Force
