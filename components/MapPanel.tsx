@@ -164,13 +164,21 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   }, [fileSystem, files, syncCount, username, playerRegistry]);
 
   // Robust multi-structure resolution for pages:
-  let pages: any[] = [];
+  let rawPages: any[] = [];
   if (mapData?.pages && Array.isArray(mapData.pages)) {
-    pages = mapData.pages;
+    rawPages = mapData.pages;
   } else if (Array.isArray(mapData)) {
-    pages = mapData;
+    rawPages = mapData;
   } else if (mapData?.areas) {
-    pages = [{ name: 'World Map', ...mapData }];
+    rawPages = [{ name: 'World Map', ...mapData }];
+  }
+
+  // Deep clone to prevent mutating React state directly
+  let pages: any[] = [];
+  try {
+    pages = JSON.parse(JSON.stringify(rawPages));
+  } catch {
+    pages = rawPages;
   }
 
   // Deduplicate and canonicalize players across and within pages using canonical identity registry

@@ -4249,8 +4249,11 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    if (oldMap && Array.isArray(oldMap.pages)) {
-      // 1. Preserve pages that were present in oldMap but missing in newMap
+    // Multi-page preservation:
+    // Only preserve additional distinct pages if the old map explicitly had MULTIPLE distinct pages (> 1)
+    // AND the incoming map explicitly returned MULTIPLE pages with different names.
+    // If incoming is a single page or replacing the current map scene, update that scene directly (do not duplicate into extra pages!).
+    if (oldMap && Array.isArray(oldMap.pages) && oldMap.pages.length > 1 && normalized.pages.length > 1) {
       const returnedNames = new Set(normalized.pages.map((p: any) => (p.name || '').trim().toLowerCase()));
       for (const oldPage of oldMap.pages) {
         const oldName = (oldPage.name || '').trim().toLowerCase();
@@ -4260,236 +4263,46 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           returnedNames.add(oldName);
         }
       }
-
-      // 2. Intra-page entity and player merging
-      for (let i = 0; i < normalized.pages.length; i++) {
-        const newPage = normalized.pages[i];
-        const pageName = (newPage.name || '').trim().toLowerCase();
-        const matchingOldPage = oldMap.pages.find((p: any) => (p.name || '').trim().toLowerCase() === pageName) ||
-          (oldMap.pages.length === 1 && normalized.pages.length === 1 ? oldMap.pages[0] : null);
-
-        if (matchingOldPage) {
-          // Merge Players: ONLY if player is not present on ANY page in normalized.pages!
-          // If the player moved to another page, NEVER copy them back into their previous map page!
-          if (Array.isArray(matchingOldPage.players) && matchingOldPage.players.length > 0) {
-            if (!Array.isArray(newPage.players)) {
-              newPage.players = [];
-            }
-            for (const oldPlayer of matchingOldPage.players) {
-              const oldRes = resolvePlayerIdentity(oldPlayer, playerRegistry);
-              if (!oldRes.canonicalKey) continue;
-
-              const alreadyExistsAnywhere = normalized.pages.some((p: any) =>
-                Array.isArray(p.players) && p.players.some((existing: any) => {
-                  const eRes = resolvePlayerIdentity(existing, playerRegistry);
-                  return eRes.canonicalKey === oldRes.canonicalKey;
-                })
-              );
-
-              if (!alreadyExistsAnywhere) {
-                newPage.players.push(oldPlayer);
-              }
-            }
-          }
-
-          // Merge Landmarks: ensure persistent landmarks aren't dropped
-          if (Array.isArray(matchingOldPage.landmarks) && matchingOldPage.landmarks.length > 0) {
-            if (!Array.isArray(newPage.landmarks)) {
-              newPage.landmarks = [];
-            }
-            const newLandmarkNames = new Set(newPage.landmarks.map((l: any) => (l.name || '').trim().toLowerCase()));
-            for (const oldLm of matchingOldPage.landmarks) {
-              const oldLmName = (oldLm.name || '').trim().toLowerCase();
-              if (oldLmName && !newLandmarkNames.has(oldLmName)) {
-                newPage.landmarks.push(oldLm);
-                newLandmarkNames.add(oldLmName);
-              }
-            }
-          }
-
-          // Merge NPCs: ensure persistent NPCs aren't dropped across turns
-          const oldNpcCandidates = [
-            ...(Array.isArray(matchingOldPage.npcs) ? matchingOldPage.npcs : []),
-            ...(Array.isArray(matchingOldPage.creatures) ? matchingOldPage.creatures : []),
-            ...(Array.isArray(matchingOldPage.entities) ? matchingOldPage.entities : []),
-            ...(Array.isArray(matchingOldPage.areas) ? matchingOldPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : [])
-          ];
-
-          if (!Array.isArray(newPage.npcs)) {
-            newPage.npcs = [];
-          }
-
-          // Ensure all current page NPCs have -npc appended
-          newPage.npcs = newPage.npcs.map((n: any) => {
-            if (!n || typeof n !== 'object') return n;
-            let nName = (n.name || '').trim();
-            if (nName && !nName.toLowerCase().endsWith('-npc')) {
-              nName = `${nName}-npc`;
-            }
-            return { ...n, name: nName };
-          });
-
-          const newNpcNames = new Set(newPage.npcs.map((n: any) => (n.name || '').trim().toLowerCase()));
-          for (const oldNpc of oldNpcCandidates) {
-            if (!oldNpc) continue;
-            let rawOldName = (oldNpc.name || '').trim();
-            if (!rawOldName) continue;
-            if (!rawOldName.toLowerCase().endsWith('-npc')) {
-              rawOldName = `${rawOldName}-npc`;
-            }
-            const oldNpcKey = rawOldName.toLowerCase();
-            if (!newNpcNames.has(oldNpcKey) && !newNpcNames.has(oldNpcKey.replace(/-npc$/, ''))) {
-              newPage.npcs.push({
-                ...oldNpc,
-                name: rawOldName
-              });
-              newNpcNames.add(oldNpcKey);
-            }
-          }
-
-          // Merge Areas: if new page has 0 areas, preserve old areas
-          if (Array.isArray(matchingOldPage.areas) && matchingOldPage.areas.length > 0) {
-            if (!Array.isArray(newPage.areas) || newPage.areas.length === 0) {
-              newPage.areas = matchingOldPage.areas;
-            } else {
-              const newAreaKeys = new Set(newPage.areas.map((a: any) => (a.id || a.name || '').trim().toLowerCase()));
-              for (const oldArea of matchingOldPage.areas) {
-                const areaKey = (oldArea.id || oldArea.name || '').trim().toLowerCase();
-                if (areaKey && !newAreaKeys.has(areaKey)) {
-                  newPage.areas.push(oldArea);
-                  newAreaKeys.add(areaKey);
-                }
-              }
-            }
-          }
-
-          // Merge Items: if items existed on old page and aren't in new page, preserve
-          if (Array.isArray(matchingOldPage.items) && matchingOldPage.items.length > 0) {
-            if (!Array.isArray(newPage.items)) {
-              newPage.items = [];
-            }
-            const newItemNames = new Set(newPage.items.map((it: any) => (it.name || '').trim().toLowerCase()));
-            for (const oldIt of matchingOldPage.items) {
-              const itName = (oldIt.name || '').trim().toLowerCase();
-              if (itName && !newItemNames.has(itName)) {
-                newPage.items.push(oldIt);
-                newItemNames.add(itName);
-              }
-            }
-          }
-        }
-      }
     }
 
-    // Clean any duplicates across or within pages (removes player's stale last position)
+    // Ensure all entities are initialized arrays and normalize NPC naming
+    for (const page of normalized.pages) {
+      if (!Array.isArray(page.areas)) page.areas = [];
+      if (!Array.isArray(page.players)) page.players = [];
+      if (!Array.isArray(page.items)) page.items = [];
+      if (!Array.isArray(page.landmarks)) page.landmarks = [];
+      if (!Array.isArray(page.npcs)) page.npcs = [];
+
+      page.npcs = page.npcs.map((n: any) => {
+        if (!n || typeof n !== 'object') return n;
+        let nName = (n.name || '').trim();
+        if (nName && !nName.toLowerCase().endsWith('-npc')) {
+          nName = `${nName}-npc`;
+        }
+        return { ...n, name: nName };
+      });
+    }
+
+    // Clean duplicate players across and within pages (removes player's stale last position)
     deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
       activeUsername: username,
       oldPlayerLocations
     });
 
-    // 3. File-System Player & NPC Verification:
-    // Ensure every player and NPC with a character file is represented on the map
+    // 3. File-System Player Verification:
+    // Ensure every player with a character file is represented on the map
     try {
       // Reconcile players cleanly using player registry
       reconcileRegisteredPlayersOnMap(normalized.pages, playerRegistry);
 
       // Purge any accidental player duplicates from npcs
       purgePlayerDuplicatesFromNpcs(normalized.pages, playerRegistry);
-
-      // Reconcile NPCs (ensure no NPCs are forgotten on the map)
-      const registeredPlayerFiles = new Set(playerRegistry.map(r => r.filename.toLowerCase()));
-      const registeredPlayerNames = new Set<string>();
-      playerRegistry.forEach(r => {
-        if (r.username) registeredPlayerNames.add(r.username.toLowerCase());
-        if (r.charName) registeredPlayerNames.add(r.charName.toLowerCase());
-        if (r.fullName) registeredPlayerNames.add(r.fullName.toLowerCase());
-        r.aliases.forEach(a => registeredPlayerNames.add(a.toLowerCase()));
+      deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
+        activeUsername: username
       });
-
-      const npcFiles: { filename: string; charName: string }[] = [];
-      for (const f of allFileNames) {
-        if (!f.endsWith('.txt')) continue;
-        if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') continue;
-        if (registeredPlayerFiles.has(f.toLowerCase())) continue;
-
-        const base = f.replace(/\.txt$/, '');
-        const lower = f.toLowerCase();
-
-        if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
-          const charName = base.replace(/[-_]npc$/i, '').trim();
-          if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
-            npcFiles.push({ filename: f, charName: charName || base });
-          }
-        } else if (f.includes('-')) {
-          const parts = base.split('-');
-          const suffix = parts[parts.length - 1].trim();
-          const charName = parts.slice(0, -1).join('-').trim();
-          if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
-            if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
-              npcFiles.push({ filename: f, charName: charName || base });
-            }
-          }
-        } else {
-          const content = this.fs ? this.fs.read(f) : null;
-          if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
-            if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
-              if (!registeredPlayerNames.has(base.toLowerCase())) {
-                npcFiles.push({ filename: f, charName: base });
-              }
-            }
-          }
-        }
-      }
-
-      const allMapNpcNames = new Set<string>();
-      for (const p of normalized.pages) {
-        if (Array.isArray(p.npcs)) {
-          for (const n of p.npcs) {
-            const nKey = (n.name || '').trim().toLowerCase();
-            if (nKey) {
-              allMapNpcNames.add(nKey);
-              allMapNpcNames.add(nKey.replace(/-npc$/, ''));
-            }
-          }
-        }
-      }
-
-      for (const nf of npcFiles) {
-        const checkKey = nf.charName.toLowerCase();
-        if (!allMapNpcNames.has(checkKey) && !allMapNpcNames.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
-          const targetPage = normalized.pages[0];
-          if (!Array.isArray(targetPage.npcs)) {
-            targetPage.npcs = [];
-          }
-          const existingCount = targetPage.npcs.length;
-          const npcDisplayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
-          const nfContent = this.fs ? this.fs.read(nf.filename) : null;
-          const npcVision = resolveEntityVision(null, nfContent, false);
-          const npcFacing = resolveEntityFacing(null, { defaultFacing: 0 });
-          targetPage.npcs.push({
-            name: npcDisplayName,
-            type: 'npc',
-            x: 15 + (existingCount * 7) % 60,
-            y: 18 + (existingCount * 5) % 60,
-            facing: npcFacing,
-            vision: npcVision,
-            description: `NPC from ${nf.filename}`
-          });
-          allMapNpcNames.add(checkKey);
-          allMapNpcNames.add(`${checkKey}-npc`);
-        }
-      }
-
-      purgePlayerDuplicatesFromNpcs(normalized.pages, playerRegistry);
-    } catch (err) {
-      console.warn('Player and NPC verification guard encountered non-fatal issue', err);
+    } catch (e) {
+      console.error("Player reconciliation on map failed", e);
     }
-
-    // Final deduplication pass
-    deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
-      activeUsername: username,
-      oldPlayerLocations
-    });
 
     // Synchronize and dynamically validate vision, blindness, and facing for all players and NPCs
     syncMapEntitiesVision(normalized, this.fs);
