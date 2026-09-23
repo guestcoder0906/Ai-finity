@@ -920,6 +920,7 @@ function App() {
         const cleanRoom = roomParam.trim().toUpperCase();
         setUrlRoomToJoin(cleanRoom);
         setShowMultiplayerModal('join');
+        setCurrentPath('/');
       }
     } catch (e) {
       console.warn('Error reading room from URL:', e);
@@ -1713,6 +1714,27 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           transaction={verifiedReceiptTransaction}
           currentUser={currentUser}
         />
+        {/* Multiplayer Host/Join Modal accessible on welcome route if triggered */}
+        {showMultiplayerModal && (
+          <MainMenu
+            onHostGame={handleHostGame}
+            onJoinGame={handleJoinGame}
+            onCancel={() => {
+              setShowMultiplayerModal(null);
+              setUrlRoomToJoin('');
+            }}
+            initialMode={showMultiplayerModal}
+            initialRoomId={urlRoomToJoin}
+            defaultUsername={getMultiplayerUsername(roomState?.players || [])}
+            currentUser={currentUser}
+            guestName={guestName}
+            guestId={guestId}
+            onOpenMarket={(tab) => {
+              setMarketInitialTab(tab || 'packs');
+              setIsMarketOpen(true);
+            }}
+          />
+        )}
       </>
     );
   }
@@ -1733,89 +1755,6 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           setIsMarketOpen(true);
         }}
       />
-      {showMultiplayerModal && (
-        <MainMenu
-          onHostGame={handleHostGame}
-          onJoinGame={handleJoinGame}
-          onCancel={() => {
-            setShowMultiplayerModal(null);
-            setUrlRoomToJoin('');
-          }}
-          initialMode={showMultiplayerModal}
-          initialRoomId={urlRoomToJoin}
-          defaultUsername={getMultiplayerUsername(roomState?.players || [])}
-          currentUser={currentUser}
-          guestName={guestName}
-          guestId={guestId}
-          onOpenMarket={(tab) => {
-            setMarketInitialTab(tab || 'packs');
-            setIsMarketOpen(true);
-          }}
-        />
-      )}
-
-      {showCharacterCreation && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-50 p-4">
-          <div className="bg-neutral-900 border border-neutral-700 p-6 md:p-7 rounded-xl shadow-2xl w-[480px] max-w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
-            <h2 className="text-xl text-center text-blue-300 mb-3 font-mono font-bold shrink-0">Create Your Character</h2>
-
-            <div className="mb-3 bg-black/60 p-3 rounded-lg border border-neutral-800 text-xs shrink-0">
-              <span className="font-bold text-blue-400 block mb-1 text-[11px] uppercase tracking-wider">Adventure Context:</span>
-              <div className="max-h-36 overflow-y-auto pr-1.5 text-xs text-neutral-300 italic whitespace-pre-wrap leading-relaxed">
-                {roomState?.narrative?.filter((n: any) => n.type === 'user')[0]?.text || 'A new adventure awaits...'}
-              </div>
-            </div>
-
-            <div className="overflow-y-auto flex-1 pr-1 flex flex-col gap-2.5 my-1">
-              <p className="text-xs text-neutral-400">Describe your character's class, appearance, and background.</p>
-              <div className="bg-amber-950/40 border border-amber-900/50 p-2.5 rounded text-[11px] text-amber-300/90 leading-tight">
-                <strong>Starting Inventory Limit:</strong> Characters can start with at most 2x their hand slots in carried items (e.g. max 4 items for 2 hands). Extra items will be placed in your starting home/camp stash. (During the adventure, you can carry more!)
-              </div>
-              <textarea
-                value={characterDescription}
-                onChange={(e) => setCharacterDescription(e.target.value)}
-                disabled={isSubmittingCharacter}
-                className="w-full h-28 bg-black border border-neutral-700 focus:border-blue-500 rounded p-2.5 text-white font-mono text-xs resize-none focus:outline-none disabled:opacity-50"
-                placeholder="e.g., A rogue elf with a mysterious past, armed with dual daggers and swift reflexes..."
-              />
-            </div>
-
-            {isSubmittingCharacter ? (
-              <div className="mt-4 p-3 bg-blue-950/50 border border-blue-800/60 rounded-lg flex items-center justify-center gap-2.5 text-xs text-blue-300 font-mono animate-pulse shrink-0">
-                <div className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                <span>Forging character & entering realm...</span>
-              </div>
-            ) : (
-              <div className="flex gap-2 mt-4 shrink-0">
-                <button
-                  onClick={handleLeaveGame}
-                  className="w-1/3 bg-neutral-800 hover:bg-neutral-700 text-gray-300 p-2.5 rounded font-mono text-xs transition-colors"
-                  title="Leave the multiplayer session"
-                >
-                  Cancel / Leave
-                </button>
-                <button
-                  onClick={async () => {
-                    const desc = characterDescription.trim();
-                    if (!desc || isSubmittingCharacter) return;
-                    setIsSubmittingCharacter(true);
-                    try {
-                      await multiplayerService?.createCharacter(desc);
-                    } catch (err) {
-                      console.error("Error creating character:", err);
-                      setIsSubmittingCharacter(false);
-                    }
-                  }}
-                  disabled={!characterDescription.trim() || isSubmittingCharacter}
-                  className="w-2/3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white p-2.5 rounded font-mono text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
-                >
-                  Submit Character
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <Sidebar
         files={files}
@@ -2588,7 +2527,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         currentUser={currentUser}
       />
 
-      {/* Multiplayer Share Room Code Modal */}
+      {/* Multiplayer Share Room Code Modal - elevated z-index */}
       <ShareRoomModal
         isOpen={!!shareRoomModalCode}
         onClose={() => setShareRoomModalCode(null)}
@@ -2596,6 +2535,95 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         hostUsername={roomState?.hostUsername || username}
         isHost={isHost}
       />
+
+      {/* Multiplayer Host / Join Menu Modal - elevated z-index */}
+      {showMultiplayerModal && (
+        <MainMenu
+          onHostGame={handleHostGame}
+          onJoinGame={handleJoinGame}
+          onCancel={() => {
+            setShowMultiplayerModal(null);
+            setUrlRoomToJoin('');
+          }}
+          initialMode={showMultiplayerModal}
+          initialRoomId={urlRoomToJoin}
+          defaultUsername={getMultiplayerUsername(roomState?.players || [])}
+          currentUser={currentUser}
+          guestName={guestName}
+          guestId={guestId}
+          onOpenMarket={(tab) => {
+            setMarketInitialTab(tab || 'packs');
+            setIsMarketOpen(true);
+          }}
+        />
+      )}
+
+      {/* Multiplayer Character Creation Modal - elevated z-index */}
+      {showCharacterCreation && (
+        <div
+          id="multiplayer-character-creation-modal"
+          className="fixed inset-0 flex items-center justify-center bg-black/90 backdrop-blur-sm z-[9999] p-4 overflow-y-auto"
+        >
+          <div className="bg-neutral-900 border border-neutral-700 p-6 md:p-7 rounded-xl shadow-2xl w-[480px] max-w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150 my-auto">
+            <h2 className="text-xl text-center text-blue-300 mb-3 font-mono font-bold shrink-0">Create Your Character</h2>
+
+            <div className="mb-3 bg-black/60 p-3 rounded-lg border border-neutral-800 text-xs shrink-0">
+              <span className="font-bold text-blue-400 block mb-1 text-[11px] uppercase tracking-wider">Adventure Context:</span>
+              <div className="max-h-36 overflow-y-auto pr-1.5 text-xs text-neutral-300 italic whitespace-pre-wrap leading-relaxed">
+                {roomState?.narrative?.filter((n: any) => n.type === 'user')[0]?.text || 'A new adventure awaits...'}
+              </div>
+            </div>
+
+            <div className="overflow-y-auto flex-1 pr-1 flex flex-col gap-2.5 my-1">
+              <p className="text-xs text-neutral-400">Describe your character's class, appearance, and background.</p>
+              <div className="bg-amber-950/40 border border-amber-900/50 p-2.5 rounded text-[11px] text-amber-300/90 leading-tight">
+                <strong>Starting Inventory Limit:</strong> Characters can start with at most 2x their hand slots in carried items (e.g. max 4 items for 2 hands). Extra items will be placed in your starting home/camp stash. (During the adventure, you can carry more!)
+              </div>
+              <textarea
+                value={characterDescription}
+                onChange={(e) => setCharacterDescription(e.target.value)}
+                disabled={isSubmittingCharacter}
+                className="w-full h-28 bg-black border border-neutral-700 focus:border-blue-500 rounded p-2.5 text-white font-mono text-xs resize-none focus:outline-none disabled:opacity-50"
+                placeholder="e.g., A rogue elf with a mysterious past, armed with dual daggers and swift reflexes..."
+              />
+            </div>
+
+            {isSubmittingCharacter ? (
+              <div className="mt-4 p-3 bg-blue-950/50 border border-blue-800/60 rounded-lg flex items-center justify-center gap-2.5 text-xs text-blue-300 font-mono animate-pulse shrink-0">
+                <div className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                <span>Forging character & entering realm...</span>
+              </div>
+            ) : (
+              <div className="flex gap-2 mt-4 shrink-0">
+                <button
+                  onClick={handleLeaveGame}
+                  className="w-1/3 bg-neutral-800 hover:bg-neutral-700 text-gray-300 p-2.5 rounded font-mono text-xs transition-colors cursor-pointer"
+                  title="Leave the multiplayer session"
+                >
+                  Cancel / Leave
+                </button>
+                <button
+                  onClick={async () => {
+                    const desc = characterDescription.trim();
+                    if (!desc || isSubmittingCharacter) return;
+                    setIsSubmittingCharacter(true);
+                    try {
+                      await multiplayerService?.createCharacter(desc);
+                    } catch (err) {
+                      console.error("Error creating character:", err);
+                      setIsSubmittingCharacter(false);
+                    }
+                  }}
+                  disabled={!characterDescription.trim() || isSubmittingCharacter}
+                  className="w-2/3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white p-2.5 rounded font-mono text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  Submit Character
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -29,7 +29,7 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [exitDirection, setExitDirection] = useState<'right' | 'left'>('right');
-  const [progress, setProgress] = useState(100);
+  const [isPaused, setIsPaused] = useState(false);
 
   const startXRef = useRef(0);
   const startYRef = useRef(0);
@@ -38,7 +38,6 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
   const isDraggingRef = useRef(false);
   const isExitingRef = useRef(false);
   const remainingTimeRef = useRef(item.durationMs);
-  const lastTickRef = useRef(Date.now());
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Trigger smooth exit animation and then dismiss
@@ -52,28 +51,22 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
     }, 220);
   }, [item.id, onDismiss]);
 
-  // Auto-dismiss countdown timer (pauses when hovered or dragged)
+  // Auto-dismiss countdown timer (pauses when hovered or dragged without high-frequency intervals)
   useEffect(() => {
-    lastTickRef.current = Date.now();
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const delta = now - lastTickRef.current;
-      lastTickRef.current = now;
+    if (isPaused || isExiting) return;
 
-      if (!isHoveredRef.current && !isDraggingRef.current && !isExitingRef.current) {
-        remainingTimeRef.current = Math.max(0, remainingTimeRef.current - delta);
-        const percent = Math.max(0, (remainingTimeRef.current / item.durationMs) * 100);
-        setProgress(percent);
+    const timeout = setTimeout(() => {
+      triggerDismiss('right');
+    }, remainingTimeRef.current);
 
-        if (remainingTimeRef.current <= 0) {
-          clearInterval(interval);
-          triggerDismiss('right');
-        }
-      }
-    }, 50);
+    const startedAt = Date.now();
 
-    return () => clearInterval(interval);
-  }, [item.durationMs, triggerDismiss]);
+    return () => {
+      clearTimeout(timeout);
+      const elapsed = Date.now() - startedAt;
+      remainingTimeRef.current = Math.max(0, remainingTimeRef.current - elapsed);
+    };
+  }, [isPaused, isExiting, triggerDismiss]);
 
   // Unified Drag & Touch Handlers (robust on mobile touch screens and desktop mice)
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -212,18 +205,38 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
       aria-live="polite"
       onMouseEnter={() => {
         isHoveredRef.current = true;
+        setIsPaused(true);
       }}
       onMouseLeave={() => {
         isHoveredRef.current = false;
+        setIsPaused(false);
       }}
-      onPointerDown={handlePointerDown}
+      onPointerDown={(e) => {
+        setIsPaused(true);
+        handlePointerDown(e);
+      }}
       onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
-      onTouchStart={handleTouchStart}
+      onPointerUp={(e) => {
+        setIsPaused(isHoveredRef.current);
+        handlePointerEnd(e);
+      }}
+      onPointerCancel={(e) => {
+        setIsPaused(false);
+        handlePointerEnd(e);
+      }}
+      onTouchStart={(e) => {
+        setIsPaused(true);
+        handleTouchStart(e);
+      }}
       onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
+      onTouchEnd={(e) => {
+        setIsPaused(false);
+        handleTouchEnd(e);
+      }}
+      onTouchCancel={(e) => {
+        setIsPaused(false);
+        handleTouchEnd(e);
+      }}
       style={{
         transform: transformStyle,
         opacity: opacityStyle,
@@ -273,14 +286,18 @@ const SlidableUpdate: React.FC<SlidableUpdateProps> = ({ item, onDismiss }) => {
       {/* Temporary Lifespan Countdown Bar */}
       <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-neutral-900/80 overflow-hidden rounded-b-lg">
         <div
-          className={`h-full transition-all ease-linear ${
+          className={`h-full ${
             isNegative
               ? 'bg-rose-500/80'
               : isPositive
               ? 'bg-emerald-500/80'
               : 'bg-amber-500/80'
           }`}
-          style={{ width: `${progress}%` }}
+          style={{
+            width: '100%',
+            animation: `shrinkProgress ${item.durationMs}ms linear forwards`,
+            animationPlayState: isPaused || isDragging ? 'paused' : 'running'
+          }}
         />
       </div>
     </div>

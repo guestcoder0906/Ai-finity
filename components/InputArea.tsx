@@ -4,9 +4,10 @@ interface InputAreaProps {
   onSend: (text: string) => void;
   disabled: boolean;
   recommendations?: string[];
+  placeholder?: string;
 }
 
-const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled, recommendations }) => {
+const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled, recommendations, placeholder }) => {
   const [input, setInput] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -48,7 +49,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled, recommendations
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={disabled ? "Processing..." : "Enter action..."}
+          placeholder={placeholder || (disabled ? "Processing..." : "Enter action...")}
           disabled={disabled}
           className="flex-1 bg-black border border-neutral-700 rounded px-3 py-2 sm:px-4 sm:py-2.5 text-base sm:text-sm text-gray-200 focus:outline-none focus:border-blue-500 font-mono transition-colors disabled:opacity-50"
           style={{ fontSize: '16px' }}

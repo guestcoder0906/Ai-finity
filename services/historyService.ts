@@ -2,9 +2,11 @@ import { TurnSnapshot } from '../types';
 
 export class HistoryService {
   private static readonly STORAGE_KEY = 'aimud_turn_history';
-  private static readonly MAX_SNAPSHOTS = 50;
+  private static readonly MAX_SNAPSHOTS = 10;
+  private static readonly MAX_PERSISTED_SNAPSHOTS = 4;
   private static history: TurnSnapshot[] = [];
   private static isLoaded = false;
+  private static saveTimeoutId: any = null;
 
   private static loadHistory() {
     if (this.isLoaded) return;
@@ -13,7 +15,7 @@ export class HistoryService {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          this.history = parsed;
+          this.history = parsed.slice(-this.MAX_SNAPSHOTS);
         }
       }
     } catch (e) {
@@ -24,18 +26,32 @@ export class HistoryService {
     }
   }
 
-  private static saveHistory() {
-    try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.history));
-    } catch (e: any) {
-      console.warn('Storage warning while saving history stack:', e);
-      // If quota reached, trim to the last 20 snapshots
-      if (this.history.length > 20) {
-        this.history = this.history.slice(-20);
+  private static saveHistory(immediate = false) {
+    if (this.saveTimeoutId) {
+      clearTimeout(this.saveTimeoutId);
+      this.saveTimeoutId = null;
+    }
+
+    const doSave = () => {
+      try {
+        if (typeof localStorage === 'undefined') return;
+        // Keep up to MAX_PERSISTED_SNAPSHOTS in localStorage to keep synchronous JSON serialize small (<100KB)
+        const toPersist = this.history.slice(-this.MAX_PERSISTED_SNAPSHOTS);
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(toPersist));
+      } catch (e: any) {
+        console.warn('Storage warning while saving history stack:', e);
         try {
-          localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.history));
+          const minimal = this.history.slice(-2);
+          localStorage.setItem(this.STORAGE_KEY, JSON.stringify(minimal));
         } catch {}
       }
+    };
+
+    if (immediate) {
+      doSave();
+    } else {
+      // Async deferred write to prevent freezing UI after an action
+      this.saveTimeoutId = setTimeout(doSave, 250);
     }
   }
 
@@ -45,10 +61,10 @@ export class HistoryService {
   static pushSnapshot(snapshot: TurnSnapshot) {
     this.loadHistory();
     this.history.push(snapshot);
-    if (this.history.length > this.MAX_SNAPSHOTS) {
+    while (this.history.length > this.MAX_SNAPSHOTS) {
       this.history.shift();
     }
-    this.saveHistory();
+    this.saveHistory(false);
   }
 
   /**
@@ -83,7 +99,7 @@ export class HistoryService {
     this.loadHistory();
     if (this.history.length === 0) return null;
     const popped = this.history.pop() || null;
-    this.saveHistory();
+    this.saveHistory(true);
     return popped;
   }
 

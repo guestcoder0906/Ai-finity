@@ -13,6 +13,7 @@ import {
 import { db } from './firebase';
 import { UserProfile, UserTier, isDefaultAdmin } from './authService';
 import { NarrativeEntry } from '../types';
+import { safeStorage } from './safeStorage';
 
 export interface SavedAdventure {
   id: string;
@@ -68,9 +69,9 @@ export class AdventuresService {
       }
     }
 
-    // LocalStorage fallback for guests or offline
+    // SafeStorage fallback for guests or offline
     try {
-      const raw = localStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
+      const raw = safeStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
       if (raw) {
         const parsed: SavedAdventure[] = JSON.parse(raw);
         return parsed.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -110,7 +111,7 @@ export class AdventuresService {
     }
 
     const id = adventure.id || 'adv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
-    const authorName = user?.username || localStorage.getItem('aifinity_guest_name') || 'Player (Guest)';
+    const authorName = user?.username || safeStorage.getItem('aifinity_guest_name') || 'Player (Guest)';
     const now = new Date().toISOString();
 
     const record: SavedAdventure = {
@@ -139,7 +140,7 @@ export class AdventuresService {
 
     // Always update local cache
     try {
-      const raw = localStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
+      const raw = safeStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
       let list: SavedAdventure[] = raw ? JSON.parse(raw) : [];
       const idx = list.findIndex(a => a.id === id);
       if (idx >= 0) {
@@ -147,7 +148,7 @@ export class AdventuresService {
       } else {
         list.unshift(record);
       }
-      localStorage.setItem(LOCAL_SAVED_ADVENTURES_KEY, JSON.stringify(list));
+      safeStorage.setItem(LOCAL_SAVED_ADVENTURES_KEY, JSON.stringify(list));
     } catch (e) {}
 
     return { success: true, adventure: record };
@@ -170,11 +171,11 @@ export class AdventuresService {
     }
 
     try {
-      const raw = localStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
+      const raw = safeStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
       if (raw) {
         const list: SavedAdventure[] = JSON.parse(raw);
         const filtered = list.filter(a => a.id !== adventureId);
-        localStorage.setItem(LOCAL_SAVED_ADVENTURES_KEY, JSON.stringify(filtered));
+        safeStorage.setItem(LOCAL_SAVED_ADVENTURES_KEY, JSON.stringify(filtered));
       }
     } catch (e) {}
 

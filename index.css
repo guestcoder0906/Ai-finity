@@ -38,6 +38,11 @@ body {
   100% { opacity: 1; }
 }
 
+@keyframes shrinkProgress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
 /* Global Elements */
 #root::before {
   content: " ";
@@ -51,6 +56,7 @@ body {
   z-index: 1000;
   background-size: 100% 2px, 3px 100%;
   pointer-events: none;
+  transform: translateZ(0);
 }
 
 #root::after {
@@ -66,6 +72,8 @@ body {
   z-index: 1000;
   pointer-events: none;
   animation: flicker 0.15s infinite;
+  transform: translateZ(0);
+  will-change: opacity;
 }
 
 .crt-screen {

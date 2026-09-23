@@ -27,8 +27,8 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onEnterGame }) => {
   return (
     <div
       id="welcome-page"
-      className="fixed inset-0 w-full h-[var(--app-height,100dvh)] max-h-[var(--app-height,100dvh)] overflow-y-auto bg-black text-gray-100 flex flex-col justify-between font-sans selection:bg-blue-600 selection:text-white z-10"
-      style={{ WebkitOverflowScrolling: 'touch' }}
+      className="fixed inset-0 w-full overflow-y-auto bg-black text-gray-100 flex flex-col justify-between font-sans selection:bg-blue-600 selection:text-white z-10"
+      style={{ WebkitOverflowScrolling: 'touch', height: '100%', maxHeight: '100%' }}
     >
       {/* Top Navigation */}
       <header id="welcome-header" className="sticky top-0 z-20 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between shrink-0">

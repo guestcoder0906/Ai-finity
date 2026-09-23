@@ -872,31 +872,60 @@ export class AIEngine {
     }
   }
 
-  private taskQueue: Promise<any> = Promise.resolve();
+  private pendingTasks: Array<() => Promise<void>> = [];
+  private isProcessingQueue = false;
 
-  async initialize(startingPrompt: string, username?: string): Promise<AIResponse | null> {
-    return new Promise((resolve) => {
-      this.taskQueue = this.taskQueue.then(async () => {
+  private enqueueTask<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve) => {
+      this.pendingTasks.push(async () => {
         try {
-          const charRequirement = username
-            ? `CRITICAL CHARACTER CREATION RULE: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "Kaelen Thorne", "Lyra Whisperwind", "Valerius") fitting the world setting. The character's name MUST NOT be the account username "${username}" and MUST NOT be a generic label like "Adventurer" or "Player". The file MUST be named EXACTLY "[CharacterName]-${username}.txt" (e.g. "Kaelen-${username}.txt"). Inside the file under [NAME & DESCRIPTION], specify '- Name: [CharacterName]' and '- Player: ${username}'. On CurrentMap.json, place this character in "players" with username: "${username}" and characterName: "[CharacterName]". PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!`
-            : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
-
-          const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY: Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Iron Shortsword", "Wooden Shield", "Oak Staff"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Both Hands (Two-Handed)].\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
-          const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
+          const res = await task();
           resolve(res);
-        } catch (e) {
-          console.error("Initialization failed", e);
-          resolve({ narrative: "System initialization failed. Please check API Key." });
+        } catch (err) {
+          console.error("Task execution error:", err);
+          resolve(null as any);
         }
       });
+      this.runNextTask();
+    });
+  }
+
+  private async runNextTask() {
+    if (this.isProcessingQueue) return;
+    this.isProcessingQueue = true;
+    while (this.pendingTasks.length > 0) {
+      const next = this.pendingTasks.shift();
+      if (next) {
+        try {
+          await next();
+        } catch (e) {
+          console.error("Queue task error:", e);
+        }
+      }
+    }
+    this.isProcessingQueue = false;
+  }
+
+  async initialize(startingPrompt: string, username?: string): Promise<AIResponse | null> {
+    return this.enqueueTask(async () => {
+      try {
+        const charRequirement = username
+          ? `CRITICAL CHARACTER CREATION RULE: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "Kaelen Thorne", "Lyra Whisperwind", "Valerius") fitting the world setting. The character's name MUST NOT be the account username "${username}" and MUST NOT be a generic label like "Adventurer" or "Player". The file MUST be named EXACTLY "[CharacterName]-${username}.txt" (e.g. "Kaelen-${username}.txt"). Inside the file under [NAME & DESCRIPTION], specify '- Name: [CharacterName]' and '- Player: ${username}'. On CurrentMap.json, place this character in "players" with username: "${username}" and characterName: "[CharacterName]". PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!`
+          : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
+
+        const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY: Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Iron Shortsword", "Wooden Shield", "Oak Staff"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Both Hands (Two-Handed)].\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+        const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
+        return res;
+      } catch (e) {
+        console.error("Initialization failed", e);
+        return { narrative: "System initialization failed. Please check API Key." };
+      }
     });
   }
 
   async processAction(action: string, username?: string, mapScreenshot?: string): Promise<AIResponse | null> {
-    return new Promise((resolve) => {
-      this.taskQueue = this.taskQueue.then(async () => {
-        try {
+    return this.enqueueTask(async () => {
+      try {
           const files = this.getRelevantFiles(username, action);
           const formatFileSet = (fileEntries: [string, string][]) =>
             fileEntries.map(([name, content]) => `=== ${name} ===\n${content}`).join('\n\n');
@@ -1234,12 +1263,11 @@ CRITICAL REMINDERS:
             }
           }
 
-          resolve(finalResponse);
+          return finalResponse;
         } catch (e) {
           console.error("Processing failed", e);
-          resolve({ narrative: "Error processing action." });
+          return { narrative: "Error processing action." };
         }
-      });
     });
   }
 
@@ -4604,11 +4632,19 @@ INSTRUCTIONS:
     }
     return parseInt(clean) || 0;
   }
+  private cachedAI: GoogleGenAI | null = null;
+  private cachedAIKey: string | null = null;
+
   private getAI(): GoogleGenAI {
     const customKey = typeof window !== 'undefined'
       ? (localStorage.getItem('aifinity_custom_api_key') || localStorage.getItem('aimud_apikey'))
       : null;
-    return new GoogleGenAI({ apiKey: customKey || process.env.API_KEY || '' });
+    const activeKey = customKey || process.env.API_KEY || '';
+    if (!this.cachedAI || this.cachedAIKey !== activeKey) {
+      this.cachedAI = new GoogleGenAI({ apiKey: activeKey });
+      this.cachedAIKey = activeKey;
+    }
+    return this.cachedAI;
   }
 
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {

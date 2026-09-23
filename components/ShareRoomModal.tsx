@@ -73,12 +73,12 @@ export const ShareRoomModal: React.FC<ShareRoomModalProps> = ({
   return (
     <div
       id="share-room-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 font-sans animate-in fade-in duration-200"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 font-sans animate-in fade-in duration-200 overflow-y-auto"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-neutral-900 border border-neutral-700/80 w-full max-w-md rounded-2xl shadow-2xl p-6 md:p-7 relative text-neutral-200 flex flex-col gap-5">
+      <div className="bg-neutral-900 border border-neutral-700/80 w-full max-w-md rounded-2xl shadow-2xl p-6 md:p-7 relative text-neutral-200 flex flex-col gap-5 my-auto">
         
         {/* Close button */}
         <button

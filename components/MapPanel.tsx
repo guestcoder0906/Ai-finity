@@ -120,7 +120,6 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   }));
 
   const playerRegistry = useMemo(() => {
-    cleanAndRepairPlayerFiles(fileSystem);
     return buildPlayerRegistry(files, fileSystem);
   }, [files, fileSystem]);
 
@@ -163,32 +162,48 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     }
   }, [fileSystem, files, syncCount, username, playerRegistry]);
 
-  // Robust multi-structure resolution for pages:
-  let rawPages: any[] = [];
-  if (mapData?.pages && Array.isArray(mapData.pages)) {
-    rawPages = mapData.pages;
-  } else if (Array.isArray(mapData)) {
-    rawPages = mapData;
-  } else if (mapData?.areas) {
-    rawPages = [{ name: 'World Map', ...mapData }];
-  }
+  // Robust multi-structure resolution for pages wrapped in useMemo to prevent massive lag during panning/zooming
+  const pages = useMemo(() => {
+    let rawPages: any[] = [];
+    if (mapData?.pages && Array.isArray(mapData.pages)) {
+      rawPages = mapData.pages;
+    } else if (Array.isArray(mapData)) {
+      rawPages = mapData;
+    } else if (mapData?.areas) {
+      rawPages = [{ name: 'World Map', ...mapData }];
+    }
 
-  // Deep clone to prevent mutating React state directly
-  let pages: any[] = [];
-  try {
-    pages = JSON.parse(JSON.stringify(rawPages));
-  } catch {
-    pages = rawPages;
-  }
+    // Deep clone to prevent mutating React state directly
+    let pList: any[] = [];
+    try {
+      pList = JSON.parse(JSON.stringify(rawPages));
+    } catch {
+      pList = rawPages;
+    }
 
-  // Deduplicate and canonicalize players across and within pages using canonical identity registry
-  deduplicatePlayersOnMap(pages, playerRegistry, { activeUsername: username });
-  reconcileRegisteredPlayersOnMap(pages, playerRegistry);
-  deduplicatePlayersOnMap(pages, playerRegistry, { activeUsername: username });
+    if (pList.length === 0) return pList;
 
-  // Ensure every NPC with a character file is represented on the map
-  if (pages.length > 0) {
-    purgePlayerDuplicatesFromNpcs(pages, playerRegistry);
+    // Deduplicate and canonicalize players across and within pages using canonical identity registry
+    deduplicatePlayersOnMap(pList, playerRegistry, { activeUsername: username });
+    reconcileRegisteredPlayersOnMap(pList, playerRegistry);
+    deduplicatePlayersOnMap(pList, playerRegistry, { activeUsername: username });
+
+    // Inherit root-level entities to page 0 if it is a single-page map
+    if (pList.length === 1) {
+      const firstPage = pList[0];
+      if ((!firstPage.players || firstPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
+        firstPage.players = mapData.players;
+      }
+      if ((!firstPage.items || firstPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
+        firstPage.items = mapData.items;
+      }
+      if ((!firstPage.landmarks || firstPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
+        firstPage.landmarks = mapData.landmarks;
+      }
+    }
+
+    // Ensure every NPC with a character file is represented on the map
+    purgePlayerDuplicatesFromNpcs(pList, playerRegistry);
 
     const allNpcNamesOnMap = new Set<string>();
     const registeredPlayerFiles = new Set(playerRegistry.map(r => r.filename.toLowerCase()));
@@ -200,7 +215,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       r.aliases.forEach(a => registeredPlayerNames.add(a.toLowerCase()));
     });
 
-    pages.forEach(p => {
+    pList.forEach(p => {
       (p.npcs || []).forEach((n: any) => {
         const nName = (n.name || '').trim().toLowerCase();
         if (nName) {
@@ -249,11 +264,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     npcFiles.forEach(nf => {
       const checkKey = nf.charName.toLowerCase();
       if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
-        if (!pages[0].npcs) pages[0].npcs = [];
-        const offset = pages[0].npcs.length;
+        if (!pList[0].npcs) pList[0].npcs = [];
+        const offset = pList[0].npcs.length;
         const displayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
         const npcVision = resolveEntityVision(null, fileSystem.read(nf.filename), false);
-        pages[0].npcs.push({
+        pList[0].npcs.push({
           name: displayName,
           type: 'npc',
           x: 15 + (offset * 7) % 60,
@@ -267,11 +282,13 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       }
     });
 
-    purgePlayerDuplicatesFromNpcs(pages, playerRegistry);
+    purgePlayerDuplicatesFromNpcs(pList, playerRegistry);
 
     // Synchronize and validate vision ranges and facing across all entities
-    syncMapEntitiesVision({ pages }, fileSystem);
-  }
+    syncMapEntitiesVision({ pages: pList }, fileSystem);
+
+    return pList;
+  }, [mapData, playerRegistry, username, files, fileSystem, syncCount]);
 
   const safePageIndex = pages.length > 0 ? Math.max(0, Math.min(currentPageIndex, pages.length - 1)) : 0;
 
@@ -326,49 +343,195 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     );
   }
 
-  const currentPage = pages[safePageIndex];
-  if (currentPage) {
-    // Only inherit root-level entities to page 0 if it is a single-page map
-    if (pages.length === 1 && safePageIndex === 0) {
-      if ((!currentPage.players || currentPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
-        currentPage.players = mapData.players;
-      }
-      if ((!currentPage.items || currentPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
-        currentPage.items = mapData.items;
-      }
-      if ((!currentPage.landmarks || currentPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
-        currentPage.landmarks = mapData.landmarks;
-      }
-    }
-  }
+  const currentPage = pages.length > 0 ? pages[safePageIndex] : null;
+
   // Aggregate all NPCs across pages, creatures, entities, and NPC-type areas
-  const rawNpcList = [
-    ...(Array.isArray(currentPage?.npcs) ? currentPage.npcs : []),
-    ...(Array.isArray(currentPage?.creatures) ? currentPage.creatures : []),
-    ...(Array.isArray(currentPage?.entities) ? currentPage.entities : []),
-    ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : []),
-    ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.npcs) ? mapData.npcs : []),
-    ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.creatures) ? mapData.creatures : [])
-  ];
+  const activeNpcs = useMemo(() => {
+    if (!currentPage) return [];
+    const rawNpcList = [
+      ...(Array.isArray(currentPage?.npcs) ? currentPage.npcs : []),
+      ...(Array.isArray(currentPage?.creatures) ? currentPage.creatures : []),
+      ...(Array.isArray(currentPage?.entities) ? currentPage.entities : []),
+      ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : []),
+      ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.npcs) ? mapData.npcs : []),
+      ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.creatures) ? mapData.creatures : [])
+    ];
 
-  const activeNpcs: any[] = [];
-  const seenNpcKeys = new Set<string>();
+    const list: any[] = [];
+    const seenNpcKeys = new Set<string>();
 
-  for (const n of rawNpcList) {
-    if (!n) continue;
-    let name = (n.name || n.id || 'NPC').trim();
-    if (!name.toLowerCase().endsWith('-npc')) {
-      name = `${name}-npc`;
+    for (const n of rawNpcList) {
+      if (!n) continue;
+      let name = (n.name || n.id || 'NPC').trim();
+      if (!name.toLowerCase().endsWith('-npc')) {
+        name = `${name}-npc`;
+      }
+      const key = name.toLowerCase();
+      if (!seenNpcKeys.has(key)) {
+        seenNpcKeys.add(key);
+        list.push({
+          ...n,
+          name
+        });
+      }
     }
-    const key = name.toLowerCase();
-    if (!seenNpcKeys.has(key)) {
-      seenNpcKeys.add(key);
-      activeNpcs.push({
-        ...n,
-        name
+    return list;
+  }, [currentPage, safePageIndex, pages.length, mapData]);
+
+  // Calculate bounds to scale the map dynamically (memoized to prevent expensive geometry loop on pan/zoom)
+  const { viewBox, mapWidth, mapHeight, padding, cx, cy } = useMemo(() => {
+    if (!currentPage) {
+      return { viewBox: '0 0 140 140', mapWidth: 100, mapHeight: 100, padding: 20, cx: 50, cy: 50 };
+    }
+
+    const isEntityHidden = (name: string) => {
+      if (!name) return false;
+      const res = resolveMapEntityName(name, username, debugMode);
+      return res.isHidden;
+    };
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    if (currentPage.areas && currentPage.areas.length > 0) {
+      currentPage.areas.forEach((area: any) => {
+        const isHidden = isEntityHidden(area.name);
+        if (isHidden) return;
+
+        const ax = Number(area.x ?? area.cx) || 0;
+        const ay = Number(area.y ?? area.cy) || 0;
+        const aw = Number(area.width) || 10;
+        const ah = Number(area.height) || 10;
+        const ar = Number(area.radius) || (aw / 2);
+        const rx = Number(area.rx ?? area.radiusX ?? (aw / 2)) || 15;
+        const ry = Number(area.ry ?? area.radiusY ?? (ah / 2)) || 10;
+
+        if (area.shape === 'circle') {
+          if (ax - ar < minX) minX = ax - ar;
+          if (ay - ar < minY) minY = ay - ar;
+          if (ax + ar > maxX) maxX = ax + ar;
+          if (ay + ar > maxY) maxY = ay + ar;
+        } else if (area.shape === 'ellipse' || area.shape === 'oblong') {
+          const rot = Number(area.rotation) || 0;
+          const rad = (rot * Math.PI) / 180;
+          const dx = Math.sqrt(rx * rx * Math.cos(rad) * Math.cos(rad) + ry * ry * Math.sin(rad) * Math.sin(rad));
+          const dy = Math.sqrt(rx * rx * Math.sin(rad) * Math.sin(rad) + ry * ry * Math.cos(rad) * Math.cos(rad));
+          if (ax - dx < minX) minX = ax - dx;
+          if (ay - dy < minY) minY = ay - dy;
+          if (ax + dx > maxX) maxX = ax + dx;
+          if (ay + dy > maxY) maxY = ay + dy;
+        } else if (area.shape === 'polygon' && area.points) {
+          const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
+          const numPoints = Math.floor(pts.length / 2);
+          for (let j = 0; j < numPoints * 2; j += 2) {
+            const px = pts[j];
+            const py = pts[j + 1];
+            if (px < minX) minX = px;
+            if (py < minY) minY = py;
+            if (px > maxX) maxX = px;
+            if (py > maxY) maxY = py;
+          }
+        } else if (area.shape === 'path' && area.d) {
+          const matches = String(area.d).match(/-?\d+(\.\d+)?/g);
+          if (matches) {
+            const nums = matches.map(Number);
+            for (let j = 0; j < nums.length - 1; j += 2) {
+              const px = nums[j];
+              const py = nums[j + 1];
+              if (!isNaN(px) && px < minX) minX = px;
+              if (!isNaN(py) && py < minY) minY = py;
+              if (!isNaN(px) && px > maxX) maxX = px;
+              if (!isNaN(py) && py > maxY) maxY = py;
+            }
+          }
+        } else {
+          if (ax < minX) minX = ax;
+          if (ay < minY) minY = ay;
+          if (ax + aw > maxX) maxX = ax + aw;
+          if (ay + ah > maxY) maxY = ay + ah;
+        }
       });
     }
-  }
+
+    if (currentPage.players && currentPage.players.length > 0) {
+      currentPage.players.forEach((p: any) => {
+        const px = Number(p.x) || 0;
+        const py = Number(p.y) || 0;
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+      });
+    }
+
+    if (currentPage.items && Array.isArray(currentPage.items)) {
+      currentPage.items.forEach((it: any) => {
+        if (isEntityHidden(it.name)) return;
+        const ix = Number(it.x) || 0;
+        const iy = Number(it.y) || 0;
+        if (ix < minX) minX = ix;
+        if (iy < minY) minY = iy;
+        if (ix > maxX) maxX = ix;
+        if (iy > maxY) maxY = iy;
+      });
+    }
+
+    if (currentPage.landmarks && Array.isArray(currentPage.landmarks)) {
+      currentPage.landmarks.forEach((lm: any) => {
+        if (isEntityHidden(lm.name)) return;
+        const lx = Number(lm.x) || 0;
+        const ly = Number(lm.y) || 0;
+        if (lx < minX) minX = lx;
+        if (ly < minY) minY = ly;
+        if (lx > maxX) maxX = lx;
+        if (ly > maxY) maxY = ly;
+      });
+    }
+
+    if (activeNpcs && activeNpcs.length > 0) {
+      activeNpcs.forEach((npc: any) => {
+        if (isEntityHidden(npc.name)) return;
+        const nx = Number(npc.x) || 0;
+        const ny = Number(npc.y) || 0;
+        if (nx < minX) minX = nx;
+        if (ny < minY) minY = ny;
+        if (nx > maxX) maxX = nx;
+        if (ny > maxY) maxY = ny;
+      });
+    }
+
+    if (currentPage.notes && Array.isArray(currentPage.notes)) {
+      currentPage.notes.forEach((note: any) => {
+        const nx = Number(note.x) || 0;
+        const ny = Number(note.y) || 0;
+        if (nx < minX) minX = nx;
+        if (ny < minY) minY = ny;
+        if (nx > maxX) maxX = nx;
+        if (ny > maxY) maxY = ny;
+      });
+    }
+
+    if (minX === Infinity || isNaN(minX) || isNaN(maxX) || isNaN(minY) || isNaN(maxY)) {
+      minX = 0; minY = 0; maxX = 100; maxY = 100;
+    }
+
+    const mW = Math.max(maxX - minX, 100);
+    const mH = Math.max(maxY - minY, 100);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const finalMinX = cx - mW / 2;
+    const finalMinY = cy - mH / 2;
+    const pad = 20;
+    const vb = `${finalMinX - pad} ${finalMinY - pad} ${mW + pad * 2} ${mH + pad * 2}`;
+    return { viewBox: vb, mapWidth: mW, mapHeight: mH, padding: pad, cx, cy };
+  }, [currentPage, activeNpcs, username, debugMode]);
+
+  // RAF reference to prevent high-frequency layout thrashing during pan
+  const panRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (panRafRef.current) cancelAnimationFrame(panRafRef.current);
+    };
+  }, []);
 
   // Pan and Zoom Handlers
   const handleResetPanZoom = () => {
@@ -393,25 +556,30 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;
-    const dx = e.clientX - dragStartPos.current.x;
-    const dy = e.clientY - dragStartPos.current.y;
-    const svgEl = svgRef.current;
-    if (svgEl) {
-      const rect = svgEl.getBoundingClientRect();
-      const viewBoxWidth = mapWidth + padding * 2;
-      const viewBoxHeight = mapHeight + padding * 2;
-      const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
-      const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
-      setPan({
-        x: panStartPos.current.x + dx * scaleX,
-        y: panStartPos.current.y + dy * scaleY
-      });
-    } else {
-      setPan({
-        x: panStartPos.current.x + dx,
-        y: panStartPos.current.y + dy
-      });
-    }
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+    if (panRafRef.current) cancelAnimationFrame(panRafRef.current);
+    panRafRef.current = requestAnimationFrame(() => {
+      const dx = clientX - dragStartPos.current.x;
+      const dy = clientY - dragStartPos.current.y;
+      const svgEl = svgRef.current;
+      if (svgEl) {
+        const rect = svgEl.getBoundingClientRect();
+        const viewBoxWidth = mapWidth + padding * 2;
+        const viewBoxHeight = mapHeight + padding * 2;
+        const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
+        const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
+        setPan({
+          x: panStartPos.current.x + dx * scaleX,
+          y: panStartPos.current.y + dy * scaleY
+        });
+      } else {
+        setPan({
+          x: panStartPos.current.x + dx,
+          y: panStartPos.current.y + dy
+        });
+      }
+    });
   };
 
   const handleMouseUp = () => {
@@ -438,20 +606,25 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 1 && isDragging) {
-      const dx = e.touches[0].clientX - touchStartRef.current.x;
-      const dy = e.touches[0].clientY - touchStartRef.current.y;
-      const svgEl = svgRef.current;
-      if (svgEl) {
-        const rect = svgEl.getBoundingClientRect();
-        const viewBoxWidth = mapWidth + padding * 2;
-        const viewBoxHeight = mapHeight + padding * 2;
-        const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
-        const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
-        setPan({
-          x: panStartPos.current.x + dx * scaleX,
-          y: panStartPos.current.y + dy * scaleY
-        });
-      }
+      const clientX = e.touches[0].clientX;
+      const clientY = e.touches[0].clientY;
+      if (panRafRef.current) cancelAnimationFrame(panRafRef.current);
+      panRafRef.current = requestAnimationFrame(() => {
+        const dx = clientX - touchStartRef.current.x;
+        const dy = clientY - touchStartRef.current.y;
+        const svgEl = svgRef.current;
+        if (svgEl) {
+          const rect = svgEl.getBoundingClientRect();
+          const viewBoxWidth = mapWidth + padding * 2;
+          const viewBoxHeight = mapHeight + padding * 2;
+          const scaleX = (viewBoxWidth / (rect.width || 1)) / zoom;
+          const scaleY = (viewBoxHeight / (rect.height || 1)) / zoom;
+          setPan({
+            x: panStartPos.current.x + dx * scaleX,
+            y: panStartPos.current.y + dy * scaleY
+          });
+        }
+      });
     } else if (e.touches.length === 2 && touchStartRef.current.dist) {
       const newDist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
@@ -500,142 +673,6 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     const res = resolveMapEntityName(name, username, debugMode);
     return res.isHidden;
   };
-
-  // Calculate bounds to scale the map dynamically
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  if (currentPage.areas && currentPage.areas.length > 0) {
-    currentPage.areas.forEach((area: any) => {
-      const isHidden = isEntityHidden(area.name);
-      if (isHidden) return;
-
-      const ax = Number(area.x ?? area.cx) || 0;
-      const ay = Number(area.y ?? area.cy) || 0;
-      const aw = Number(area.width) || 10;
-      const ah = Number(area.height) || 10;
-      const ar = Number(area.radius) || (aw / 2);
-      const rx = Number(area.rx ?? area.radiusX ?? (aw / 2)) || 15;
-      const ry = Number(area.ry ?? area.radiusY ?? (ah / 2)) || 10;
-
-      if (area.shape === 'circle') {
-        if (ax - ar < minX) minX = ax - ar;
-        if (ay - ar < minY) minY = ay - ar;
-        if (ax + ar > maxX) maxX = ax + ar;
-        if (ay + ar > maxY) maxY = ay + ar;
-      } else if (area.shape === 'ellipse' || area.shape === 'oblong') {
-        const rot = Number(area.rotation) || 0;
-        const rad = (rot * Math.PI) / 180;
-        const dx = Math.sqrt(rx * rx * Math.cos(rad) * Math.cos(rad) + ry * ry * Math.sin(rad) * Math.sin(rad));
-        const dy = Math.sqrt(rx * rx * Math.sin(rad) * Math.sin(rad) + ry * ry * Math.cos(rad) * Math.cos(rad));
-        if (ax - dx < minX) minX = ax - dx;
-        if (ay - dy < minY) minY = ay - dy;
-        if (ax + dx > maxX) maxX = ax + dx;
-        if (ay + dy > maxY) maxY = ay + dy;
-      } else if (area.shape === 'polygon' && area.points) {
-        const pts = String(area.points).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n));
-        const numPoints = Math.floor(pts.length / 2);
-        for (let j = 0; j < numPoints * 2; j += 2) {
-          const px = pts[j];
-          const py = pts[j + 1];
-          if (px < minX) minX = px;
-          if (py < minY) minY = py;
-          if (px > maxX) maxX = px;
-          if (py > maxY) maxY = py;
-        }
-      } else if (area.shape === 'path' && area.d) {
-        const matches = String(area.d).match(/-?\d+(\.\d+)?/g);
-        if (matches) {
-          const nums = matches.map(Number);
-          for (let j = 0; j < nums.length - 1; j += 2) {
-            const px = nums[j];
-            const py = nums[j + 1];
-            if (!isNaN(px) && px < minX) minX = px;
-            if (!isNaN(py) && py < minY) minY = py;
-            if (!isNaN(px) && px > maxX) maxX = px;
-            if (!isNaN(py) && py > maxY) maxY = py;
-          }
-        }
-      } else {
-        if (ax < minX) minX = ax;
-        if (ay < minY) minY = ay;
-        if (ax + aw > maxX) maxX = ax + aw;
-        if (ay + ah > maxY) maxY = ay + ah;
-      }
-    });
-  }
-
-  // Also include players in bounds calculation
-  if (currentPage.players && currentPage.players.length > 0) {
-    currentPage.players.forEach((p: any) => {
-      const px = Number(p.x) || 0;
-      const py = Number(p.y) || 0;
-      if (px < minX) minX = px;
-      if (py < minY) minY = py;
-      if (px > maxX) maxX = px;
-      if (py > maxY) maxY = py;
-    });
-  }
-
-  // Also include top-level items and landmarks if present
-  if (currentPage.items && Array.isArray(currentPage.items)) {
-    currentPage.items.forEach((it: any) => {
-      if (isEntityHidden(it.name)) return;
-      const ix = Number(it.x) || 0;
-      const iy = Number(it.y) || 0;
-      if (ix < minX) minX = ix;
-      if (iy < minY) minY = iy;
-      if (ix > maxX) maxX = ix;
-      if (iy > maxY) maxY = iy;
-    });
-  }
-  if (currentPage.landmarks && Array.isArray(currentPage.landmarks)) {
-    currentPage.landmarks.forEach((lm: any) => {
-      if (isEntityHidden(lm.name)) return;
-      const lx = Number(lm.x) || 0;
-      const ly = Number(lm.y) || 0;
-      if (lx < minX) minX = lx;
-      if (ly < minY) minY = ly;
-      if (lx > maxX) maxX = lx;
-      if (ly > maxY) maxY = ly;
-    });
-  }
-  if (activeNpcs && activeNpcs.length > 0) {
-    activeNpcs.forEach((npc: any) => {
-      if (isEntityHidden(npc.name)) return;
-      const nx = Number(npc.x) || 0;
-      const ny = Number(npc.y) || 0;
-      if (nx < minX) minX = nx;
-      if (ny < minY) minY = ny;
-      if (nx > maxX) maxX = nx;
-      if (ny > maxY) maxY = ny;
-    });
-  }
-  if (currentPage.notes && Array.isArray(currentPage.notes)) {
-    currentPage.notes.forEach((note: any) => {
-      const nx = Number(note.x) || 0;
-      const ny = Number(note.y) || 0;
-      if (nx < minX) minX = nx;
-      if (ny < minY) minY = ny;
-      if (nx > maxX) maxX = nx;
-      if (ny > maxY) maxY = ny;
-    });
-  }
-
-  // Fallback defaults if bounds calculation yields no points
-  if (minX === Infinity || isNaN(minX) || isNaN(maxX) || isNaN(minY) || isNaN(maxY)) {
-    minX = 0; minY = 0; maxX = 100; maxY = 100;
-  }
-
-  const mapWidth = Math.max(maxX - minX, 100);
-  const mapHeight = Math.max(maxY - minY, 100);
-
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-
-  const finalMinX = cx - mapWidth / 2;
-  const finalMinY = cy - mapHeight / 2;
-
-  const padding = 20;
-  const viewBox = `${finalMinX - padding} ${finalMinY - padding} ${mapWidth + padding * 2} ${mapHeight + padding * 2}`;
 
   const getAreaColor = (type: string, visible: boolean) => {
     if (visible === false) {
@@ -1388,4 +1425,4 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   );
 });
 
-export default MapPanel;
+export default React.memo(MapPanel);

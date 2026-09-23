@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { safeStorage, safeSessionStorage } from '../services/safeStorage';
 import {
   X,
   Zap,
@@ -367,7 +368,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
         // Broadcast across tabs
         try {
-          localStorage.setItem(
+          safeStorage.setItem(
             'aifinity_payment_sync_event',
             JSON.stringify({ uid: currentUser?.uid, time: Date.now() })
           );
@@ -428,7 +429,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
   // Custom API Key input
   const [customKeyInput, setCustomKeyInput] = useState(() => {
     try {
-      return typeof window !== 'undefined' ? localStorage.getItem('aimud_apikey') || '' : '';
+      return safeStorage.getItem('aimud_apikey') || '';
     } catch {
       return '';
     }
@@ -505,8 +506,8 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               username: currentUser?.username,
               startedAt: Date.now()
             };
-            sessionStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
-            localStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
+            safeSessionStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
+            safeStorage.setItem('aifinity_active_stripe_checkout', JSON.stringify(checkoutMeta));
           } catch (e) {}
 
           // Open Stripe checkout in window / new tab
@@ -574,7 +575,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
                 // Cross-tab broadcast
                 try {
-                  localStorage.setItem(
+                  safeStorage.setItem(
                     'aifinity_payment_sync_event',
                     JSON.stringify({ uid: currentUser?.uid, time: Date.now() })
                   );
@@ -771,14 +772,14 @@ export const MarketModal: React.FC<MarketModalProps> = ({
 
   const handleSaveApiKey = () => {
     if (customKeyInput.trim()) {
-      localStorage.setItem('aimud_apikey', customKeyInput.trim());
+      safeStorage.setItem('aimud_apikey', customKeyInput.trim());
       setKeySavedMessage('Gemini API Key activated! Unlimited actions enabled.');
       onStatusUpdated();
       setTimeout(() => {
         window.location.reload();
       }, 1200);
     } else {
-      localStorage.removeItem('aimud_apikey');
+      safeStorage.removeItem('aimud_apikey');
       setKeySavedMessage('API Key cleared. Standard action limits now apply.');
       onStatusUpdated();
     }
@@ -1701,7 +1702,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                     <button
                       onClick={() => {
                         setCustomKeyInput('');
-                        localStorage.removeItem('aimud_apikey');
+                        safeStorage.removeItem('aimud_apikey');
                         setKeySavedMessage('Key removed. Reset to standard tier.');
                         onStatusUpdated();
                       }}

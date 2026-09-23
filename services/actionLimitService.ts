@@ -1,4 +1,5 @@
 import { UserProfile, UserTier, UserRole, isDefaultAdmin, updateUserProfile, getUserProfile } from './authService';
+import { safeStorage } from './safeStorage';
 
 export interface ActionPack {
   id: string;
@@ -152,7 +153,7 @@ export class ActionLimitService {
 
   public static getPhase(): GamePhase {
     try {
-      const override = localStorage.getItem('aifinity_game_phase');
+      const override = safeStorage.getItem('aifinity_game_phase');
       if (override === 'alpha' || override === 'beta' || override === 'release') {
         return override;
       }
@@ -181,7 +182,7 @@ export class ActionLimitService {
     if (user && user.uid) {
       return `aifinity_user_actions_${user.uid}`;
     }
-    const safeGuestId = guestId || localStorage.getItem('aifinity_guest_id') || localStorage.getItem('aimud_guest_id') || 'guest_default';
+    const safeGuestId = guestId || safeStorage.getItem('aifinity_guest_id') || safeStorage.getItem('aimud_guest_id') || 'guest_default';
     return `aifinity_guest_actions_${safeGuestId}`;
   }
 
@@ -193,14 +194,14 @@ export class ActionLimitService {
   } {
     // Clear any obsolete shared legacy state that caused cross-user contamination
     try {
-      localStorage.removeItem('aifinity_action_state');
+      safeStorage.removeItem('aifinity_action_state');
     } catch (e) {}
 
     const today = this.getTodayDateString();
     const key = this.getStorageKey(user, guestId);
 
     try {
-      const raw = localStorage.getItem(key);
+      const raw = safeStorage.getItem(key);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
@@ -220,7 +221,7 @@ export class ActionLimitService {
           if (parsed.dailyActionsDate !== today) {
             parsed.dailyActionsDate = today;
             parsed.dailyActionsUsed = 0;
-            localStorage.setItem(key, JSON.stringify(parsed));
+            safeStorage.setItem(key, JSON.stringify(parsed));
           }
 
           return {
@@ -240,7 +241,7 @@ export class ActionLimitService {
       dailyActionsDate: today
     };
     try {
-      localStorage.setItem(key, JSON.stringify(defaultState));
+      safeStorage.setItem(key, JSON.stringify(defaultState));
     } catch (e) {}
     return defaultState;
   }
@@ -257,7 +258,7 @@ export class ActionLimitService {
   ) {
     const key = this.getStorageKey(user, guestId);
     try {
-      localStorage.setItem(key, JSON.stringify(state));
+      safeStorage.setItem(key, JSON.stringify(state));
     } catch (e) {}
   }
 
@@ -265,7 +266,7 @@ export class ActionLimitService {
    * Check whether user has entered their own Gemini API key
    */
   public static hasCustomApiKey(): boolean {
-    const key = localStorage.getItem('aimud_apikey');
+    const key = safeStorage.getItem('aimud_apikey');
     return !!(key && key.trim().length > 10);
   }
 

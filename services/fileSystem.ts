@@ -6,8 +6,16 @@ export class FileSystem {
   private readonly STORAGE_KEY_FILES = 'aimud_files';
   private readonly STORAGE_KEY_META = 'aimud_metadata';
 
+  private savePending = false;
+  private saveTimeout: any = null;
+
   constructor() {
     this.loadFromStorage();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        this.flushStorage();
+      });
+    }
   }
 
   private loadFromStorage() {
@@ -26,7 +34,30 @@ export class FileSystem {
     }
   }
 
-  private saveToStorage() {
+  public flushStorage() {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+    this.savePending = false;
+    this.executeSaveToStorage();
+  }
+
+  private saveToStorage(immediate = false) {
+    if (immediate) {
+      this.flushStorage();
+      return;
+    }
+    if (this.savePending) return;
+    this.savePending = true;
+    this.saveTimeout = setTimeout(() => {
+      this.savePending = false;
+      this.saveTimeout = null;
+      this.executeSaveToStorage();
+    }, 50);
+  }
+
+  private executeSaveToStorage() {
     try {
       if (typeof localStorage === 'undefined') return;
       localStorage.setItem(this.STORAGE_KEY_FILES, JSON.stringify(this.files));
@@ -135,6 +166,11 @@ export class FileSystem {
   }
 
   clear() {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+    this.savePending = false;
     this.files = {};
     this.metadata = {};
     localStorage.removeItem(this.STORAGE_KEY_FILES);

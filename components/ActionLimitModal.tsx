@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { safeStorage } from '../services/safeStorage';
 import { X, AlertCircle, Key, ShoppingCart, ExternalLink, ArrowRight, BookOpen, CheckCircle2, UserPlus, Sparkles, BookmarkCheck } from 'lucide-react';
 
 interface ActionLimitModalProps {
@@ -30,7 +31,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
 
   const handleSaveKey = () => {
     if (apiKeyInput.trim()) {
-      localStorage.setItem('aimud_apikey', apiKeyInput.trim());
+      safeStorage.setItem('aimud_apikey', apiKeyInput.trim());
       setKeySaved(true);
       onApiKeySaved();
       setTimeout(() => {

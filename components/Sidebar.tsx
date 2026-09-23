@@ -687,10 +687,22 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {(!roomState || gameMode === 'singleplayer') && (
         <div className="flex flex-col border-b border-neutral-800 p-2 gap-2 bg-neutral-950">
-          <button onClick={onHostClick} className="w-full bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 p-1.5 rounded text-xs transition-colors">
+          <button
+            onClick={() => {
+              if (onCloseMobile) onCloseMobile();
+              onHostClick();
+            }}
+            className="w-full bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer"
+          >
             Host Multiplayer
           </button>
-          <button onClick={onJoinClick} className="w-full bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 border border-emerald-800/50 p-1.5 rounded text-xs transition-colors">
+          <button
+            onClick={() => {
+              if (onCloseMobile) onCloseMobile();
+              onJoinClick();
+            }}
+            className="w-full bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 border border-emerald-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer"
+          >
             Join Multiplayer
           </button>
         </div>

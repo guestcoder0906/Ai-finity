@@ -9,7 +9,39 @@ export class MultiplayerService {
   private currentUsername: string | null = null;
   private hostUsername: string | null = null;
   private currentUserMeta: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean } | null = null;
-  private syncQueue: Promise<any> = Promise.resolve();
+  private pendingSyncTasks: Array<() => Promise<void>> = [];
+  private isProcessingSync = false;
+
+  private enqueueSync<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve) => {
+      this.pendingSyncTasks.push(async () => {
+        try {
+          const res = await task();
+          resolve(res);
+        } catch (err) {
+          console.error("Multiplayer sync error:", err);
+          resolve(undefined as any);
+        }
+      });
+      this.runNextSync();
+    });
+  }
+
+  private async runNextSync() {
+    if (this.isProcessingSync) return;
+    this.isProcessingSync = true;
+    while (this.pendingSyncTasks.length > 0) {
+      const next = this.pendingSyncTasks.shift();
+      if (next) {
+        try {
+          await next();
+        } catch (e) {
+          console.error("Sync task error:", e);
+        }
+      }
+    }
+    this.isProcessingSync = false;
+  }
 
   private fileSystem: FileSystem;
   private onStateUpdate: (state: any) => void;
@@ -56,46 +88,53 @@ export class MultiplayerService {
     username: string,
     playerMeta?: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean }
   ): Promise<string> {
-    const roomId = this.generateRoomCode();
-    this.roomId = roomId;
-    this.currentUsername = username;
-    this.hostUsername = username;
-    this.currentUserMeta = playerMeta || null;
+    let lastError: any = null;
 
-    const initialState = {
-      id: roomId,
-      hostUsername: username,
-      players: [{
-        username,
-        status: 'active',
-        isReady: false,
-        hasCharacter: false,
-        tier: playerMeta?.tier,
-        role: playerMeta?.role,
-        showGlowingName: playerMeta?.showGlowingName
-      }],
-      gameState: 'waiting_for_world',
-      fileSystemState: { files: {}, metadata: {} },
-      narrative: [],
-      updates: [],
-      pendingInputs: {},
-      recommendations: [],
-      playerRecommendations: {},
-      worldTime: ''
-    };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const roomId = this.generateRoomCode();
+      const initialState = {
+        id: roomId,
+        hostUsername: username,
+        players: [{
+          username,
+          status: 'active',
+          isReady: false,
+          hasCharacter: false,
+          tier: playerMeta?.tier,
+          role: playerMeta?.role,
+          showGlowingName: playerMeta?.showGlowingName
+        }],
+        gameState: 'waiting_for_world',
+        fileSystemState: { files: {}, metadata: {} },
+        narrative: [],
+        updates: [],
+        pendingInputs: {},
+        recommendations: [],
+        playerRecommendations: {},
+        worldTime: ''
+      };
 
-    const { error } = await this.supabase
-      .from('rooms')
-      .insert({ id: roomId, host_username: username, state: initialState });
+      const { error } = await this.supabase
+        .from('rooms')
+        .insert({ id: roomId, host_username: username, state: initialState });
 
-    if (error) {
-      console.error("Failed to create room in DB", error);
-      throw new Error("Unable to contact database");
+      if (!error) {
+        this.roomId = roomId;
+        this.currentUsername = username;
+        this.hostUsername = username;
+        this.currentUserMeta = playerMeta || null;
+
+        await this.setupChannel(roomId, username, true);
+        this.onStateUpdate(initialState);
+        return roomId;
+      }
+
+      lastError = error;
+      console.warn(`Failed attempt ${attempt + 1} creating room code ${roomId}:`, error);
     }
 
-    await this.setupChannel(roomId, username, true);
-    this.onStateUpdate(initialState);
-    return roomId;
+    console.error("Failed to create room in DB after 5 attempts", lastError);
+    throw new Error(lastError?.message || "Unable to contact multiplayer database. Please check your connection and try again.");
   }
 
   async joinRoom(
@@ -128,7 +167,14 @@ export class MultiplayerService {
 
   private async setupChannel(roomId: string, username: string, isHost: boolean) {
     if (this.channel) {
-      await this.supabase.removeChannel(this.channel);
+      const oldChannel = this.channel;
+      this.channel = null;
+      try {
+        oldChannel.untrack().catch(() => {});
+        this.supabase.removeChannel(oldChannel).catch(() => {});
+      } catch (err) {
+        console.warn("Could not remove previous channel:", err);
+      }
     }
 
     this.channel = this.supabase.channel(`room:${roomId}`, {
@@ -198,7 +244,7 @@ export class MultiplayerService {
       const activeUsernames = Object.keys(presenceState);
 
       if (this.currentUsername) {
-        this.syncQueue = this.syncQueue.then(async () => {
+        this.enqueueSync(async () => {
           const { data } = await this.supabase.from('rooms').select('state, host_username').eq('id', roomId).single();
           if (data && data.host_username === this.currentUsername) {
             const state = data.state;
@@ -252,25 +298,36 @@ export class MultiplayerService {
       }
     });
 
-    await this.channel.subscribe(async (status) => {
+    this.channel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        await this.channel?.track({
-          user: username,
-          online_at: new Date().toISOString(),
-          ...(this.currentUserMeta || {})
-        });
+        try {
+          await this.channel?.track({
+            user: username,
+            online_at: new Date().toISOString(),
+            ...(this.currentUserMeta || {})
+          });
+        } catch (e) {
+          console.warn('Presence tracking error:', e);
+        }
       }
     });
   }
 
   async leaveRoom() {
     if (this.channel) {
-      await this.channel.untrack();
-      await this.supabase.removeChannel(this.channel);
+      const oldChannel = this.channel;
       this.channel = null;
+      try {
+        oldChannel.untrack().catch(() => {});
+        this.supabase.removeChannel(oldChannel).catch(() => {});
+      } catch (err) {
+        console.warn("Could not remove previous channel:", err);
+      }
     }
     this.roomId = null;
     this.currentUsername = null;
+    this.pendingSyncTasks = [];
+    this.isProcessingSync = false;
   }
 
   async submitAction(action: string) {
@@ -292,7 +349,7 @@ export class MultiplayerService {
 
   private async handlePlayerActionAsHost(username: string, action: string) {
     if (!this.roomId) return;
-    this.syncQueue = this.syncQueue.then(async () => {
+    this.enqueueSync(async () => {
       const { data } = await this.supabase.from('rooms').select('state').eq('id', this.roomId).single();
       if (data) {
         const state = data.state;
@@ -374,63 +431,60 @@ export class MultiplayerService {
     return rawTime.trim().split('\n')[0] || '';
   }
 
-  async syncState(partialState: any) {
-    return new Promise<void>((resolve) => {
-      this.syncQueue = this.syncQueue.then(async () => {
-        if (!this.roomId) return resolve();
+  async syncState(partialState: any): Promise<void> {
+    return this.enqueueSync(async () => {
+      if (!this.roomId) return;
 
-        const { data } = await this.supabase.from('rooms').select('state').eq('id', this.roomId).single();
-        if (!data) return resolve();
+      const { data } = await this.supabase.from('rooms').select('state').eq('id', this.roomId).single();
+      if (!data) return;
 
-        const state = { ...data.state, ...partialState };
+      const state = { ...data.state, ...partialState };
 
-        // Guarantee fileSystemState matches current filesystem exports if not explicitly passed
-        if (!partialState.fileSystemState) {
-          state.fileSystemState = this.fileSystem.exportState();
+      // Guarantee fileSystemState matches current filesystem exports if not explicitly passed
+      if (!partialState.fileSystemState) {
+        state.fileSystemState = this.fileSystem.exportState();
+      }
+
+      // Synchronize dynamic active world time into global state
+      if (state.fileSystemState?.files) {
+        const activeTime = this.parseActiveWorldTime(state.fileSystemState.files);
+        if (activeTime) {
+          state.worldTime = activeTime;
         }
+      }
 
-        // Synchronize dynamic active world time into global state
-        if (state.fileSystemState?.files) {
-          const activeTime = this.parseActiveWorldTime(state.fileSystemState.files);
-          if (activeTime) {
-            state.worldTime = activeTime;
-          }
-        }
-
-        // Update hasCharacter based on exact naming convention format: CharacterName-USERNAME.txt
-        if (state.players && state.fileSystemState?.files) {
-          const fileKeys = Object.keys(state.fileSystemState.files);
-          state.players.forEach((p: any) => {
-            const uLower = p.username.toLowerCase();
-            p.hasCharacter = fileKeys.some(f => {
-              const lowerF = f.toLowerCase();
-              return (
-                lowerF.endsWith(`-${uLower}.txt`) ||
-                lowerF.endsWith(`_${uLower}.txt`) ||
-                lowerF.endsWith(` ${uLower}.txt`)
-              );
-            });
+      // Update hasCharacter based on exact naming convention format: CharacterName-USERNAME.txt
+      if (state.players && state.fileSystemState?.files) {
+        const fileKeys = Object.keys(state.fileSystemState.files);
+        state.players.forEach((p: any) => {
+          const uLower = p.username.toLowerCase();
+          p.hasCharacter = fileKeys.some(f => {
+            const lowerF = f.toLowerCase();
+            return (
+              lowerF.endsWith(`-${uLower}.txt`) ||
+              lowerF.endsWith(`_${uLower}.txt`) ||
+              lowerF.endsWith(` ${uLower}.txt`)
+            );
           });
-        }
+        });
+      }
 
-        if (state.turnProcessed) {
-          if (state.players) state.players.forEach((p: any) => (p.isReady = false));
-          state.pendingInputs = {};
-          state.turnProcessed = false;
-        }
+      if (state.turnProcessed) {
+        if (state.players) state.players.forEach((p: any) => (p.isReady = false));
+        state.pendingInputs = {};
+        state.turnProcessed = false;
+      }
 
-        if (state.gameState === 'character_creation' && state.players) {
-          const activePlayers = state.players.filter((p: any) => p.status === 'active');
-          const allHaveCharacters = activePlayers.length > 0 && activePlayers.every((p: any) => p.hasCharacter);
-          if (allHaveCharacters) {
-            state.gameState = 'playing';
-          }
+      if (state.gameState === 'character_creation' && state.players) {
+        const activePlayers = state.players.filter((p: any) => p.status === 'active');
+        const allHaveCharacters = activePlayers.length > 0 && activePlayers.every((p: any) => p.hasCharacter);
+        if (allHaveCharacters) {
+          state.gameState = 'playing';
         }
+      }
 
-        await this.supabase.from('rooms').update({ state }).eq('id', this.roomId);
-        this.checkTurnForHost(state);
-        resolve();
-      });
+      await this.supabase.from('rooms').update({ state }).eq('id', this.roomId);
+      this.checkTurnForHost(state);
     });
   }
 

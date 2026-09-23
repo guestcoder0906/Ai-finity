@@ -192,15 +192,23 @@ export async function isUsernameTaken(username: string, currentGuestId?: string)
 export async function isGuestNameAvailable(guestName: string, currentGuestId: string): Promise<boolean> {
   const lower = guestName.trim().toLowerCase();
   try {
-    // Check if registered by an account
-    const userDoc = await getDoc(doc(db, 'usernames', lower));
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+    const checkPromise = Promise.all([
+      getDoc(doc(db, 'usernames', lower)),
+      getDoc(doc(db, 'guest_names', lower))
+    ]);
+
+    const result = await Promise.race([checkPromise, timeoutPromise]);
+    if (!result) {
+      // Timeout reached: avoid stalling user
+      return true;
+    }
+
+    const [userDoc, guestDoc] = result;
     if (userDoc.exists()) return false;
 
-    // Check if claimed by another guest
-    const guestDoc = await getDoc(doc(db, 'guest_names', lower));
     if (guestDoc.exists()) {
       const data = guestDoc.data();
-      // If claimed by same guest, it is allowed
       if (data?.guestId === currentGuestId) return true;
       return false;
     }

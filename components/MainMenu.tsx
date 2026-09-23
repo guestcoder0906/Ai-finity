@@ -160,8 +160,11 @@ export default function MainMenu({
   };
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm z-50 p-4">
-      <div className="bg-neutral-900 border border-neutral-700 p-6 md:p-8 rounded-xl shadow-2xl w-[440px] max-w-full font-sans text-neutral-200">
+    <div
+      id="multiplayer-menu-modal"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto font-sans"
+    >
+      <div className="bg-neutral-900 border border-neutral-700 p-6 md:p-8 rounded-xl shadow-2xl w-[440px] max-w-full my-auto font-sans text-neutral-200 relative animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header */}
         <div className="flex justify-between items-center mb-5 pb-3 border-b border-neutral-800">

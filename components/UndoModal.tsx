@@ -20,7 +20,7 @@ const UndoModal: React.FC<UndoModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={`fixed inset-0 ${isMultiplayer ? 'z-[9999]' : 'z-50'} flex items-center justify-center p-4`}>
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative bg-neutral-900 border border-neutral-700 p-6 rounded-lg shadow-2xl max-w-md w-full font-mono">
         <div className="flex items-center gap-2.5 mb-3 text-amber-400">

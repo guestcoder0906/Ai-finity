@@ -1,5 +1,6 @@
 import { loadStripe, Stripe as StripeClient } from '@stripe/stripe-js';
 import { UserProfile } from './authService';
+import { safeStorage, safeSessionStorage } from './safeStorage';
 
 let stripePromise: Promise<StripeClient | null> | null = null;
 
@@ -94,11 +95,11 @@ export async function createRealStripeCheckoutSession(params: {
         username: user.username || '',
         timestamp: new Date().toISOString()
       };
-      sessionStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
-      localStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
-      localStorage.setItem('aifinity_last_checkout_user', user.uid);
+      safeSessionStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
+      safeStorage.setItem('aifinity_pending_checkout', JSON.stringify(pendingData));
+      safeStorage.setItem('aifinity_last_checkout_user', user.uid);
       if (user.email) {
-        localStorage.setItem('aifinity_last_checkout_email', user.email);
+        safeStorage.setItem('aifinity_last_checkout_email', user.email);
       }
     } catch (e) {
       console.warn('Could not save pending checkout:', e);

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { safeStorage } from '../services/safeStorage';
 import {
   X,
   Sparkles,
@@ -28,7 +29,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
   const handleDismiss = () => {
     if (dontShowAgain) {
       try {
-        localStorage.setItem('aimud_hide_guest_welcome', 'true');
+        safeStorage.setItem('aimud_hide_guest_welcome', 'true');
       } catch (e) {}
     }
     onClose();
@@ -36,7 +37,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
 
   const handleDismissNever = () => {
     try {
-      localStorage.setItem('aimud_hide_guest_welcome', 'true');
+      safeStorage.setItem('aimud_hide_guest_welcome', 'true');
     } catch (e) {}
     onClose();
   };
@@ -44,7 +45,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
   const handleSignUpClick = () => {
     if (dontShowAgain) {
       try {
-        localStorage.setItem('aimud_hide_guest_welcome', 'true');
+        safeStorage.setItem('aimud_hide_guest_welcome', 'true');
       } catch (e) {}
     }
     onClose();
