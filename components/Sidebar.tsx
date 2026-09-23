@@ -100,6 +100,18 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [internalMinimized, setInternalMinimized] = useState<boolean>(true); // Minimized by default!
   const isMinimized = propIsMinimized !== undefined ? propIsMinimized : internalMinimized;
 
+  const [isMobileScreen, setIsMobileScreen] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileScreen(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('aimud_sidebar_width');
@@ -203,6 +215,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const filesListRef = useRef<HTMLDivElement>(null);
 
   const effectiveMobileOpen = isMobileOpen !== undefined ? isMobileOpen : isMobileExpanded;
+  const isMobileDrawerActive = isMobileScreen && effectiveMobileOpen;
 
   const handleClose = () => {
     if (onCloseMobile) onCloseMobile();
@@ -219,9 +232,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (expandedFile) {
       setActiveTab('files');
       if (onSetMobileTab) onSetMobileTab('files');
-      setIsMobileExpanded(true);
+      if (isMobileScreen) {
+        setIsMobileExpanded(true);
+      }
       if (isMinimized) {
-        if (onToggleMinimize) onToggleMinimize();
+        if (onToggleMinimize) onToggleMinimize(false);
         setInternalMinimized(false);
       }
       // Scroll container directly to avoid displacing the mobile window/body
@@ -234,7 +249,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         }
       }, 50);
     }
-  }, [expandedFile]);
+  }, [expandedFile, isMobileScreen]);
 
   const formatContent = (content: string) => {
     if (!content) return '';
@@ -269,7 +284,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div
       className={`
-        ${effectiveMobileOpen
+        ${isMobileDrawerActive
           ? 'fixed inset-0 z-50 bg-neutral-950 flex flex-col'
           : 'hidden md:flex'
         }
@@ -278,7 +293,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       `}
       style={{
         WebkitOverflowScrolling: 'touch',
-        ...(effectiveMobileOpen
+        ...(isMobileDrawerActive
           ? { height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }
           : {
               width: isMinimized ? '48px' : `${sidebarWidth}px`,
@@ -289,7 +304,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       }}
     >
       {/* Draggable Resizer Edge for Desktop (expands / collapses by dragging) */}
-      {!effectiveMobileOpen && (
+      {!isMobileDrawerActive && (
         <>
           {isDraggingResizer && (
             <div className="fixed inset-0 z-[9999] cursor-col-resize select-none bg-transparent pointer-events-auto" />
@@ -310,7 +325,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Minimized Vertical Rail on Desktop (when collapsed and not mobile drawer) */}
-      {isMinimized && !effectiveMobileOpen ? (
+      {isMinimized && !isMobileDrawerActive ? (
         <div className="hidden md:flex flex-col items-center justify-between h-full w-full py-2.5 bg-neutral-950 select-none">
           <div className="flex flex-col items-center gap-2 w-full">
             {/* Expand Sidebar Toggle Button */}

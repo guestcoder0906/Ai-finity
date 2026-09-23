@@ -1586,7 +1586,11 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
     if (filename) {
       setExpandedFile(filename);
       setMobilePanelTab('files');
-      setIsMobilePanelOpen(true);
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setIsMobilePanelOpen(true);
+      } else {
+        setIsSidebarMinimized(false);
+      }
     }
   };
 
