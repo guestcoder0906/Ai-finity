@@ -112,6 +112,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isDraggingResizer, setIsDraggingResizer] = useState(false);
   const dragStartXRef = useRef<number>(0);
   const isCurrentlyMinimizedRef = useRef<boolean>(isMinimized);
+  const animationFrameRef = useRef<number | null>(null);
   isCurrentlyMinimizedRef.current = isMinimized;
 
   const handleMouseDownResizer = (e: React.MouseEvent) => {
@@ -129,17 +130,25 @@ const Sidebar: React.FC<SidebarProps> = ({
     const handleMouseMove = (moveEvent: MouseEvent) => {
       moveEvent.preventDefault();
       const currentX = moveEvent.clientX;
-      // Smooth clamping during mouse move without rapid state toggling
-      const clampedWidth = Math.max(180, Math.min(window.innerWidth * 0.75, currentX));
-      setSidebarWidth(clampedWidth);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      animationFrameRef.current = requestAnimationFrame(() => {
+        const clampedWidth = Math.max(180, Math.min(window.innerWidth * 0.75, currentX));
+        setSidebarWidth(clampedWidth);
+      });
     };
 
     const handleMouseUp = (upEvent: MouseEvent) => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
       setIsDraggingResizer(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove, { capture: true });
+      window.removeEventListener('mouseup', handleMouseUp, { capture: true });
 
       const finalX = upEvent.clientX;
       if (finalX < 140) {
@@ -158,8 +167,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove, { capture: true, passive: false });
+    window.addEventListener('mouseup', handleMouseUp, { capture: true });
   };
 
   const handleDoubleClickResizer = () => {
@@ -281,18 +290,23 @@ const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Draggable Resizer Edge for Desktop (expands / collapses by dragging) */}
       {!effectiveMobileOpen && (
-        <div
-          onMouseDown={handleMouseDownResizer}
-          onDoubleClick={handleDoubleClickResizer}
-          className={`hidden md:block absolute top-0 right-0 w-2 h-full cursor-col-resize z-40 group select-none transition-colors ${
-            isDraggingResizer ? 'bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'hover:bg-blue-500/40'
-          }`}
-          title={isMinimized ? "Drag right to expand sidebar" : "Drag to resize sidebar width (double-click to toggle/reset)"}
-        >
-          <div className={`w-0.5 h-8 bg-neutral-700 group-hover:bg-blue-400 rounded absolute top-1/2 -translate-y-1/2 right-0.5 transition-colors ${
-            isDraggingResizer ? 'bg-blue-300' : ''
-          }`} />
-        </div>
+        <>
+          {isDraggingResizer && (
+            <div className="fixed inset-0 z-[9999] cursor-col-resize select-none bg-transparent pointer-events-auto" />
+          )}
+          <div
+            onMouseDown={handleMouseDownResizer}
+            onDoubleClick={handleDoubleClickResizer}
+            className={`hidden md:block absolute top-0 right-0 w-2 h-full cursor-col-resize z-40 group select-none transition-colors ${
+              isDraggingResizer ? 'bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'hover:bg-blue-500/40'
+            }`}
+            title={isMinimized ? "Drag right to expand sidebar" : "Drag to resize sidebar width (double-click to toggle/reset)"}
+          >
+            <div className={`w-0.5 h-8 bg-neutral-700 group-hover:bg-blue-400 rounded absolute top-1/2 -translate-y-1/2 right-0.5 transition-colors ${
+              isDraggingResizer ? 'bg-blue-300' : ''
+            }`} />
+          </div>
+        </>
       )}
 
       {/* Minimized Vertical Rail on Desktop (when collapsed and not mobile drawer) */}

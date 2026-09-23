@@ -79,6 +79,8 @@ export class MultiplayerService {
       narrative: [],
       updates: [],
       pendingInputs: {},
+      recommendations: [],
+      playerRecommendations: {},
       worldTime: ''
     };
 
@@ -470,6 +472,7 @@ export class MultiplayerService {
       narrative: snapshotData.narrative,
       updates: snapshotData.updates || [],
       recommendations: snapshotData.recommendations || [],
+      playerRecommendations: snapshotData.playerRecommendations || {},
       worldTime: snapshotData.worldTime || '',
       gameState: 'playing',
       turnProcessed: true

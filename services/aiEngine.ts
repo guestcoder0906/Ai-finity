@@ -582,6 +582,10 @@ Respond with JSON only:
   "gameOver": false,
   "checks": [],
   "recommendations": ["Action recommendation 1", "Action recommendation 2", "Action recommendation 3"],
+  "playerRecommendations": {
+    "PlayerUsername1": ["Specific Action A for Player 1", "Specific Action B for Player 1"],
+    "PlayerUsername2": ["Specific Action C for Player 2", "Specific Action D for Player 2"]
+  },
   "timeTravel": {
     "turnsBack": 1,
     "preserveFiles": ["CharacterName-Player.txt"],
@@ -592,6 +596,7 @@ Respond with JSON only:
 If probability checks are required, return empty narrative and fill the "checks" array.
 Set gameOver to true ONLY when the player character is confirmed DEAD (never for unconsciousness or negative HP while surviving).
 Always include 2-4 dynamic auto action recommendations for the player based on context so far in the "recommendations" array.
+In multiplayer, also populate "playerRecommendations" with a dedicated array of 2-4 unique, character-specific recommendations for EACH active player.
 For starting prompt, create initial world files with appropriate time/year and set the scene.
 
 CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
@@ -605,8 +610,16 @@ CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
   * Integrate them into the narrative with exact clickable references (e.g. [Maeve-npc] or [Maeve], [Garrick-npc] or [Garrick]).
   * HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Steel Broadsword", "Iron Shield", "Oak Staff", "Torch") with their weight and dimensions. Never list limbs, grips, anatomy labels, or duplicate lines as item names (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name!). Limbs belong in brackets: e.g. "• [Both Hands (Two-Handed)] Steel Greatsword - 8.5 lbs".
 
-CONTEXT-AWARE AUTO ACTION RECOMMENDATIONS (CRITICAL):
+CONTEXT-AWARE AUTO ACTION RECOMMENDATIONS & MULTIPLAYER UNIQUE RECOMMENDATIONS (CRITICAL):
 - The "recommendations" array MUST contain 2 to 4 dynamic, immersive, highly relevant action options SPECIFICALLY FOR THE ACTIVE PLAYER CHARACTER (the character controlled by the player submitting the action).
+- MULTIPLAYER UNIQUE PER-PLAYER ACTION RECOMMENDATIONS (CRITICAL):
+  * When multiple human players are in the game session (multiplayer), the AI MUST populate the "playerRecommendations" object with distinct, personalized recommendation arrays for EACH player username (e.g. "playerRecommendations": { "Mep": [...], "Chloe": [...] }).
+  * Every player's recommendations MUST be 100% UNIQUE and tailored specifically to THAT player's character:
+    1. Held Weapons, Tools & Equipment: Suggest wielding their specific equipped weapon (e.g. longbow, greatsword, staff, daggers, lockpicks, torch) or using unique tools in hand.
+    2. Spells & Class Abilities: If the character is a spellcaster, suggest casting their specific known spells; if a rogue, suggest stealth, scouting, or flanking; if a warrior, suggest vanguard guarding, parrying, or martial strikes.
+    3. Mount & Mobility State: If mounted/driving, suggest mounted commands, scouting from horseback, or dismounting; if on foot, suggest tactical movement.
+    4. Individual Health, Condition & Location: Account for their personal health status and immediate surroundings.
+  * NEVER duplicate identical recommendations across different players! Each player character must have their own distinct, immersive options.
 - CONTEXT CLARITY: The AI must never confuse NPCs, allies, companions, monsters, or adversaries with the player! All recommendations must be actions the player character can take.
 - Recommendations must account for:
   1. The active player character's current status, health, stamina/energy, and abilities.
@@ -934,8 +947,35 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             ? `[Active Turn - User: ${username}${playerCharacterName ? ` | Character: "${playerCharacterName}" (File: ${playerFile})` : ''}]\n` 
             : '';
 
+          // Find all active human player characters in the world for multiplayer context
+          const allWorldFiles = this.fs.getAll();
+          const playerFilesList = Object.keys(allWorldFiles).filter(f => {
+            const lower = f.toLowerCase();
+            if (lower.endsWith('.txt') && !lower.includes('world') && !lower.includes('map') && !lower.includes('rule') && !lower.includes('guide') && !lower.includes('lore') && !lower.endsWith('-npc.txt')) {
+              const raw = allWorldFiles[f] || '';
+              return lower.includes('-') || lower.includes('_') || raw.toLowerCase().includes('player:');
+            }
+            return false;
+          });
+
+          let partyOverviewContext = '';
+          if (playerFilesList.length > 0) {
+            partyOverviewContext = `\n[ALL HUMAN PLAYER CHARACTERS IN MULTIPLAYER PARTY]\n` + playerFilesList.map(pf => {
+              const c = allWorldFiles[pf] || '';
+              const pMatch = c.match(/Player:\s*([^\n\r]+)/i);
+              const pName = pMatch ? pMatch[1].trim() : (pf.replace(/\.txt$/, '').split(/[-_]/).pop() || 'Player');
+              const nameMatch = c.match(/-\s*Full Name:\s*([^\n\r]+)/i);
+              const charName = nameMatch ? nameMatch[1].trim() : pf.replace(/\.txt$/, '');
+              const classMatch = c.match(/(?:Class|Profession|Role|Archetype):\s*([^\n\r,]+)/i);
+              const charClass = classMatch ? classMatch[1].trim() : 'Adventurer';
+              const holdingMatch = c.match(/(?:-\s*Items Currently Held:|\[CURRENTLY HOLDING\])([\s\S]*?)(?=\n-\s*|\n\[|$)/i);
+              const held = holdingMatch ? holdingMatch[0].replace(/-\s*Items Currently Held:\s*/i, '').trim().split('\n')[0] : 'None';
+              return `- Player "${pName}": Character "${charName}" (Class: ${charClass}, Currently Held: ${held}, File: "${pf}")`;
+            }).join('\n') + `\n* MANDATE: You MUST provide unique, tailored "playerRecommendations" for EACH active player above! Never give duplicate recommendations across different characters.\n`;
+          }
+
           // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
-          const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}\n${userHeader}Player action: ${action}`;
+          const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}${partyOverviewContext}\n${userHeader}Player action: ${action}`;
           const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.8-flash');
           const audit = this.extractJSON(auditRaw);
 
@@ -1110,10 +1150,17 @@ CRITICAL REMINDERS:
      * GAME OVER: Set "gameOver": true ONLY if the active player character is confirmed DEAD. Do NOT set gameOver for Unconscious state at 0 or negative HP, as survival/rescue is ongoing!
      * Include the stat change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
      * Keep Guide.txt Master Stat Table in 100% sync!
-9. AUTO ACTION RECOMMENDATIONS (CRITICAL):
-   - The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
-   - DO NOT generate suggestions for other NPCs or adversaries.
-   - Base recommendations directly on ${playerCharacterName || username || 'Player'}'s immediate situation, equipped weapons/tools, health/energy, carried/stored wealth, and mobility state (e.g. if riding, suggest mounted maneuvers, scouting from saddle, or dismounting; if on foot, suggest movement, interaction, shopping/bargaining if near a vendor, or mounting nearby rides).
+9. AUTO ACTION RECOMMENDATIONS & MULTIPLAYER UNIQUE RECOMMENDATIONS (CRITICAL):
+   - In SINGLEPLAYER: The "recommendations" array MUST contain 2 to 4 dynamic, actionable suggestions SPECIFICALLY for the active player character "${playerCharacterName || username || 'Player'}" (controlled by ${username || 'user'}).
+   - In MULTIPLAYER (or whenever multiple human player character files exist):
+     * The AI MUST populate "playerRecommendations" with distinct entries for EACH player username (e.g. "playerRecommendations": { "Mep": [...], "Chloe": [...] }).
+     * Each player's action recommendations MUST be completely UNIQUE and tailored specifically to that player's character:
+       1. Weapons & Held Items: A warrior wields their blade/axe/mace/shield; an archer uses their bow; a mage channels their staff/wand/orb; a rogue uses daggers/lockpicks/tools.
+       2. Spells & Class Talents: Offer distinct spellcasting or abilities matching that character's class and grimoire.
+       3. Mount & Mobility: Suggest mounted commands or dismounting if riding; on-foot agile moves if dismounted.
+       4. Personal Health & Surroundings: Individual health status, tactical vantage points, and nearby NPCs.
+     * NEVER duplicate the same recommendations across different players! Each player character must have distinct, personalized options.
+     * Also keep the general "recommendations" array populated for the active acting player.
 10. DYNAMIC STRUCTURED TRANSACTIONS (CRITICAL - ALWAYS POPULATE ACCURATELY):
    - "healthTransactions": If ANY character or entity takes damage or heals:
      [
@@ -1177,6 +1224,16 @@ CRITICAL REMINDERS:
             finalResponse.recommendations = this.generateFallbackRecommendations(username, playerFile, playerCharacterName);
           }
 
+          // Ensure playerRecommendations are populated for all active players in multiplayer
+          if (finalResponse) {
+            if (!finalResponse.playerRecommendations || typeof finalResponse.playerRecommendations !== 'object') {
+              finalResponse.playerRecommendations = {};
+            }
+            if (username && (!finalResponse.playerRecommendations[username] || finalResponse.playerRecommendations[username].length === 0)) {
+              finalResponse.playerRecommendations[username] = finalResponse.recommendations || [];
+            }
+          }
+
           resolve(finalResponse);
         } catch (e) {
           console.error("Processing failed", e);
@@ -1187,29 +1244,212 @@ CRITICAL REMINDERS:
   }
 
   private generateFallbackRecommendations(username?: string, playerFile?: string, playerCharacterName?: string): string[] {
-    const charContent = playerFile ? this.fs.read(playerFile) : null;
-    const isMounted = charContent && (charContent.includes('Mounted on') || charContent.includes('Riding [') || charContent.includes('Inside ['));
-    const mountMatch = charContent ? (charContent.match(/Mounted on \[([^\]]+)\]/i) || charContent.match(/Riding \[([^\]]+)\]/i) || charContent.match(/Inside \[([^\]]+)\]/i)) : null;
-    const mountName = mountMatch ? mountMatch[1] : 'your mount';
-
-    const weaponMatch = charContent ? charContent.match(/-\s*Items Currently Held:\s*[\r\n]+(?:\s*-\s*[^:\n]+:\s*([^:\n(]+))/i) : null;
-    const heldItem = weaponMatch ? weaponMatch[1].trim() : null;
-
-    const recommendations: string[] = [];
-    if (isMounted) {
-      recommendations.push(`Spur ${mountName} forward along the primary path`);
-      recommendations.push(`Rein in ${mountName} and scan the surrounding terrain from the saddle`);
-      recommendations.push(`Dismount and continue on foot to investigate nearby`);
-    } else {
-      if (heldItem && !heldItem.toLowerCase().includes('none')) {
-        recommendations.push(`Ready your ${heldItem} and proceed cautiously`);
-      } else {
-        recommendations.push(`Survey the area and look for immediate points of interest`);
-      }
-      recommendations.push(`Approach and speak with nearby characters or inhabitants`);
-      recommendations.push(`Inspect the surrounding landmarks and check your bearings`);
+    if (username) {
+      return AIEngine.generateCharacterUniqueRecommendations(username, this.fs, playerFile);
     }
-    return recommendations;
+    return [
+      "Survey the area and look for immediate points of interest",
+      "Approach and speak with nearby characters or inhabitants",
+      "Inspect the surrounding landmarks and check your bearings",
+      "Consult your companions to coordinate the party's next move"
+    ];
+  }
+
+  /**
+   * Generates dynamic, context-aware, completely unique action recommendations
+   * for a specific player character based on their class, equipped weapons/tools,
+   * spells/abilities, mount/vehicle status, health condition, and spatial surroundings.
+   */
+  public static generateCharacterUniqueRecommendations(
+    username: string,
+    fs: FileSystem,
+    charFileName?: string
+  ): string[] {
+    const all = fs.getAll();
+    const uLower = (username || '').trim().toLowerCase();
+    if (!uLower) return [];
+
+    // Find character file
+    let playerFile = charFileName;
+    if (!playerFile) {
+      playerFile = Object.keys(all).find(f => {
+        const lower = f.toLowerCase();
+        return (
+          lower.endsWith(`-${uLower}.txt`) ||
+          lower.endsWith(`_${uLower}.txt`) ||
+          lower.endsWith(` ${uLower}.txt`) ||
+          lower === `${uLower}.txt` ||
+          lower === `character-${uLower}.txt`
+        );
+      });
+    }
+
+    if (!playerFile) {
+      playerFile = Object.keys(all).find(f => {
+        if (f.endsWith('.txt') && !f.includes('world') && !f.includes('map') && !f.includes('rule') && !f.includes('lore') && !f.endsWith('-npc.txt')) {
+          const raw = all[f] || '';
+          return raw.toLowerCase().includes(`player: ${uLower}`) || raw.toLowerCase().includes(`player: "${uLower}"`);
+        }
+        return false;
+      });
+    }
+
+    const charContent = playerFile ? all[playerFile] : '';
+    const recommendations: string[] = [];
+
+    // Parse map context & nearby NPCs / landmarks
+    let nearbyNpcs: string[] = [];
+    let currentAreaName = '';
+    const mapRaw = all['CurrentMap.json'];
+    if (mapRaw) {
+      try {
+        const mapData = JSON.parse(mapRaw);
+        const players = mapData.players || [];
+        const npcs = mapData.npcs || [];
+        const areas = mapData.areas || [];
+        const myPlayer = players.find((p: any) => p.username?.toLowerCase() === uLower || p.characterName?.toLowerCase() === uLower);
+        if (myPlayer) {
+          const px = myPlayer.x ?? 0;
+          const py = myPlayer.y ?? 0;
+          for (const npc of npcs) {
+            const nx = npc.x ?? 0;
+            const ny = npc.y ?? 0;
+            const dist = Math.sqrt((nx - px) ** 2 + (ny - py) ** 2);
+            if (dist < 160 && npc.name) {
+              nearbyNpcs.push(npc.name.replace(/-npc$/i, ''));
+            }
+          }
+          for (const area of areas) {
+            const ax = area.x ?? 0;
+            const ay = area.y ?? 0;
+            const dist = Math.sqrt((ax - px) ** 2 + (ay - py) ** 2);
+            if (dist < 130 && area.name) {
+              currentAreaName = area.name;
+            }
+          }
+        }
+      } catch (e) {
+        // non-fatal
+      }
+    }
+
+    if (charContent) {
+      // 1. Mount / Transport
+      const isMounted = charContent.includes('Mounted on') || charContent.includes('Riding [') || charContent.includes('Inside [');
+      const mountMatch = charContent.match(/Mounted on \[([^\]]+)\]/i) || charContent.match(/Riding \[([^\]]+)\]/i) || charContent.match(/Inside \[([^\]]+)\]/i);
+      const mountName = mountMatch ? mountMatch[1] : 'your mount';
+
+      // 2. Held items / weapons
+      const heldItems: string[] = [];
+      const heldSection = charContent.match(/(?:-\s*Items Currently Held:|\[CURRENTLY HOLDING\])([\s\S]*?)(?=\n-\s*|\n\[|$)/i);
+      if (heldSection) {
+        const lines = heldSection[1].split('\n');
+        for (const line of lines) {
+          const itemMatch = line.match(/(?:-\s*[^:\n]+:\s*|•\s*(?:\[[^\]]+\]\s*)?)([^:\n(]+)/);
+          if (itemMatch) {
+            const it = itemMatch[1].trim();
+            if (it && !/none|empty|nothing|both hands/i.test(it)) {
+              heldItems.push(it);
+            }
+          }
+        }
+      }
+
+      // 3. Spells / Abilities
+      const spells: string[] = [];
+      const spellsSection = charContent.match(/(?:-\s*Spells\s*&\s*Abilities:|\[SPELLS & ABILITIES\]|\[SKILLS & TALENTS\])([\s\S]*?)(?=\n-\s*|\n\[|$)/i);
+      if (spellsSection) {
+        const sLines = spellsSection[1].split('\n');
+        for (const sl of sLines) {
+          const spMatch = sl.match(/(?:-\s*|•\s*|\*\s*)([A-Z][a-zA-Z\s'-]+)(?:\s*\(|:|$)/);
+          if (spMatch) {
+            const sp = spMatch[1].trim();
+            if (sp && !/none|description|magic|skills|abilities/i.test(sp) && sp.length > 2) {
+              spells.push(sp);
+            }
+          }
+        }
+      }
+
+      // 4. Class / Role
+      const classMatch = charContent.match(/(?:Class|Profession|Role|Archetype|Calling):\s*([^\n\r,]+)/i);
+      const charClass = (classMatch ? classMatch[1].trim() : '').toLowerCase();
+
+      // 5. Health & Conditions
+      const hpMatch = charContent.match(/Health:\s*(-?\d+)\s*\/\s*(\d+)/i);
+      const isWounded = hpMatch && (parseInt(hpMatch[1]) < parseInt(hpMatch[2]) * 0.5);
+
+      if (isMounted) {
+        recommendations.push(`Spur ${mountName} forward along the primary path`);
+        recommendations.push(`Rein in ${mountName} and scan the surrounding terrain from the saddle`);
+        recommendations.push(`Dismount from ${mountName} to investigate the immediate ground on foot`);
+      } else {
+        // Weapon / Held item specific
+        if (heldItems.length > 0) {
+          const primary = heldItems[0];
+          const pLower = primary.toLowerCase();
+          if (/bow|crossbow|rifle|gun|pistol|slingshot/i.test(pLower)) {
+            recommendations.push(`Nock an arrow in your ${primary} and seek elevated vantage`);
+          } else if (/staff|wand|orb|tome|grimoire|focus/i.test(pLower)) {
+            recommendations.push(`Channel arcane energy through your ${primary} to read ambient mana`);
+          } else if (/shield/i.test(pLower)) {
+            recommendations.push(`Raise your ${primary} in the vanguard to shield companions`);
+          } else if (/dagger|blade|sword|axe|mace|hammer|spear|halberd|rapier/i.test(pLower)) {
+            recommendations.push(`Ready your ${primary} and take a balanced combat stance`);
+          } else if (/lockpick|picks|tools/i.test(pLower)) {
+            recommendations.push(`Ready your ${primary} to inspect nearby mechanisms or locks`);
+          } else if (/torch|lantern/i.test(pLower)) {
+            recommendations.push(`Hold up your ${primary} to illuminate concealed shadows`);
+          } else {
+            recommendations.push(`Ready your ${primary} and proceed cautiously`);
+          }
+        }
+
+        // Spell or class specific
+        if (spells.length > 0) {
+          const spell = spells[0];
+          recommendations.push(`Prepare to cast ${spell} as tactical support`);
+        } else if (/mage|wizard|sorcerer|warlock|necromancer|alchemist/i.test(charClass)) {
+          recommendations.push(`Attune your senses to detect ambient magical energies or runes`);
+        } else if (/rogue|thief|assassin|shadow|scout/i.test(charClass)) {
+          recommendations.push(`Melt into the shadows to scout ahead and search for hidden traps`);
+        } else if (/ranger|hunter|druid/i.test(charClass)) {
+          recommendations.push(`Inspect the terrain for animal tracks and signs of recent movement`);
+        } else if (/cleric|paladin|priest|healer/i.test(charClass)) {
+          recommendations.push(`Offer a quiet prayer and assess your companions' physical readiness`);
+        } else if (/bard/i.test(charClass)) {
+          recommendations.push(`Observe the social atmosphere and listen for rumors`);
+        } else if (/warrior|barbarian|fighter|knight/i.test(charClass)) {
+          recommendations.push(`Take the vanguard position to guard the party against ambushes`);
+        }
+
+        // Environmental / Interaction
+        if (nearbyNpcs.length > 0) {
+          const targetNpc = nearbyNpcs[0];
+          recommendations.push(`Approach and speak with [${targetNpc}] regarding the situation`);
+        } else if (currentAreaName) {
+          recommendations.push(`Investigate the landmarks and layout of ${currentAreaName}`);
+        } else {
+          recommendations.push(`Survey the area for immediate points of interest`);
+        }
+
+        // Secondary / tactical action
+        if (isWounded) {
+          recommendations.push(`Take cover to bind your wounds and catch your breath`);
+        } else if (heldItems.length > 1) {
+          recommendations.push(`Switch grip and ready your ${heldItems[1]}`);
+        } else {
+          recommendations.push(`Consult your companions to coordinate the party's next move`);
+        }
+      }
+    }
+
+    const uniqueRecs = Array.from(new Set(recommendations)).filter(r => r && r.trim().length > 0);
+    if (uniqueRecs.length < 2) {
+      uniqueRecs.push("Survey your immediate surroundings for danger or opportunity");
+      uniqueRecs.push("Converse with your allies to decide the next course of action");
+    }
+    return uniqueRecs.slice(0, 4);
   }
 
   /**
@@ -3578,6 +3818,48 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
         return String(r || '');
       }).filter((r: string) => typeof r === 'string' && r.trim().length > 0);
+    }
+
+    // Normalize playerRecommendations for multiplayer per-player uniqueness
+    if (!data.playerRecommendations || typeof data.playerRecommendations !== 'object') {
+      data.playerRecommendations = {};
+    }
+    const sanitizedPlayerRecs: Record<string, string[]> = {};
+    for (const [userKey, recs] of Object.entries(data.playerRecommendations)) {
+      if (Array.isArray(recs)) {
+        sanitizedPlayerRecs[userKey] = recs.map((r: any) => {
+          if (typeof r === 'string') return r;
+          if (typeof r === 'object' && r !== null) {
+            return r.text || r.label || r.action || r.recommendation || JSON.stringify(r);
+          }
+          return String(r || '');
+        }).filter((r: string) => typeof r === 'string' && r.trim().length > 0);
+      }
+    }
+    data.playerRecommendations = sanitizedPlayerRecs;
+
+    // Scan all human player files in the game and ensure every player has unique recommendations
+    try {
+      const allFiles = this.fs.getAll();
+      for (const fileName of Object.keys(allFiles)) {
+        const lower = fileName.toLowerCase();
+        if (lower.endsWith('.txt') && !lower.includes('world') && !lower.includes('map') && !lower.includes('rule') && !lower.includes('guide') && !lower.includes('lore') && !lower.endsWith('-npc.txt')) {
+          const raw = allFiles[fileName] || '';
+          const playerMatch = raw.match(/Player:\s*([^\n\r]+)/i);
+          let pUser = playerMatch ? playerMatch[1].trim() : '';
+          if (!pUser) {
+            const parts = fileName.replace(/\.txt$/, '').split(/[-_]/);
+            if (parts.length > 1) {
+              pUser = parts[parts.length - 1].trim();
+            }
+          }
+          if (pUser && (!data.playerRecommendations[pUser] || data.playerRecommendations[pUser].length === 0)) {
+            data.playerRecommendations[pUser] = AIEngine.generateCharacterUniqueRecommendations(pUser, this.fs, fileName);
+          }
+        }
+      }
+    } catch (e) {
+      // non-fatal
     }
 
     // Normalize updates texts to strings (preventing React child object errors)

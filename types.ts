@@ -101,6 +101,7 @@ export interface AIResponse {
   checks?: CheckDef[];
   gameOver?: boolean;
   recommendations?: string[];
+  playerRecommendations?: Record<string, string[]>;
   currencyTransactions?: CurrencyTransaction[];
   inventoryTransactions?: InventoryTransaction[];
   healthTransactions?: HealthTransaction[];
@@ -117,6 +118,7 @@ export interface NarrativeEntry {
   text: string;
   type: 'system' | 'user' | 'ai';
   recommendations?: string[];
+  playerRecommendations?: Record<string, string[]>;
 }
 
 export interface TurnSnapshot {
@@ -127,6 +129,7 @@ export interface TurnSnapshot {
   narrative: NarrativeEntry[];
   updates: UpdateItem[];
   recommendations: string[];
+  playerRecommendations?: Record<string, string[]>;
   fileSystemState: {
     files: Record<string, string>;
     metadata: Record<string, { displayName: string }>;

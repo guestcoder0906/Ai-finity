@@ -103,6 +103,17 @@ function sanitizeRecommendations(raw: any): string[] {
   }).filter((r: string) => typeof r === 'string' && r.trim().length > 0);
 }
 
+function sanitizePlayerRecommendations(raw: any): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result: Record<string, string[]> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (typeof key === 'string' && key.trim().length > 0) {
+      result[key.trim()] = sanitizeRecommendations(val);
+    }
+  }
+  return result;
+}
+
 function sanitizeUpdates(raw: any): UpdateItem[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((u: any) => {
@@ -193,6 +204,7 @@ function App() {
   const [worldTime, setWorldTime] = useState<string>('');
   const [gameOver, setGameOver] = useState(false);
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [playerRecommendations, setPlayerRecommendations] = useState<Record<string, string[]>>({});
   const [autoRecommendationsEnabled, setAutoRecommendationsEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('aimud_autoRecommendationsEnabled');
     return saved !== null ? JSON.parse(saved) : true;
@@ -969,6 +981,9 @@ function App() {
         setUpdates(sanitizeUpdates(state.updates || []));
         setWorldTime(state.worldTime || '');
         setRecommendations(sanitizeRecommendations(state.recommendations || []));
+        if (state.playerRecommendations) {
+          setPlayerRecommendations(sanitizePlayerRecommendations(state.playerRecommendations));
+        }
         syncFiles();
 
         // Check if we need to show character creation
@@ -1024,6 +1039,7 @@ function App() {
           narrative: [...(roomStateRef.current?.narrative || [])],
           updates: [...(roomStateRef.current?.updates || [])],
           recommendations: [...(roomStateRef.current?.recommendations || [])],
+          playerRecommendations: { ...(roomStateRef.current?.playerRecommendations || {}) },
           fileSystemState: fileSystem.exportState(),
           worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
           gameOver: false
@@ -1050,6 +1066,7 @@ function App() {
               narrative: newNarrative,
               updates: newUpdates,
               recommendations: result.recommendations || [],
+              playerRecommendations: result.playerRecommendations || {},
               gameState: 'playing',
               worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
               turnProcessed: true
@@ -1193,6 +1210,9 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       }
       if (snapshotData.recommendations) {
         setRecommendations(sanitizeRecommendations(snapshotData.recommendations));
+      }
+      if (snapshotData.playerRecommendations) {
+        setPlayerRecommendations(sanitizePlayerRecommendations(snapshotData.playerRecommendations));
       }
       if (snapshotData.worldTime) {
         setWorldTime(snapshotData.worldTime);
@@ -1434,6 +1454,9 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           } else {
             setRecommendations([]);
           }
+          if (result.playerRecommendations) {
+            setPlayerRecommendations(sanitizePlayerRecommendations(result.playerRecommendations));
+          }
           if (result.gameOver && gameMode === 'singleplayer') {
             setGameOver(true);
             setNarrative(prev => [...prev, { id: 'death', text: 'CRITICAL FAILURE: Vital signs zero. Simulation Terminated.', type: 'system' }]);
@@ -1471,6 +1494,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
               narrative: finalNarrative,
               updates: safeUpdates,
               recommendations: sanitizeRecommendations(result.recommendations || []),
+              playerRecommendations: sanitizePlayerRecommendations(result.playerRecommendations || {}),
               gameState: 'character_creation',
               worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt'))
             });
@@ -1500,6 +1524,62 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       }
     }
   }, [gameMode, isInitialized, roomState?.gameState, isHost, autoRecommendationsEnabled, showCharacterCreation, recommendations?.length || 0]);
+
+  // Derive active action recommendations tailored specifically to the user's character
+  const effectiveRecommendations = useMemo(() => {
+    if (!autoRecommendationsEnabled || showCharacterCreation) return [];
+
+    if (gameMode === 'multiplayer') {
+      const myName = (localStorage.getItem('aimud_username') || username || '').trim();
+      const lowerUser = myName.toLowerCase();
+
+      if (roomState?.gameState === 'waiting_for_world' && isHost) {
+        return sanitizeRecommendations(recommendations || []);
+      }
+
+      if (roomState?.gameState === 'playing') {
+        // 1. Check playerRecommendations state
+        if (lowerUser) {
+          const userKey = Object.keys(playerRecommendations || {}).find(k => k.toLowerCase() === lowerUser);
+          if (userKey && Array.isArray(playerRecommendations[userKey]) && playerRecommendations[userKey].length > 0) {
+            return sanitizeRecommendations(playerRecommendations[userKey]);
+          }
+
+          // 2. Check roomState.playerRecommendations
+          const roomRecs = roomState?.playerRecommendations || {};
+          const roomKey = Object.keys(roomRecs).find(k => k.toLowerCase() === lowerUser);
+          if (roomKey && Array.isArray(roomRecs[roomKey]) && roomRecs[roomKey].length > 0) {
+            return sanitizeRecommendations(roomRecs[roomKey]);
+          }
+
+          // 3. Fallback: generate character-unique recommendations dynamically
+          const unique = AIEngine.generateCharacterUniqueRecommendations(myName, fileSystem);
+          if (unique && unique.length > 0) {
+            return unique;
+          }
+        }
+
+        return sanitizeRecommendations(recommendations || []);
+      }
+
+      return [];
+    }
+
+    // Singleplayer
+    return sanitizeRecommendations(recommendations || []);
+  }, [
+    autoRecommendationsEnabled,
+    showCharacterCreation,
+    gameMode,
+    username,
+    playerRecommendations,
+    roomState?.playerRecommendations,
+    roomState?.gameState,
+    isHost,
+    recommendations,
+    fileSystem,
+    syncCount
+  ]);
 
   const handleReferenceClick = (ref: string) => {
     const filename = fileSystem.findFileByReference(ref);
@@ -2351,10 +2431,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         <InputArea
           onSend={handleAction}
           disabled={isProcessing || gameOver || isMyTurnReady || showCharacterCreation || (gameMode === 'multiplayer' && roomState?.gameState !== 'playing' && !(roomState?.gameState === 'waiting_for_world' && isHost))}
-          recommendations={(autoRecommendationsEnabled && !showCharacterCreation && (
-            (gameMode === 'singleplayer') ||
-            (gameMode === 'multiplayer' && (roomState?.gameState === 'playing' || (roomState?.gameState === 'waiting_for_world' && isHost)))
-          )) ? recommendations : []}
+          recommendations={effectiveRecommendations}
         />
       </div>
 
