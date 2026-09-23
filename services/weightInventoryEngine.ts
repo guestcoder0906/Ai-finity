@@ -193,6 +193,70 @@ export interface CharacterPhysicalStats {
 
 export class WeightInventoryEngine {
   /**
+   * Cleans accidental repeating phrases, duplicated text lines, or concatenated duplicate substrings.
+   * e.g. "Location: XYZ Location: XYZ Location: XYZ" or repeated piped segments.
+   */
+  public static cleanDuplicateRepeatedPhrases(text: string): string {
+    if (!text || typeof text !== 'string') return text;
+    let cleaned = text;
+
+    // 1. Remove back-to-back duplicate bracketed tags: e.g. "[Location: XYZ] [Location: XYZ]" -> "[Location: XYZ]"
+    cleaned = cleaned.replace(/(\[[^\]]{3,}\])(?:\s*\1)+/gi, '$1');
+
+    // 2. Remove back-to-back duplicate pipe fragments: e.g. "| Amount: 1 | Worth: Digital ... | Amount: 1 | Worth: Digital ..."
+    cleaned = cleaned.replace(/((?:\|\s*[^|\n\r]+){2,})(?:\s*\1)+/gi, '$1');
+
+    // 3. Remove repeated identical sentences or long phrase blocks (8+ chars) repeated consecutively
+    let prevCleaned = '';
+    let iterations = 0;
+    while (prevCleaned !== cleaned && iterations < 4) {
+      prevCleaned = cleaned;
+      iterations++;
+
+      // Match repeated phrases >= 8 characters long that repeat 2 or more times
+      cleaned = cleaned.replace(/([A-Za-z0-9#_ \-\.]{8,}?)(?:\s*(?:\|\s*)?\1){1,}/g, (match, p1) => {
+        if (/[a-zA-Z]{3,}/.test(p1)) {
+          return p1.trim();
+        }
+        return match;
+      });
+
+      // Collapse duplicate prefix labels: "Location: Location:" -> "Location:"
+      cleaned = cleaned.replace(/(?:Location:\s*){2,}/gi, 'Location: ');
+      cleaned = cleaned.replace(/(?:Container:\s*){2,}/gi, 'Container: ');
+      cleaned = cleaned.replace(/(?:Name:\s*){2,}/gi, 'Name: ');
+    }
+
+    return cleaned;
+  }
+
+  /**
+   * Sanitizes a currency name to prevent leaking field prefixes or location names into the currency label.
+   */
+  public static sanitizeCurrencyName(name: string): string {
+    if (!name || typeof name !== 'string') return '';
+    let cleaned = name.trim();
+
+    // Strip outer brackets/quotes
+    cleaned = cleaned.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+
+    // Strip leading headers like Location:, Container:, Item:, Name:, etc.
+    cleaned = cleaned.replace(/^(?:name|location|container|stored|carried|item|balance)[:=\s]+/i, '').trim();
+
+    // Strip any trailing pipes and attributes that leaked into the name
+    cleaned = cleaned.replace(/\|.*$/i, '').trim();
+    cleaned = cleaned.replace(/(?:\[\s*)?location[:=\s]+[^\]\n\r]+/gi, '').trim();
+    cleaned = cleaned.replace(/(?:\[\s*)?container[:=\s]+[^\]\n\r]+/gi, '').trim();
+    cleaned = cleaned.replace(/(?:worth|value|dimensions?|dims?|size|weight|wt)[:=\s]+[^|;,()]+/gi, '').trim();
+
+    // Collapse repeated duplicate phrases
+    cleaned = WeightInventoryEngine.cleanDuplicateRepeatedPhrases(cleaned);
+    cleaned = cleaned.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+
+    return cleaned || 'Credits';
+  }
+
+  /**
    * Infers single-unit dimensions, volume, weight, and digital status for currency items.
    * Physical currency is NOT infinite space and has dimensions/volume.
    * Digital money (credits, crypto, bank deposits) takes 0 volume/space.
@@ -567,8 +631,9 @@ export class WeightInventoryEngine {
     const explicitAmtMatch = cleanedLine.match(/(?:^|\||;)\s*(?:amount|quantity|qty|count)[:=\s]+([0-9]+(?:\.[0-9]+)?)/i);
 
     if (explicitNameMatch) {
-      const rawName = (explicitNameMatch[1] || explicitNameMatch[2] || explicitNameMatch[3] || explicitNameMatch[4] || '').trim();
-      if (rawName) {
+      let rawName = (explicitNameMatch[1] || explicitNameMatch[2] || explicitNameMatch[3] || explicitNameMatch[4] || '').trim();
+      rawName = WeightInventoryEngine.sanitizeCurrencyName(rawName);
+      if (rawName && rawName.toLowerCase() !== 'none' && rawName !== '0') {
         let amt = explicitAmtMatch ? parseFloat(explicitAmtMatch[1]) : (explicitQty !== undefined ? explicitQty : 1);
         if (isNaN(amt) || amt <= 0) amt = 1;
         const defs = this.inferCurrencyDefaults(rawName, entryDimsStr, entryWeight, amt);
@@ -4272,7 +4337,8 @@ export class WeightInventoryEngine {
     currentTimestamp?: string,
     currencyOverride?: { carried?: CurrencyEntry[]; stored?: CurrencyEntry[] }
   ): { updatedContent: string; stats: CharacterPhysicalStats; changes: string[] } {
-    const stats = this.parseCharacterStatsAndInventory(content, currentTimestamp);
+    const cleanedInitialContent = WeightInventoryEngine.cleanDuplicateRepeatedPhrases(content);
+    const stats = this.parseCharacterStatsAndInventory(cleanedInitialContent, currentTimestamp);
     if (currencyOverride?.carried !== undefined) {
       stats.currency.carriedCurrencies = currencyOverride.carried;
       stats.currency.carriedSummary = WeightInventoryEngine.formatCurrencySummary(stats.currency.carriedCurrencies);
@@ -4290,7 +4356,7 @@ export class WeightInventoryEngine {
     }
     const changes: string[] = [];
 
-    let updated = content;
+    let updated = cleanedInitialContent;
 
     // 1. Ensure [NAME & DESCRIPTION] contains Physical Dimensions and Body Weight if not already present
     if (!updated.includes('Physical Dimensions:') && !updated.includes('Dimensions:') && !updated.includes('Body Dimensions:')) {
@@ -4665,12 +4731,26 @@ export class WeightInventoryEngine {
       // De-duplicate carried currencies before writing
       const dedupCarried: CurrencyEntry[] = [];
       for (const c of stats.currency.carriedCurrencies) {
-        const match = dedupCarried.find(d =>
-          d.amount === c.amount &&
-          (d.name.toLowerCase() === c.name.toLowerCase() || (d.name === 'Dollars' && /dollar|usd|cash/i.test(c.name))) &&
+        let cleanName = WeightInventoryEngine.sanitizeCurrencyName(c.name);
+        if (!cleanName || cleanName.toLowerCase() === 'none' || cleanName === '0') continue;
+        c.name = cleanName;
+
+        const matchIdx = dedupCarried.findIndex(d =>
+          (d.name.toLowerCase() === c.name.toLowerCase() || (d.name.toLowerCase() === 'dollars' && /^(?:dollars|usd|cash|\$)$/i.test(c.name))) &&
           ((!d.container && !c.container) || d.container?.toLowerCase() === c.container?.toLowerCase())
         );
-        if (!match) {
+        if (matchIdx >= 0) {
+          // Consolidate or update to the highest active balance if identical denomination in the same container
+          if (c.amount > dedupCarried[matchIdx].amount) {
+            dedupCarried[matchIdx].amount = c.amount;
+          }
+          if (!dedupCarried[matchIdx].worth && c.worth) {
+            dedupCarried[matchIdx].worth = c.worth;
+          }
+          if (!dedupCarried[matchIdx].container && c.container) {
+            dedupCarried[matchIdx].container = c.container;
+          }
+        } else {
           dedupCarried.push(c);
         }
       }
@@ -4694,12 +4774,40 @@ export class WeightInventoryEngine {
       // De-duplicate stored currencies before writing
       const dedupStored: CurrencyEntry[] = [];
       for (const c of stats.currency.storedCurrencies) {
-        const match = dedupStored.find(d =>
-          d.amount === c.amount &&
-          (d.name.toLowerCase() === c.name.toLowerCase() || (d.name === 'Dollars' && /dollar|usd|cash/i.test(c.name))) &&
+        let cleanName = WeightInventoryEngine.sanitizeCurrencyName(c.name);
+        if (!cleanName || cleanName.toLowerCase() === 'none' || cleanName === '0') continue;
+
+        let cleanLoc = c.location ? WeightInventoryEngine.cleanDuplicateRepeatedPhrases(c.location).trim() : undefined;
+        if (cleanLoc) {
+          cleanLoc = cleanLoc.replace(/^location[:=\s]+/i, '').trim();
+          cleanLoc = cleanLoc.replace(/^[">:\s]+/, '').trim();
+          cleanLoc = cleanLoc.replace(/\|.*$/i, '').trim();
+          const openB = (cleanLoc.match(/\[/g) || []).length;
+          const closeB = (cleanLoc.match(/\]/g) || []).length;
+          if (closeB > openB && cleanLoc.endsWith(']')) {
+            cleanLoc = cleanLoc.substring(0, cleanLoc.length - 1).trim();
+          }
+        }
+        c.location = cleanLoc;
+
+        // If the currency name was recorded as the location name, give it a proper currency label
+        if (cleanLoc && (cleanName.toLowerCase() === cleanLoc.toLowerCase() || cleanName.toLowerCase().includes(cleanLoc.toLowerCase()) || /relay|branch|vault|bank|account|stash|bunker|safehouse/i.test(cleanName))) {
+          cleanName = 'Digital Credits / Electronic Scrip';
+        }
+        c.name = cleanName;
+
+        const matchIdx = dedupStored.findIndex(d =>
+          d.name.toLowerCase() === c.name.toLowerCase() &&
           ((!d.location && !c.location) || d.location?.toLowerCase() === c.location?.toLowerCase() || (d.isHiddenLocation && c.isHiddenLocation))
         );
-        if (!match) {
+        if (matchIdx >= 0) {
+          if (c.amount > dedupStored[matchIdx].amount) {
+            dedupStored[matchIdx].amount = c.amount;
+          }
+          if (!dedupStored[matchIdx].location && c.location) {
+            dedupStored[matchIdx].location = c.location;
+          }
+        } else {
           dedupStored.push(c);
         }
       }
@@ -4708,21 +4816,11 @@ export class WeightInventoryEngine {
         currencyLines.push(`  * None (0)`);
       } else {
         for (const c of dedupStored) {
-          let cleanLoc = c.location?.trim();
-          if (cleanLoc) {
-            cleanLoc = cleanLoc.replace(/^location[:=\s]+/i, '').trim();
-            cleanLoc = cleanLoc.replace(/^[">:\s]+/, '').trim();
-            const openB = (cleanLoc.match(/\[/g) || []).length;
-            const closeB = (cleanLoc.match(/\]/g) || []).length;
-            if (closeB > openB && cleanLoc.endsWith(']')) {
-              cleanLoc = cleanLoc.substring(0, cleanLoc.length - 1).trim();
-            }
-          }
           const worthPart = c.worth ? ` | Worth: ${c.worth}` : '';
           const dimStr = c.dimensions?.raw ? c.dimensions.raw : (c.singleDimensionsRaw ? c.singleDimensionsRaw : (c.isDigital ? 'Digital' : '1.2x1.2x0.08 inches'));
           const dimPart = c.isDigital ? ` | Dimensions: Digital` : ` | Dimensions: ${dimStr}`;
           const wPart = c.weight !== undefined ? ` | Weight: ${c.weight} lbs` : '';
-          const locSuffix = cleanLoc ? ` [Location: ${cleanLoc}]` : '';
+          const locSuffix = c.location ? ` [Location: ${c.location}]` : '';
           // User mandate: the year of the coin should be in the name format part of the currency while the amount is separate format for that coin
           currencyLines.push(`  * Name: [${c.name}] | Amount: ${c.amount}${worthPart}${dimPart}${wPart}${locSuffix}`);
         }
@@ -4819,7 +4917,7 @@ export class WeightInventoryEngine {
     }
 
     return {
-      updatedContent: updated,
+      updatedContent: WeightInventoryEngine.cleanDuplicateRepeatedPhrases(updated),
       stats,
       changes
     };

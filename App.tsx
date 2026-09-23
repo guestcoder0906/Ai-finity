@@ -64,7 +64,9 @@ import {
   Sparkles,
   PanelLeftOpen,
   PanelLeftClose,
-  RotateCcw
+  RotateCcw,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -252,6 +254,46 @@ function App() {
   const [mobilePanelTab, setMobilePanelTab] = useState<'files' | 'map'>('files');
   // Sidebar minimizable & expandable (minimized by default)
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(true);
+
+  // Browser Fullscreen toggle state
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() => {
+    if (typeof document !== 'undefined') {
+      return !!document.fullscreenElement;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    try {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen();
+        } else if ((document.documentElement as any).webkitRequestFullscreen) {
+          (document.documentElement as any).webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle not permitted or failed', err);
+    }
+  }, []);
 
   const [stripeReturnMessage, setStripeReturnMessage] = useState<{
     type: 'success' | 'info' | 'error';
@@ -1736,7 +1778,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         mobileTab={mobilePanelTab}
         onSetMobileTab={setMobilePanelTab}
         isMinimized={isSidebarMinimized}
-        onToggleMinimize={() => setIsSidebarMinimized(prev => !prev)}
+        onToggleMinimize={(explicit?: boolean) => setIsSidebarMinimized(prev => typeof explicit === 'boolean' ? explicit : !prev)}
       />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
@@ -1854,6 +1896,26 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
               >
                 <RotateCcw size={13} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
                 <span>Undo Turn{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+              </button>
+
+              {/* Fullscreen Browser Toggle Button */}
+              <button
+                id="top-fullscreen-toggle-btn"
+                onClick={toggleFullscreen}
+                className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
+                title={isFullscreen ? "Exit Fullscreen (or press Esc)" : "Toggle Fullscreen Mode"}
+              >
+                {isFullscreen ? (
+                  <>
+                    <Minimize2 size={13} className="text-blue-400" />
+                    <span>Exit Fullscreen</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 size={13} className="text-blue-400" />
+                    <span>Fullscreen</span>
+                  </>
+                )}
               </button>
 
               <span className="text-neutral-600">|</span>
@@ -2101,23 +2163,46 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
                 </button>
               </div>
 
-              {/* Undo Turn Action in Mobile Drawer */}
-              <button
-                onClick={() => {
-                  setIsMobileTopMenuOpen(false);
-                  if (gameMode === 'multiplayer' && !isHost) return;
-                  setIsUndoModalOpen(true);
-                }}
-                disabled={isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)}
-                className={`p-1.5 rounded border text-[11px] font-mono flex items-center justify-center gap-1.5 transition-colors ${
-                  isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)
-                    ? 'opacity-40 bg-neutral-900 border-neutral-800 text-neutral-500 cursor-not-allowed'
-                    : 'bg-neutral-900 hover:bg-neutral-800 text-amber-300 border-neutral-800'
-                }`}
-              >
-                <RotateCcw size={12} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
-                <span>Undo Turn{undoCount > 0 ? ` (${undoCount} available)` : ''}</span>
-              </button>
+              {/* Action Buttons in Mobile Drawer */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    if (gameMode === 'multiplayer' && !isHost) return;
+                    setIsUndoModalOpen(true);
+                  }}
+                  disabled={isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)}
+                  className={`p-1.5 rounded border text-[11px] font-mono flex items-center justify-center gap-1.5 transition-colors ${
+                    isProcessing || undoCount === 0 || (gameMode === 'multiplayer' && !isHost)
+                      ? 'opacity-40 bg-neutral-900 border-neutral-800 text-neutral-500 cursor-not-allowed'
+                      : 'bg-neutral-900 hover:bg-neutral-800 text-amber-300 border-neutral-800'
+                  }`}
+                >
+                  <RotateCcw size={12} className={undoCount > 0 ? "text-amber-400" : "text-neutral-500"} />
+                  <span>Undo{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    toggleFullscreen();
+                  }}
+                  className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded border border-neutral-800 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  title="Toggle Fullscreen Browser Mode"
+                >
+                  {isFullscreen ? (
+                    <>
+                      <Minimize2 size={12} className="text-blue-400" />
+                      <span>Exit Fullscreen</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 size={12} className="text-blue-400" />
+                      <span>Fullscreen</span>
+                    </>
+                  )}
+                </button>
+              </div>
 
               {/* User / Account Section in Mobile Menu */}
               <div className="bg-neutral-900/80 p-2 rounded border border-neutral-800 flex items-center justify-between gap-2">

@@ -54,7 +54,13 @@ export function parseSecretLocation(
     };
   }
 
-  const trimmed = rawLocation.trim();
+  let trimmed = rawLocation.trim();
+  // Strip any leaked pipes or metadata remnants
+  trimmed = trimmed.replace(/\|.*$/i, '').trim();
+  // Clean repeated phrases
+  trimmed = trimmed.replace(/([A-Za-z0-9#_ \-\.]{8,}?)(?:\s*(?:\|\s*)?\1){1,}/g, '$1').trim();
+  trimmed = trimmed.replace(/(\[[^\]]{3,}\])(?:\s*\1)+/gi, '$1').trim();
+  trimmed = trimmed.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
 
   // Pattern 1: hide:besides(Player1, Player2)[Secret location] or hide:except(...)
   const besidesMatch = trimmed.match(/(?:secret[:=\s]*)?hide:(?:besides|except)\(([^)]*)\)\[([^\]]*)\]/i);

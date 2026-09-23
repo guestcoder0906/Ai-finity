@@ -48,7 +48,7 @@ interface SidebarProps {
   mobileTab?: 'files' | 'map';
   onSetMobileTab?: (tab: 'files' | 'map') => void;
   isMinimized?: boolean;
-  onToggleMinimize?: () => void;
+  onToggleMinimize?: (explicit?: boolean) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -97,6 +97,83 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
   const [internalMinimized, setInternalMinimized] = useState<boolean>(true); // Minimized by default!
   const isMinimized = propIsMinimized !== undefined ? propIsMinimized : internalMinimized;
+
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('aimud_sidebar_width');
+      const parsed = saved ? parseInt(saved, 10) : 320;
+      return !isNaN(parsed) && parsed >= 200 && parsed <= 800 ? parsed : 320;
+    } catch {
+      return 320;
+    }
+  });
+  const [isDraggingResizer, setIsDraggingResizer] = useState(false);
+  const dragStartXRef = useRef<number>(0);
+  const isCurrentlyMinimizedRef = useRef<boolean>(isMinimized);
+  isCurrentlyMinimizedRef.current = isMinimized;
+
+  const handleMouseDownResizer = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingResizer(true);
+    dragStartXRef.current = e.clientX;
+
+    // If currently collapsed, expand on drag initiation
+    if (isCurrentlyMinimizedRef.current) {
+      if (onToggleMinimize) onToggleMinimize(false);
+      setInternalMinimized(false);
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      const currentX = moveEvent.clientX;
+      // Smooth clamping during mouse move without rapid state toggling
+      const clampedWidth = Math.max(180, Math.min(window.innerWidth * 0.75, currentX));
+      setSidebarWidth(clampedWidth);
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      setIsDraggingResizer(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      const finalX = upEvent.clientX;
+      if (finalX < 140) {
+        if (onToggleMinimize) onToggleMinimize(true);
+        setInternalMinimized(true);
+      } else {
+        const finalWidth = Math.max(200, Math.min(window.innerWidth * 0.75, finalX));
+        if (onToggleMinimize) onToggleMinimize(false);
+        setInternalMinimized(false);
+        setSidebarWidth(finalWidth);
+        try {
+          localStorage.setItem('aimud_sidebar_width', Math.round(finalWidth).toString());
+        } catch (_) {}
+      }
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleDoubleClickResizer = () => {
+    if (isMinimized) {
+      if (onToggleMinimize) onToggleMinimize(false);
+      else setInternalMinimized(false);
+    } else {
+      if (sidebarWidth !== 320) {
+        setSidebarWidth(320);
+        try { localStorage.setItem('aimud_sidebar_width', '320'); } catch (_) {}
+      } else {
+        if (onToggleMinimize) onToggleMinimize(true);
+        else setInternalMinimized(true);
+      }
+    }
+  };
 
   const handleToggleMinimize = () => {
     if (onToggleMinimize) {
@@ -185,14 +262,37 @@ const Sidebar: React.FC<SidebarProps> = ({
           ? 'fixed inset-0 z-50 bg-neutral-950 flex flex-col'
           : 'hidden md:flex'
         }
-        md:relative md:inset-auto md:z-auto ${isMinimized && !effectiveMobileOpen ? 'md:w-12' : 'md:w-80'} md:h-full md:bg-neutral-900 md:border-r md:border-neutral-800 md:flex-col
-        text-[11px] md:text-xs font-mono overflow-hidden shrink-0 transition-[width] duration-200 ease-in-out
+        md:relative md:inset-auto md:z-auto md:h-full md:bg-neutral-900 md:border-r md:border-neutral-800 md:flex-col
+        text-[11px] md:text-xs font-mono overflow-hidden shrink-0 ${isDraggingResizer ? 'transition-none select-none' : 'transition-[width] duration-200 ease-in-out'}
       `}
       style={{
         WebkitOverflowScrolling: 'touch',
-        ...(effectiveMobileOpen ? { height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' } : {})
+        ...(effectiveMobileOpen
+          ? { height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }
+          : {
+              width: isMinimized ? '48px' : `${sidebarWidth}px`,
+              minWidth: isMinimized ? '48px' : `${sidebarWidth}px`,
+              maxWidth: isMinimized ? '48px' : `${sidebarWidth}px`,
+            }
+        )
       }}
     >
+      {/* Draggable Resizer Edge for Desktop (expands / collapses by dragging) */}
+      {!effectiveMobileOpen && (
+        <div
+          onMouseDown={handleMouseDownResizer}
+          onDoubleClick={handleDoubleClickResizer}
+          className={`hidden md:block absolute top-0 right-0 w-2 h-full cursor-col-resize z-40 group select-none transition-colors ${
+            isDraggingResizer ? 'bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'hover:bg-blue-500/40'
+          }`}
+          title={isMinimized ? "Drag right to expand sidebar" : "Drag to resize sidebar width (double-click to toggle/reset)"}
+        >
+          <div className={`w-0.5 h-8 bg-neutral-700 group-hover:bg-blue-400 rounded absolute top-1/2 -translate-y-1/2 right-0.5 transition-colors ${
+            isDraggingResizer ? 'bg-blue-300' : ''
+          }`} />
+        </div>
+      )}
+
       {/* Minimized Vertical Rail on Desktop (when collapsed and not mobile drawer) */}
       {isMinimized && !effectiveMobileOpen ? (
         <div className="hidden md:flex flex-col items-center justify-between h-full w-full py-2.5 bg-neutral-950 select-none">
@@ -286,27 +386,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             >
               <Zap size={13} />
             </div>
-          </div>
-
-          {/* Bottom Account Icon */}
-          <div className="flex flex-col items-center gap-1.5">
-            {currentUser ? (
-              <button
-                onClick={onOpenAccount}
-                className="w-8 h-8 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-blue-300 border border-neutral-800 flex items-center justify-center transition-colors cursor-pointer"
-                title={`Account: ${currentUser.username} (${currentUser.role || 'user'})`}
-              >
-                <User size={14} />
-              </button>
-            ) : (
-              <button
-                onClick={onOpenAuth}
-                className="w-8 h-8 rounded-lg bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 flex items-center justify-center transition-colors cursor-pointer"
-                title="Log In / Sign Up"
-              >
-                <User size={14} />
-              </button>
-            )}
           </div>
         </div>
       ) : (
@@ -489,26 +568,12 @@ const Sidebar: React.FC<SidebarProps> = ({
           {currentUser ? (
             <div className="flex gap-1.5 w-full">
               <button
-                id="sidebar-account-btn"
-                onClick={onOpenAccount}
-                className={`flex-1 py-1 px-2 rounded border font-semibold flex items-center justify-center gap-1 transition-colors truncate ${
-                  currentUser.role === 'admin'
-                    ? 'bg-sky-950/80 hover:bg-sky-900 border-cyan-400/70 text-cyan-300 shadow-[0_0_8px_rgba(56,189,248,0.25)]'
-                    : currentUser.role === 'mod'
-                    ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-400/70 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.25)]'
-                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-blue-300'
-                }`}
-                title="Account Settings & Permissions"
-              >
-                <User size={11} />
-                <span className="truncate">{currentUser.role === 'admin' ? 'Account (Admin)' : currentUser.role === 'mod' ? 'Account (Mod)' : 'Account'}</span>
-              </button>
-              <button
                 onClick={onLogout}
-                className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white py-1 px-2 rounded border border-neutral-700 transition-colors shrink-0"
+                className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white py-1 px-2 rounded border border-neutral-700 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 title="Log Out (Switch to Guest)"
               >
-                Log Out
+                <LogOut size={11} className="text-neutral-400" />
+                <span>Log Out</span>
               </button>
             </div>
           ) : (
