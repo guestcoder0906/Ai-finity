@@ -110,7 +110,8 @@ export interface CurrencyEntry {
   amount: number;
   worth?: string; // e.g. "$1.00", "1 GP", "50 Credits", "$1.00 each ($1.00 total)"
   worthValue?: number; // numeric face value/worth per unit or total
-  dimensions?: ParsedDimensions; // dimensions of a single unit of currency
+  dimensions?: ParsedDimensions; // multiplied total dimensions of the stack/bundle of currency
+  singleDimensions?: ParsedDimensions; // dimensions of a single coin/unit
   singleDimensionsRaw?: string; // e.g. "1.5x1.5x0.09 inches"
   isDigital?: boolean; // true if digital money, taking 0 volume/dimensions
   unitVolume?: number; // cubic inches per single unit
@@ -257,7 +258,8 @@ export class WeightInventoryEngine {
   }
 
   /**
-   * Infers single-unit dimensions, volume, weight, and digital status for currency items.
+   * Infers single-unit dimensions, volume, weight, and digital status for currency items,
+   * and calculates the multiplied total dimensions and volume for the full currency stack (amount pieces).
    * Physical currency is NOT infinite space and has dimensions/volume.
    * Digital money (credits, crypto, bank deposits) takes 0 volume/space.
    */
@@ -268,6 +270,8 @@ export class WeightInventoryEngine {
     amount: number = 1
   ): {
     dimensions: ParsedDimensions;
+    singleDimensions: ParsedDimensions;
+    singleDimensionsRaw: string;
     isDigital: boolean;
     singleWeight: number;
     totalWeight: number;
@@ -297,6 +301,8 @@ export class WeightInventoryEngine {
       };
       return {
         dimensions: dim,
+        singleDimensions: dim,
+        singleDimensionsRaw: 'Digital',
         isDigital: true,
         singleWeight: 0,
         totalWeight: 0,
@@ -306,151 +312,105 @@ export class WeightInventoryEngine {
       };
     }
 
+    let singleDim: ParsedDimensions;
+    let singleW = 0.02;
+    let unitVol = 0.115;
+    let defaultWorth = '$1.00';
+
     // If explicit dimensions are supplied, parse them
     if (explicitDims && explicitDims.trim()) {
       const parsedDim = this.parseDimensions(explicitDims);
       const h = parsedDim.height || 1.2;
       const w = parsedDim.width || 1.2;
       const d = parsedDim.depth || 0.08;
-      const unitVol = Math.round(h * w * d * 10000) / 10000;
-      const singleW = explicitWeight !== undefined && amount > 0
+      unitVol = Math.round(h * w * d * 10000) / 10000;
+      singleDim = {
+        height: h,
+        width: w,
+        depth: d,
+        raw: parsedDim.raw || `${h}x${w}x${d} inches`,
+        applies: true,
+        unit: 'inches'
+      };
+      singleW = explicitWeight !== undefined && amount > 0
         ? Math.round((explicitWeight / amount) * 10000) / 10000
         : (lower.includes('morgan') || lower.includes('dollar') ? 0.06 : 0.02);
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: parsedDim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol
-      };
+      defaultWorth = lower.includes('dollar') ? '$1.00' : '1 Coin';
+    } else if (/morgan|silver\s*dollar|large\s*dollar|trade\s*dollar|peace\s*dollar|double\s*eagle/i.test(lower)) {
+      // 1. Large historical coins (e.g. Morgan Dollar, Peace Dollar, Silver Dollar, Double Eagle)
+      singleDim = this.parseDimensions('1.5x1.5x0.09 inches');
+      singleW = 0.06; // ~26.7g
+      unitVol = 0.2025;
+      defaultWorth = '$1.00';
+    } else if (/banknote|bill|cash|scrip|paper\s*money|dollar\s*bill/i.test(lower)) {
+      // 2. Paper currency / Banknotes / Dollar bills / Scrip / Cash
+      singleDim = this.parseDimensions('3x2.6x0.02 inches');
+      singleW = 0.002;
+      unitVol = 0.156;
+      defaultWorth = '$1.00';
+    } else if (/penny|cent|dime|nickel|quarter|small\s*coin/i.test(lower)) {
+      // 3. Small coins (penny, cent, dime, nickel, quarter)
+      singleDim = this.parseDimensions('0.95x0.95x0.07 inches');
+      singleW = 0.012;
+      unitVol = 0.063;
+      defaultWorth = '$0.01';
+    } else if (/bar|ingot|bullion/i.test(lower)) {
+      // 4. Bullion / Ingots / Bars
+      singleDim = this.parseDimensions('7x3.6x1.75 inches');
+      singleW = explicitWeight !== undefined && amount > 0 ? explicitWeight / amount : 27.0;
+      unitVol = 44.1;
+      defaultWorth = 'Bullion';
+    } else if (/gem|jewel|ruby|diamond|emerald|sapphire/i.test(lower)) {
+      // 5. Gems / Jewels / Trade stones
+      singleDim = this.parseDimensions('0.8x0.8x0.8 inches');
+      singleW = 0.03;
+      unitVol = 0.512;
+      defaultWorth = 'Gem';
+    } else if (/cap|bottle\s*cap/i.test(lower)) {
+      // 6. Bottle caps
+      singleDim = this.parseDimensions('1.2x1.2x0.2 inches');
+      singleW = 0.005;
+      unitVol = 0.288;
+      defaultWorth = '1 Cap';
+    } else {
+      // 7. Standard fantasy/historical coins (Gold, Silver, Copper, Electrum, Platinum, Crowns, Ducats, etc.)
+      singleDim = this.parseDimensions('1.2x1.2x0.08 inches');
+      singleW = 0.02; // ~50 coins per pound
+      unitVol = 0.115;
+      defaultWorth = lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : '1 Coin');
     }
 
-    // Inferred physical defaults based on currency name/type:
-    // 1. Large historical coins (e.g. Morgan Dollar, Peace Dollar, Silver Dollar, Double Eagle)
-    if (/morgan|silver\s*dollar|large\s*dollar|trade\s*dollar|peace\s*dollar|double\s*eagle/i.test(lower)) {
-      const dim = this.parseDimensions('1.5x1.5x0.09 inches');
-      const singleW = 0.06; // ~26.7g
-      const unitVol = 0.2025;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: '$1.00'
-      };
-    }
-
-    // 2. Paper currency / Banknotes / Dollar bills / Scrip / Cash
-    if (/banknote|bill|cash|scrip|paper\s*money|dollar\s*bill/i.test(lower)) {
-      const dim = this.parseDimensions('3x2.6x0.02 inches');
-      const singleW = 0.002;
-      const unitVol = 0.156;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: '$1.00'
-      };
-    }
-
-    // 3. Small coins (penny, cent, dime, nickel, quarter)
-    if (/penny|cent|dime|nickel|quarter|small\s*coin/i.test(lower)) {
-      const dim = this.parseDimensions('0.95x0.95x0.07 inches');
-      const singleW = 0.012;
-      const unitVol = 0.063;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: '$0.01'
-      };
-    }
-
-    // 4. Bullion / Ingots / Bars
-    if (/bar|ingot|bullion/i.test(lower)) {
-      const dim = this.parseDimensions('7x3.6x1.75 inches');
-      const singleW = explicitWeight !== undefined && amount > 0 ? explicitWeight / amount : 27.0;
-      const unitVol = 44.1;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: 'Bullion'
-      };
-    }
-
-    // 5. Gems / Jewels / Trade stones
-    if (/gem|jewel|ruby|diamond|emerald|sapphire/i.test(lower)) {
-      const dim = this.parseDimensions('0.8x0.8x0.8 inches');
-      const singleW = 0.03;
-      const unitVol = 0.512;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: 'Gem'
-      };
-    }
-
-    // 6. Bottle caps
-    if (/cap|bottle\s*cap/i.test(lower)) {
-      const dim = this.parseDimensions('1.2x1.2x0.2 inches');
-      const singleW = 0.005;
-      const unitVol = 0.288;
-      const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-      const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
-      return {
-        dimensions: dim,
-        isDigital: false,
-        singleWeight: singleW,
-        totalWeight: totalW,
-        unitVolume: unitVol,
-        totalVolume: totalVol,
-        defaultWorth: '1 Cap'
-      };
-    }
-
-    // 7. Standard fantasy/historical coins (Gold, Silver, Copper, Electrum, Platinum, Crowns, Ducats, etc.)
-    const dim = this.parseDimensions('1.2x1.2x0.08 inches');
-    const singleW = 0.02; // ~50 coins per pound
-    const unitVol = 0.115;
+    const singleRaw = singleDim.raw || `${singleDim.height}x${singleDim.width}x${singleDim.depth} inches`;
     const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
     const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+
+    // Calculate multiplied 3D stack/bundle dimensions for amount pieces of physical currency
+    let stackDim: ParsedDimensions = singleDim;
+    if (amount > 1) {
+      const scale = Math.cbrt(amount * 1.15);
+      const stackH = Math.round(singleDim.height * scale * 10) / 10;
+      const stackW = Math.round(singleDim.width * scale * 10) / 10;
+      const stackD = Math.round(singleDim.depth * scale * 10) / 10;
+      stackDim = {
+        height: stackH,
+        width: stackW,
+        depth: stackD,
+        raw: `${stackH}x${stackW}x${stackD} inches`,
+        applies: true,
+        unit: 'inches'
+      };
+    }
+
     return {
-      dimensions: dim,
+      dimensions: stackDim,
+      singleDimensions: singleDim,
+      singleDimensionsRaw: singleRaw,
       isDigital: false,
       singleWeight: singleW,
       totalWeight: totalW,
       unitVolume: unitVol,
       totalVolume: totalVol,
-      defaultWorth: lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : '1 Coin')
+      defaultWorth
     };
   }
 
@@ -642,7 +602,8 @@ export class WeightInventoryEngine {
           amount: amt,
           worth: entryWorthStr || defs.defaultWorth,
           dimensions: defs.dimensions,
-          singleDimensionsRaw: defs.dimensions.raw,
+          singleDimensions: defs.singleDimensions,
+          singleDimensionsRaw: defs.singleDimensionsRaw,
           isDigital: defs.isDigital,
           unitVolume: defs.unitVolume,
           totalVolume: defs.totalVolume,
@@ -682,7 +643,8 @@ export class WeightInventoryEngine {
           amount: amt,
           worth: entryWorthStr || defs.defaultWorth,
           dimensions: defs.dimensions,
-          singleDimensionsRaw: defs.dimensions.raw,
+          singleDimensions: defs.singleDimensions,
+          singleDimensionsRaw: defs.singleDimensionsRaw,
           isDigital: defs.isDigital,
           unitVolume: defs.unitVolume,
           totalVolume: defs.totalVolume,
@@ -725,7 +687,8 @@ export class WeightInventoryEngine {
           amount: amt,
           worth: entryWorthStr || defs.defaultWorth,
           dimensions: defs.dimensions,
-          singleDimensionsRaw: defs.dimensions.raw,
+          singleDimensions: defs.singleDimensions,
+          singleDimensionsRaw: defs.singleDimensionsRaw,
           isDigital: defs.isDigital,
           unitVolume: defs.unitVolume,
           totalVolume: defs.totalVolume,
@@ -748,7 +711,8 @@ export class WeightInventoryEngine {
           amount: amt,
           worth: entryWorthStr || defs.defaultWorth,
           dimensions: defs.dimensions,
-          singleDimensionsRaw: defs.dimensions.raw,
+          singleDimensions: defs.singleDimensions,
+          singleDimensionsRaw: defs.singleDimensionsRaw,
           isDigital: defs.isDigital,
           unitVolume: defs.unitVolume,
           totalVolume: defs.totalVolume,
@@ -770,7 +734,8 @@ export class WeightInventoryEngine {
           amount: amt,
           worth: entryWorthStr || defs.defaultWorth,
           dimensions: defs.dimensions,
-          singleDimensionsRaw: defs.dimensions.raw,
+          singleDimensions: defs.singleDimensions,
+          singleDimensionsRaw: defs.singleDimensionsRaw,
           isDigital: defs.isDigital,
           unitVolume: defs.unitVolume,
           totalVolume: defs.totalVolume,
@@ -799,7 +764,8 @@ export class WeightInventoryEngine {
             amount: dAmt,
             worth: entryWorthStr || `$${dAmt.toFixed(2)}`,
             dimensions: defs.dimensions,
-            singleDimensionsRaw: defs.dimensions.raw,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
             isDigital: defs.isDigital,
             unitVolume: defs.unitVolume,
             totalVolume: defs.totalVolume,
@@ -864,7 +830,8 @@ export class WeightInventoryEngine {
             amount: actualAmt,
             worth: entryWorthStr || defs.defaultWorth,
             dimensions: defs.dimensions,
-            singleDimensionsRaw: defs.dimensions.raw,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
             isDigital: defs.isDigital,
             unitVolume: defs.unitVolume,
             totalVolume: defs.totalVolume,
@@ -894,7 +861,8 @@ export class WeightInventoryEngine {
             amount: pAmt,
             worth: entryWorthStr || defs.defaultWorth,
             dimensions: defs.dimensions,
-            singleDimensionsRaw: defs.dimensions.raw,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
             isDigital: defs.isDigital,
             unitVolume: defs.unitVolume,
             totalVolume: defs.totalVolume,
