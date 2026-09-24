@@ -95,9 +95,10 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
           {/* Guest Comparison Callout */}
           <div className="p-3.5 bg-neutral-950 border border-neutral-800 rounded-xl space-y-3">
             <div className="flex items-center justify-between text-xs pb-2 border-b border-neutral-800/80">
-              <span className="text-neutral-400">Beta Phase Active:</span>
+              <span className="text-neutral-400">Account Benefits:</span>
               <span className="font-mono font-bold text-blue-300 bg-blue-950/50 px-2 py-0.5 rounded border border-blue-900/60 flex items-center gap-1">
                 <Zap size={12} className="text-blue-400" /> 20 Daily Free Actions
+                <span className="text-[10px] text-blue-400 font-normal">(+10 during Beta)</span>
               </span>
             </div>
 
@@ -107,9 +108,9 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                   <Zap size={13} />
                 </div>
                 <div>
-                  <strong className="text-white">30 Free Actions Daily in Beta:</strong>{' '}
+                  <strong className="text-white">Unlock 20 Daily Free Actions:</strong>{' '}
                   <span className="text-neutral-300">
-                    Registered accounts receive 30 free actions every day (20 base + 10 Beta bonus) and can stack up to 200 free actions! Guests receive 5 initial trial actions.
+                    Registered accounts receive 20 daily free actions <span className="text-blue-400 font-medium">(+10 daily free actions during Beta)</span> and can stack up to 200 free actions! Guests receive 5 initial trial actions.
                   </span>
                 </div>
               </div>
@@ -133,7 +134,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                 <div>
                   <strong className="text-white">Unlock Aifinity Market:</strong>{' '}
                   <span className="text-neutral-300">
-                    Buy permanent action packs (starting at $2.99) or activate monthly memberships.
+                    Buy permanent action packs (starting at $0.99) or activate monthly memberships.
                   </span>
                 </div>
               </div>
@@ -147,7 +148,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
               className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 transition-all cursor-pointer"
             >
               <UserPlus size={16} />
-              <span>Sign Up / Log In (Get 30 Free Daily Actions)</span>
+              <span>Create Account (Unlock 20 Daily Free Actions)</span>
               <ArrowRight size={15} />
             </button>
 

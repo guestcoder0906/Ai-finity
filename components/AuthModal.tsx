@@ -23,6 +23,7 @@ import {
   Check
 } from 'lucide-react';
 import { User as FirebaseUser } from 'firebase/auth';
+import { ActionLimitService } from '../services/actionLimitService';
 import { firebaseConfig } from '../services/firebase';
 
 interface AuthModalProps {
@@ -236,7 +237,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
           </div>
           <div>
             <h2 className="text-sm font-bold text-white tracking-wider">AIFINITY ACCOUNT</h2>
-            <p className="text-[11px] text-neutral-400">Unlock 30 daily free actions & save your adventures</p>
+            <p className="text-[11px] text-neutral-400">
+              Unlock 20 daily free actions & save your adventures
+              {ActionLimitService.getPhase() === 'beta' && (
+                <span className="text-blue-400 font-medium ml-1">(+10 daily free actions during Beta)</span>
+              )}
+            </p>
           </div>
         </div>
 
@@ -581,7 +587,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                   ? 'LOG IN'
                   : accountNotFoundNotice
                   ? 'CREATE ACCOUNT WITH THIS USERNAME & PASSWORD'
-                  : 'CREATE ACCOUNT & GET 20 ACTIONS'}
+                  : 'CREATE ACCOUNT'}
               </button>
             </form>
 

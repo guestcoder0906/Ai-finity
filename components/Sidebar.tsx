@@ -545,7 +545,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     <span className="font-bold text-amber-300">Unlimited Actions</span>
                   ) : actionStatus.isGuest ? (
                     <span>
-                      <strong className="text-amber-400">{(actionStatus.guestActionsRemaining ?? actionStatus.dailyFreeRemaining ?? 0)}/{actionStatus.guestActionsTotal ?? 3}</strong> Guest Actions
+                      <strong className="text-amber-400">{(actionStatus.guestActionsRemaining ?? actionStatus.dailyFreeRemaining ?? 0)}/{actionStatus.guestActionsTotal ?? 5}</strong> Guest Actions
                     </span>
                   ) : (
                     <span>

@@ -86,7 +86,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
                 </li>
                 <li className="flex items-center gap-2">
                   <ShoppingCart size={13} className="text-amber-400 shrink-0" />
-                  <span><strong>Buy Action Packs:</strong> Top up anytime starting at $2.99</span>
+                  <span><strong>Buy Action Packs:</strong> Top up anytime starting at $0.99</span>
                 </li>
               </ul>
             </div>
