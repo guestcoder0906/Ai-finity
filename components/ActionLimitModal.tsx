@@ -78,7 +78,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
               <ul className="text-xs space-y-2 text-neutral-300">
                 <li className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
-                  <span><strong>30 Free Actions Daily:</strong> 20 base + 10 Beta bonus refreshed & stacked every day</span>
+                  <span><strong>30 Free Actions Daily:</strong> 20 base + 10 Beta bonus refreshed & stacked every day (stacks up to max 200 free actions)</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <BookmarkCheck size={13} className="text-blue-400 shrink-0" />

@@ -895,7 +895,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               <div>
                 <span className="text-neutral-400">{isGuest ? "Guest: " : "Daily Free: "}</span>
                 <span className={`font-bold ${isGuest ? "text-amber-400" : "text-emerald-400"}`}>
-                  {effectiveStatus.dailyFreeRemaining} / {effectiveStatus.dailyFreeTotal}
+                  {isGuest ? `${effectiveStatus.dailyFreeRemaining} / ${effectiveStatus.dailyFreeTotal}` : effectiveStatus.dailyFreeRemaining}
                 </span>
                 <span className="text-[10px] text-neutral-400 ml-1">
                   {isGuest ? "(3 trial actions)" : "(+10 beta bonus)"}

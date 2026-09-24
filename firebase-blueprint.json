@@ -16,6 +16,8 @@
         "canSaveMultipleAdventures": { "type": "boolean" },
         "canPostCommunityAdventures": { "type": "boolean" },
         "actionCredits": { "type": "number" },
+        "freeStackedActions": { "type": "number" },
+        "freeRolloverActions": { "type": "number" },
         "dailyActionsUsed": { "type": "number" },
         "dailyActionsDate": { "type": "string" },
         "lastDailyClaimDate": { "type": "string" },

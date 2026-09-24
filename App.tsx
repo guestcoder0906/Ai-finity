@@ -305,7 +305,7 @@ function App() {
 
   // Action Limits & Monetization state
   const [actionStatus, setActionStatus] = useState<ActionStatus>(() => ActionLimitService.getActionStatus(null, guestId));
-  const [dailyClaimNotification, setDailyClaimNotification] = useState<{ amount: number; stacked?: number; total: number } | null>(null);
+  const [dailyClaimNotification, setDailyClaimNotification] = useState<{ amount: number; stacked?: number; totalStacked?: number; total: number } | null>(null);
   const [isMarketOpen, setIsMarketOpen] = useState(false);
   const [marketInitialTab, setMarketInitialTab] = useState<'packs' | 'subscriptions' | 'apikey'>('packs');
   const [isActionLimitModalOpen, setIsActionLimitModalOpen] = useState(false);
@@ -778,6 +778,7 @@ function App() {
         setDailyClaimNotification({
           amount: claimResult.amount,
           stacked: claimResult.stackedFromPrevious,
+          totalStacked: claimResult.totalStacked,
           total: claimResult.totalAvailable
         });
         const updatedStatus = ActionLimitService.getActionStatus(claimResult.updatedUser || userToCheck, guestId);
@@ -2170,6 +2171,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
           <DailyClaimNotificationBanner
             amount={dailyClaimNotification.amount}
             stacked={dailyClaimNotification.stacked}
+            totalStacked={dailyClaimNotification.totalStacked}
             total={dailyClaimNotification.total}
             onDismiss={() => setDailyClaimNotification(null)}
           />
@@ -2226,6 +2228,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
         <DailyClaimNotificationBanner
           amount={dailyClaimNotification.amount}
           stacked={dailyClaimNotification.stacked}
+          totalStacked={dailyClaimNotification.totalStacked}
           total={dailyClaimNotification.total}
           onDismiss={() => setDailyClaimNotification(null)}
         />
@@ -2403,7 +2406,8 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   </span>
                 ) : (
                   <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
-                    {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 30} Free
+                    {actionStatus?.dailyFreeRemaining ?? 0} Free
+                    {(actionStatus?.freeRolloverActions ?? 0) > 0 && ` +${actionStatus.freeRolloverActions} Stack`}
                     {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
                   </span>
                 )}
@@ -2605,7 +2609,10 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                 ) : actionStatus?.isGuest ? (
                   <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3}</span>
                 ) : (
-                  <span>{actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 30}</span>
+                  <span>
+                    {actionStatus?.dailyFreeRemaining ?? 0} Free
+                    {(actionStatus?.freeRolloverActions ?? 0) > 0 && ` +${actionStatus.freeRolloverActions}`}
+                  </span>
                 )}
               </button>
 

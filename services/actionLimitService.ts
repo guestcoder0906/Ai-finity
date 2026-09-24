@@ -134,6 +134,9 @@ export interface ActionStatus {
   dailyFreeTotal: number;
   dailyFreeUsed: number;
   dailyFreeRemaining: number;
+  freeStackedActions: number;
+  freeRolloverActions: number;
+  maxFreeStack: number;
   purchasedCredits: number;
   totalAvailableActions: number;
   canSaveMultipleAdventures: boolean;
@@ -164,6 +167,9 @@ export class ActionLimitService {
   // Guests receive a strictly permanent initial trial limit of 3 actions total (in Beta/Release)
   public static readonly GUEST_ACTION_LIMIT = 3;
 
+  // Maximum free actions that can be stacked from daily claims (purchased actions are NEVER limited)
+  public static readonly MAX_FREE_STACK = 200;
+
   // Registered players receive 20 base + 10 beta bonus = 30 free actions every day (in Beta/Release)
   public static readonly BASE_DAILY_FREE = 20;
   public static readonly BETA_DAILY_BONUS = 10;
@@ -189,6 +195,8 @@ export class ActionLimitService {
   private static getLocalState(user: UserProfile | null, guestId?: string): {
     tier: UserTier;
     actionCredits: number;
+    freeStackedActions: number;
+    freeRolloverActions: number;
     dailyActionsUsed: number;
     dailyActionsDate: string;
   } {
@@ -212,27 +220,45 @@ export class ActionLimitService {
             return {
               tier: 'free',
               actionCredits: 0,
+              freeStackedActions: 0,
+              freeRolloverActions: 0,
               dailyActionsUsed: guestUsed,
               dailyActionsDate: parsed.dailyActionsDate || today
             };
           }
 
-          // Registered accounts: stack unused actions when date changes!
+          const isCel = parsed.tier === 'celestial';
+          const quota = isCel ? 20 : ActionLimitService.TOTAL_DAILY_FREE;
+
+          // Registered accounts: stack unused free actions when date changes (capped at MAX_FREE_STACK = 200)!
           if (parsed.dailyActionsDate !== today) {
-            const isCel = parsed.tier === 'celestial';
-            const quota = isCel ? 20 : ActionLimitService.TOTAL_DAILY_FREE;
             const unusedFromPrev = Math.max(0, quota - (parsed.dailyActionsUsed || 0));
-            if (unusedFromPrev > 0) {
-              parsed.actionCredits = (parsed.actionCredits || 0) + unusedFromPrev;
-            }
+            const prevRollover = typeof parsed.freeRolloverActions === 'number'
+              ? parsed.freeRolloverActions
+              : (typeof parsed.freeStackedActions === 'number' ? parsed.freeStackedActions : 0);
+            const maxRollover = Math.max(0, ActionLimitService.MAX_FREE_STACK - quota);
+            parsed.freeRolloverActions = Math.min(maxRollover, prevRollover + unusedFromPrev);
+            parsed.freeStackedActions = Math.min(ActionLimitService.MAX_FREE_STACK, quota + parsed.freeRolloverActions);
             parsed.dailyActionsDate = today;
             parsed.dailyActionsUsed = 0;
             safeStorage.setItem(key, JSON.stringify(parsed));
           }
 
+          const freeRolloverActions = typeof parsed.freeRolloverActions === 'number'
+            ? parsed.freeRolloverActions
+            : 0;
+
+          const dailyRemaining = Math.max(0, quota - (parsed.dailyActionsUsed || 0));
+          const freeStackedActions = Math.min(
+            ActionLimitService.MAX_FREE_STACK,
+            dailyRemaining + freeRolloverActions
+          );
+
           return {
             tier: (parsed.tier === 'adventurer' || parsed.tier === 'legendary' || parsed.tier === 'celestial') ? parsed.tier : 'free',
             actionCredits: typeof parsed.actionCredits === 'number' ? parsed.actionCredits : 0,
+            freeStackedActions,
+            freeRolloverActions,
             dailyActionsUsed: typeof parsed.dailyActionsUsed === 'number' ? parsed.dailyActionsUsed : 0,
             dailyActionsDate: parsed.dailyActionsDate || today
           };
@@ -243,6 +269,8 @@ export class ActionLimitService {
     const defaultState = {
       tier: 'free' as UserTier,
       actionCredits: 0,
+      freeStackedActions: ActionLimitService.TOTAL_DAILY_FREE,
+      freeRolloverActions: 0,
       dailyActionsUsed: 0,
       dailyActionsDate: today
     };
@@ -258,6 +286,8 @@ export class ActionLimitService {
     state: {
       tier: UserTier;
       actionCredits: number;
+      freeStackedActions?: number;
+      freeRolloverActions?: number;
       dailyActionsUsed: number;
       dailyActionsDate: string;
     }
@@ -309,6 +339,8 @@ export class ActionLimitService {
         dailyFreeTotal: isAlpha ? 999999 : guestLimit,
         dailyFreeUsed: guestUsed,
         dailyFreeRemaining: guestRemaining,
+        freeStackedActions: 0,
+        maxFreeStack: this.MAX_FREE_STACK,
         purchasedCredits: 0,
         totalAvailableActions: totalAvailable,
         canSaveMultipleAdventures: false,
@@ -360,8 +392,20 @@ export class ActionLimitService {
 
     const dailyFreeTotal = isBeta ? tierTotalDaily : (isAlpha ? 999999 : tierBaseDaily);
     const dailyFreeRemaining = isAlpha ? 999999 : Math.max(0, dailyFreeTotal - dailyUsed);
+
+    const freeRolloverActions = Math.min(
+      Math.max(0, this.MAX_FREE_STACK - dailyFreeTotal),
+      Math.max(
+        typeof user.freeRolloverActions === 'number' ? user.freeRolloverActions : 0,
+        typeof local.freeRolloverActions === 'number' ? local.freeRolloverActions : 0
+      )
+    );
+
+    // Total free actions in stack: (Today's remaining daily free actions + rollover from previous days, capped at MAX_FREE_STACK = 200)
+    const freeStackedActions = isAlpha ? 999999 : Math.min(this.MAX_FREE_STACK, dailyFreeRemaining + freeRolloverActions);
+
     const isUnlimited = isAlpha || hasCustomKey || hasInfinite;
-    const totalAvailable = isUnlimited ? 999999 : (dailyFreeRemaining + purchasedCredits);
+    const totalAvailable = isUnlimited ? 999999 : (freeStackedActions + purchasedCredits);
     const canPerformAction = isUnlimited || totalAvailable > 0;
 
     const canSaveMultiple = Boolean(user.canSaveMultipleAdventures || isAdmin || isMod || tier === 'adventurer' || tier === 'legendary' || tier === 'celestial');
@@ -380,6 +424,9 @@ export class ActionLimitService {
       dailyFreeTotal,
       dailyFreeUsed: dailyUsed,
       dailyFreeRemaining,
+      freeStackedActions,
+      freeRolloverActions,
+      maxFreeStack: this.MAX_FREE_STACK,
       purchasedCredits,
       totalAvailableActions: totalAvailable,
       canSaveMultipleAdventures: canSaveMultiple,
@@ -435,13 +482,20 @@ export class ActionLimitService {
       };
     }
 
-    // Registered player action consumption
+    // Registered player action consumption:
+    // Priority:
+    // 1. Daily free actions
+    // 2. Free rollover actions (up to 200 max free stack)
+    // 3. Purchased credits (unlimited, never capped)
     let newDailyUsed = status.dailyFreeUsed;
+    let newFreeRollover = status.freeRolloverActions;
     let newCredits = status.purchasedCredits;
     let usedCredit = false;
 
     if (status.dailyFreeRemaining > 0) {
       newDailyUsed += 1;
+    } else if (newFreeRollover > 0) {
+      newFreeRollover -= 1;
     } else if (newCredits > 0) {
       newCredits -= 1;
       usedCredit = true;
@@ -449,10 +503,15 @@ export class ActionLimitService {
       return { allowed: false, remaining: 0, usedCredit: false, reason: 'limit_reached' };
     }
 
+    const remainingDaily = Math.max(0, status.dailyFreeTotal - newDailyUsed);
+    const newFreeStacked = Math.min(this.MAX_FREE_STACK, remainingDaily + newFreeRollover);
+
     // Save state strictly scoped to this user
     this.saveLocalState(user, guestId, {
       tier: status.tier,
       actionCredits: newCredits,
+      freeRolloverActions: newFreeRollover,
+      freeStackedActions: newFreeStacked,
       dailyActionsUsed: newDailyUsed,
       dailyActionsDate: today
     });
@@ -461,12 +520,16 @@ export class ActionLimitService {
     if (user?.uid) {
       user.dailyActionsUsed = newDailyUsed;
       user.dailyActionsDate = today;
+      user.freeRolloverActions = newFreeRollover;
+      user.freeStackedActions = newFreeStacked;
       user.actionCredits = newCredits;
       // Fire-and-forget sync to Firestore with timeout so account actions never get stuck
       Promise.race([
         updateUserProfile(user.uid, {
           dailyActionsUsed: newDailyUsed,
           dailyActionsDate: today,
+          freeRolloverActions: newFreeRollover,
+          freeStackedActions: newFreeStacked,
           actionCredits: newCredits
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Profile sync timeout')), 2500))
@@ -475,8 +538,7 @@ export class ActionLimitService {
       });
     }
 
-    const remainingDaily = Math.max(0, status.dailyFreeTotal - newDailyUsed);
-    const remainingTotal = remainingDaily + newCredits;
+    const remainingTotal = newFreeStacked + newCredits;
 
     return {
       allowed: true,
@@ -501,11 +563,12 @@ export class ActionLimitService {
     claimed: boolean;
     amount: number;
     stackedFromPrevious: number;
+    totalStacked: number;
     totalAvailable: number;
     updatedUser?: UserProfile;
   }> {
     if (!user || !user.uid) {
-      return { claimed: false, amount: 0, stackedFromPrevious: 0, totalAvailable: 0 };
+      return { claimed: false, amount: 0, stackedFromPrevious: 0, totalStacked: 0, totalAvailable: 0 };
     }
 
     const today = this.getTodayDateString();
@@ -525,6 +588,7 @@ export class ActionLimitService {
         claimed: false,
         amount: 0,
         stackedFromPrevious: 0,
+        totalStacked: currentStatus.freeStackedActions,
         totalAvailable: currentStatus.totalAvailableActions
       };
     }
@@ -537,24 +601,36 @@ export class ActionLimitService {
     const betaBonus = this.BETA_DAILY_BONUS; // 10
     const todayFreeGrant = isBeta ? (baseDaily + betaBonus) : baseDaily; // 30 (or 20 for celestial)
 
-    // Calculate unused daily actions from the previous day to stack
+    // Calculate unused daily actions from the previous day to stack into rollover
     let stackedFromPrevious = 0;
+    const currentRollover = typeof user.freeRolloverActions === 'number'
+      ? user.freeRolloverActions
+      : (typeof local.freeRolloverActions === 'number' ? local.freeRolloverActions : 0);
+
     const prevDate = user.dailyActionsDate || local.dailyActionsDate;
     if (prevDate && prevDate !== today) {
       const prevQuota = isCelestial ? 20 : ActionLimitService.TOTAL_DAILY_FREE;
       const prevUsed = typeof user.dailyActionsUsed === 'number' ? user.dailyActionsUsed : (local.dailyActionsUsed || 0);
-      stackedFromPrevious = Math.max(0, prevQuota - prevUsed);
+      const rawUnused = Math.max(0, prevQuota - prevUsed);
+      const maxRollover = Math.max(0, ActionLimitService.MAX_FREE_STACK - todayFreeGrant);
+      const spaceInRollover = Math.max(0, maxRollover - currentRollover);
+      stackedFromPrevious = Math.min(spaceInRollover, rawUnused);
     }
 
-    // Credits: keep existing credits + stacked unused actions
-    const existingCredits = Math.max(
+    const maxRollover = Math.max(0, ActionLimitService.MAX_FREE_STACK - todayFreeGrant);
+    const newRollover = Math.min(maxRollover, currentRollover + stackedFromPrevious);
+    const newFreeStacked = Math.min(ActionLimitService.MAX_FREE_STACK, todayFreeGrant + newRollover);
+
+    // Purchased credits remain untouched by free daily claims!
+    const existingPurchasedCredits = Math.max(
       typeof user.actionCredits === 'number' ? user.actionCredits : 0,
       typeof local.actionCredits === 'number' ? local.actionCredits : 0
     );
-    const newCredits = existingCredits + stackedFromPrevious;
 
     // Update in-memory user
-    user.actionCredits = newCredits;
+    user.freeRolloverActions = newRollover;
+    user.freeStackedActions = newFreeStacked;
+    user.actionCredits = existingPurchasedCredits;
     user.dailyActionsUsed = 0;
     user.dailyActionsDate = today;
     user.lastDailyClaimDate = today;
@@ -562,7 +638,9 @@ export class ActionLimitService {
     // Save local state
     this.saveLocalState(user, guestId, {
       tier,
-      actionCredits: newCredits,
+      actionCredits: existingPurchasedCredits,
+      freeRolloverActions: newRollover,
+      freeStackedActions: newFreeStacked,
       dailyActionsUsed: 0,
       dailyActionsDate: today
     });
@@ -573,7 +651,9 @@ export class ActionLimitService {
     // Persist to Firestore
     try {
       await updateUserProfile(user.uid, {
-        actionCredits: newCredits,
+        freeRolloverActions: newRollover,
+        freeStackedActions: newFreeStacked,
+        actionCredits: existingPurchasedCredits,
         dailyActionsUsed: 0,
         dailyActionsDate: today,
         lastDailyClaimDate: today
@@ -588,6 +668,7 @@ export class ActionLimitService {
       claimed: true,
       amount: todayFreeGrant,
       stackedFromPrevious,
+      totalStacked: newFreeStacked,
       totalAvailable: currentStatus.totalAvailableActions,
       updatedUser: user
     };

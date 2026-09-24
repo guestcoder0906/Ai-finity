@@ -36,6 +36,8 @@ export interface UserProfile {
   canSaveMultipleAdventures?: boolean;
   canPostCommunityAdventures?: boolean;
   actionCredits?: number;
+  freeStackedActions?: number;
+  freeRolloverActions?: number;
   dailyActionsUsed?: number;
   dailyActionsDate?: string;
   lastDailyClaimDate?: string;

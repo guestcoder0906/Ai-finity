@@ -109,7 +109,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                 <div>
                   <strong className="text-white">30 Free Actions Daily in Beta:</strong>{' '}
                   <span className="text-neutral-300">
-                    Registered accounts receive 30 free actions every day (20 base + 10 Beta bonus) and can stack daily actions! Guests receive 3 initial trial actions.
+                    Registered accounts receive 30 free actions every day (20 base + 10 Beta bonus) and can stack up to 200 free actions! Guests receive 3 initial trial actions.
                   </span>
                 </div>
               </div>

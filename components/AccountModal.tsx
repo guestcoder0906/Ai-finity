@@ -674,16 +674,22 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                     <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
                       <div className="text-neutral-400 text-[10px]">Daily Free ({actionStatus.dailyFreeTotal}/day)</div>
                       <div className="text-sm font-bold text-emerald-400 mt-0.5">
-                        {actionStatus.dailyFreeRemaining} / {actionStatus.dailyFreeTotal}
+                        {actionStatus.dailyFreeRemaining} Free
+                      </div>
+                    </div>
+                    <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
+                      <div className="text-neutral-400 text-[10px]">Free Stack (max 200)</div>
+                      <div className="text-sm font-bold text-teal-400 mt-0.5">
+                        {actionStatus.freeStackedActions || 0} / 200
                       </div>
                     </div>
                     <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
                       <div className="text-neutral-400 text-[10px]">Purchased Credits</div>
-                      <div className="text-sm font-bold text-blue-400 mt-0.5">
+                      <div className="text-sm font-bold text-blue-400 mt-0.5" title="Purchased actions are never limited">
                         {actionStatus.purchasedCredits}
                       </div>
                     </div>
