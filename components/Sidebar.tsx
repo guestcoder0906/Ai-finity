@@ -689,7 +689,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {(!roomState || gameMode === 'singleplayer') && (
-        <div className="flex flex-col border-b border-neutral-800 p-2 gap-2 bg-neutral-950">
+        <div className="hidden md:flex flex-col border-b border-neutral-800 p-2 gap-2 bg-neutral-950">
           <button
             onClick={() => {
               if (onCloseMobile) onCloseMobile();

@@ -70,7 +70,8 @@ import {
   RefreshCw,
   Maximize2,
   Minimize2,
-  Share2
+  Share2,
+  Users
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -2691,6 +2692,61 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   <span>Community</span>
                 </button>
               </div>
+
+              {/* Multiplayer Section in Mobile Main Menu */}
+              {(!roomState || gameMode === 'singleplayer') ? (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => {
+                      setIsMobileTopMenuOpen(false);
+                      setShowMultiplayerModal('host');
+                    }}
+                    className="p-2 bg-blue-900/50 hover:bg-blue-800/70 active:bg-blue-700/80 text-blue-200 rounded border border-blue-700/60 flex items-center justify-center gap-1.5 font-semibold transition-colors cursor-pointer"
+                  >
+                    <Users size={12} className="text-blue-300" />
+                    <span>Host Multiplayer</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMobileTopMenuOpen(false);
+                      setShowMultiplayerModal('join');
+                    }}
+                    className="p-2 bg-emerald-900/50 hover:bg-emerald-800/70 active:bg-emerald-700/80 text-emerald-200 rounded border border-emerald-700/60 flex items-center justify-center gap-1.5 font-semibold transition-colors cursor-pointer"
+                  >
+                    <Sparkles size={12} className="text-emerald-300" />
+                    <span>Join Multiplayer</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="p-2 bg-blue-950/70 border border-blue-800/70 rounded flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <Users size={12} className="text-blue-400 shrink-0" />
+                    <span className="font-bold text-blue-200 truncate">Room: {roomState.id}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => {
+                        setIsMobileTopMenuOpen(false);
+                        setShareRoomModalCode(roomState.id);
+                      }}
+                      className="px-2 py-1 bg-blue-900/80 hover:bg-blue-800 text-blue-200 rounded border border-blue-700/60 text-[10px] flex items-center gap-1 cursor-pointer"
+                      title="Share Room Code"
+                    >
+                      <Share2 size={10} /> Share
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsMobileTopMenuOpen(false);
+                        handleLeaveGame();
+                      }}
+                      className="px-2 py-1 bg-red-950/80 hover:bg-red-900 text-red-300 rounded border border-red-800/60 text-[10px] flex items-center gap-1 cursor-pointer"
+                      title="Leave Multiplayer Game"
+                    >
+                      <LogOutIcon size={10} /> Leave
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* World Files and Map Links in Mobile Menu */}
               <div className="grid grid-cols-2 gap-1.5">
