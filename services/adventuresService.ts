@@ -6,11 +6,12 @@ import {
   setDoc,
   deleteDoc,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { UserProfile, UserTier, isDefaultAdmin } from './authService';
 import { NarrativeEntry } from '../types';
 import { safeStorage } from './safeStorage';
@@ -64,13 +65,18 @@ export class AdventuresService {
    * Get list of saved adventures for user
    */
   public static async getSavedAdventures(user: UserProfile | null, guestId: string): Promise<SavedAdventure[]> {
-    if (user?.uid) {
+    const targetUid = auth.currentUser?.uid || user?.uid;
+    if (targetUid) {
       try {
-        const userAdventuresRef = collection(db, 'users', user.uid, 'adventures');
+        const userAdventuresRef = collection(db, 'users', targetUid, 'adventures');
         const snap = await getDocs(userAdventuresRef);
         const adventures: SavedAdventure[] = [];
         snap.forEach((d) => {
-          adventures.push(d.data() as SavedAdventure);
+          const data = d.data() as SavedAdventure;
+          adventures.push({
+            ...data,
+            id: data.id || d.id
+          });
         });
         // Sort newest first
         adventures.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -173,11 +179,26 @@ export class AdventuresService {
     guestId: string,
     adventureId: string
   ): Promise<boolean> {
-    if (user?.uid) {
+    const targetUid = auth.currentUser?.uid || user?.uid;
+    if (targetUid) {
       try {
-        await deleteDoc(doc(db, 'users', user.uid, 'adventures', adventureId));
+        await deleteDoc(doc(db, 'users', targetUid, 'adventures', adventureId));
       } catch (err) {
-        console.error('Error deleting from firestore:', err);
+        console.error('Error deleting from firestore by doc id:', err);
+      }
+
+      // Also query by id field in case document id in Firestore was generated differently
+      try {
+        const userAdventuresRef = collection(db, 'users', targetUid, 'adventures');
+        const q = query(userAdventuresRef, where('id', '==', adventureId));
+        const snap = await getDocs(q);
+        for (const docMatch of snap.docs) {
+          if (docMatch.id !== adventureId) {
+            await deleteDoc(docMatch.ref);
+          }
+        }
+      } catch (qErr) {
+        console.warn('Error querying matching adventure doc for deletion:', qErr);
       }
     }
 
@@ -185,7 +206,7 @@ export class AdventuresService {
       const raw = safeStorage.getItem(LOCAL_SAVED_ADVENTURES_KEY);
       if (raw) {
         const list: SavedAdventure[] = JSON.parse(raw);
-        const filtered = list.filter(a => a.id !== adventureId);
+        const filtered = list.filter(a => a.id !== adventureId && (a as any)._id !== adventureId);
         safeStorage.setItem(LOCAL_SAVED_ADVENTURES_KEY, JSON.stringify(filtered));
       }
     } catch (e) {}

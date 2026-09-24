@@ -2603,8 +2603,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   </span>
                 ) : (
                   <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
-                    {actionStatus?.dailyFreeRemaining ?? 0} Free
-                    {(actionStatus?.freeRolloverActions ?? 0) > 0 && ` +${actionStatus.freeRolloverActions} Stack`}
+                    {actionStatus?.freeStackedActions ?? actionStatus?.dailyFreeRemaining ?? 0} Free
                     {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
                   </span>
                 )}
@@ -2836,8 +2835,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 5}</span>
                 ) : (
                   <span>
-                    {actionStatus?.dailyFreeRemaining ?? 0} Free
-                    {(actionStatus?.freeRolloverActions ?? 0) > 0 && ` +${actionStatus.freeRolloverActions}`}
+                    {actionStatus?.freeStackedActions ?? actionStatus?.dailyFreeRemaining ?? 0} Free
                   </span>
                 )}
               </button>

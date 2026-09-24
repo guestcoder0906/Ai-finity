@@ -58,21 +58,11 @@ export const DailyClaimNotificationBanner: React.FC<DailyClaimNotificationBanner
             <span className="font-extrabold text-emerald-400">+{amount} daily actions</span> granted! (20 Free daily actions + 10 Beta bonus)
           </p>
 
-          {stacked > 0 ? (
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-amber-300 font-medium flex items-center gap-1 bg-amber-950/40 border border-amber-500/30 px-2 py-0.5 rounded-md flex-wrap break-words">
-              <Zap size={11} className="text-amber-400 shrink-0" />
-              <span>Stacked +{stacked} unused actions (Free Stack: {totalStacked}/200 max)</span>
-            </div>
-          ) : totalStacked >= 200 ? (
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-amber-300 font-medium flex items-center gap-1 bg-amber-950/40 border border-amber-500/30 px-2 py-0.5 rounded-md flex-wrap break-words">
-              <Zap size={11} className="text-amber-400 shrink-0" />
-              <span>Free action stack is at max capacity (200/200)!</span>
-            </div>
-          ) : totalStacked > 0 ? (
-            <div className="mt-1.5 text-[10px] sm:text-[11px] text-neutral-400 font-medium flex items-center gap-1">
-              <span>Free Stack: <strong className="text-emerald-300">{totalStacked}/200 max</strong></span>
-            </div>
-          ) : null}
+          <div className="mt-1.5 text-[10px] sm:text-[11px] text-neutral-300 font-medium flex items-center gap-1.5 flex-wrap">
+            <Zap size={11} className="text-amber-400 shrink-0" />
+            <span>Free Actions: <strong className="text-emerald-300">{totalStacked}/200 max</strong></span>
+            {totalStacked >= 200 && <span className="text-amber-400 font-bold">(Max capacity)</span>}
+          </div>
 
           <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 text-[10px] sm:text-[11px] text-neutral-400 font-mono">
             <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />

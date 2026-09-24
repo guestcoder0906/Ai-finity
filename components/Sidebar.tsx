@@ -549,10 +549,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   ) : (
                     <span>
-                      <strong className="text-emerald-400">{(actionStatus.dailyFreeRemaining ?? 0)} Free</strong>
-                      {(actionStatus.freeRolloverActions ?? 0) > 0 && (
-                        <span className="text-emerald-300 font-bold ml-1">+{actionStatus.freeRolloverActions} Stack</span>
-                      )}
+                      <strong className="text-emerald-400">{(actionStatus.freeStackedActions ?? actionStatus.dailyFreeRemaining ?? 0)} Free</strong>
                       {(actionStatus.purchasedCredits ?? 0) > 0 && (
                         <span className="text-amber-400 font-bold ml-1">+{actionStatus.purchasedCredits} Cr</span>
                       )}

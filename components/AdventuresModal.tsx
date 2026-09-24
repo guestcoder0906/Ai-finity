@@ -49,6 +49,8 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
   const [newTitle, setNewTitle] = useState('');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
 
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = currentUser?.role === 'mod';
@@ -80,6 +82,7 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
       setSaveError(null);
       setSaveSuccess(false);
       setNewTitle('');
+      setConfirmDeleteId(null);
     }
   }, [isOpen, currentUser?.uid, guestId]);
 
@@ -126,9 +129,25 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('Are you sure you want to delete this saved adventure?')) {
+    setIsDeletingId(id);
+    const prevList = [...adventures];
+    // Immediate optimistic removal so user sees the adventure vanish instantly
+    setAdventures(prev => prev.filter(a => a.id !== id));
+    setConfirmDeleteId(null);
+
+    try {
       await AdventuresService.deleteAdventure(currentUser, guestId, id);
-      await loadList();
+    } catch (err) {
+      console.error('Failed to delete adventure:', err);
+      // Revert if error
+      setAdventures(prevList);
+    } finally {
+      setIsDeletingId(null);
+      // Reload in background to ensure sync
+      try {
+        const freshList = await AdventuresService.getSavedAdventures(currentUser, guestId);
+        setAdventures(freshList);
+      } catch (e) {}
     }
   };
 
@@ -292,13 +311,33 @@ export const AdventuresModal: React.FC<AdventuresModalProps> = ({
                     </button>
                   </div>
 
-                  <button
-                    onClick={() => handleDelete(adv.id)}
-                    className="text-neutral-500 hover:text-red-400 p-1.5 rounded hover:bg-neutral-900 transition-colors"
-                    title="Delete Adventure"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {confirmDeleteId === adv.id ? (
+                    <div className="flex items-center gap-1.5 bg-red-950/80 border border-red-800/80 px-2 py-1 rounded-lg">
+                      <span className="text-[11px] text-red-300 font-semibold">Delete?</span>
+                      <button
+                        onClick={() => handleDelete(adv.id)}
+                        disabled={isDeletingId === adv.id}
+                        className="bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {isDeletingId === adv.id ? 'Deleting...' : 'Yes'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        disabled={isDeletingId === adv.id}
+                        className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] px-2 py-0.5 rounded transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(adv.id)}
+                      className="text-neutral-500 hover:text-red-400 p-1.5 rounded hover:bg-neutral-900 transition-colors cursor-pointer"
+                      title="Delete Adventure"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))
