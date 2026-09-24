@@ -796,9 +796,15 @@ export class WeightInventoryEngine {
         }
       } else if (cleanedLine.includes('|') && restText && !secondNumMatch) {
         // Structured pipe format e.g. "1x Morgan Dollar | Worth: $1.00" or "50x Gold Coins | Worth: 50 GP"
-        const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
-        const cName = restText.replace(/:$/, '').trim();
-        if (!WeightInventoryEngine.isContainerName(cName)) {
+        const isCurrencyName =
+          /coin|dollar|morgan|peace|cent|penny|dime|nickel|quarter|credit|gold|silver|copper|electrum|platinum|ingot|bar|bullion|cash|money|chit|scrip|currency|drachma|denarius|florin|ducat|shekel|sovereign|crown|shilling|peso|peseta|franc|mark|thaler|yen|yuan|ruble|rupee|pound\s*sterling/i.test(restText) ||
+          cleanedLine.toLowerCase().includes('worth:') ||
+          cleanedLine.toLowerCase().includes('face value:') ||
+          cleanedLine.toLowerCase().includes('market value:');
+
+        if (isCurrencyName && !WeightInventoryEngine.isContainerName(restText)) {
+          const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
+          const cName = restText.replace(/:$/, '').trim();
           const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
           entries.push({
             name: cName,
@@ -2879,11 +2885,13 @@ export class WeightInventoryEngine {
 
       // Detect Section Headers (with or without brackets, markdown `#`, asterisks `**`, colons)
       let detectedSection: string | null = null;
+      let cleanHeader = '';
       const bracketMatch = line.match(/^\[(.*?)\]:?$/);
       if (bracketMatch) {
-        detectedSection = bracketMatch[1].toUpperCase();
+        cleanHeader = bracketMatch[1].trim().toUpperCase();
+        detectedSection = cleanHeader;
       } else if (!/^[-*•>]\s+[a-zA-Z]/.test(line)) {
-        const cleanHeader = line
+        cleanHeader = line
           .replace(/^#+\s*/, '')
           .replace(/^\*+\s*/, '')
           .replace(/^-+\s*/, '')
@@ -2893,7 +2901,9 @@ export class WeightInventoryEngine {
           .replace(/:$/, '')
           .trim()
           .toUpperCase();
+      }
 
+      if (cleanHeader) {
         const canonicalSections: { [k: string]: string } = {
           'NAME & DESCRIPTION': 'NAME & DESCRIPTION',
           'NAME AND DESCRIPTION': 'NAME & DESCRIPTION',
@@ -2924,6 +2934,10 @@ export class WeightInventoryEngine {
           'INVENTORY AND EQUIPMENT': 'INVENTORY & EQUIPMENT',
           'INVENTORY': 'INVENTORY & EQUIPMENT',
           'EQUIPMENT': 'INVENTORY & EQUIPMENT',
+          'STARTING INVENTORY & CONTAINERS': 'INVENTORY & EQUIPMENT',
+          'STARTING INVENTORY AND CONTAINERS': 'INVENTORY & EQUIPMENT',
+          'STARTING INVENTORY': 'INVENTORY & EQUIPMENT',
+          'STARTING CONTAINERS': 'INVENTORY & EQUIPMENT',
           'EQUIPPED GEAR & ARMOR': 'INVENTORY & EQUIPMENT',
           'EQUIPPED GEAR AND ARMOR': 'INVENTORY & EQUIPMENT',
           'EQUIPPED GEAR': 'INVENTORY & EQUIPMENT',
@@ -2949,6 +2963,9 @@ export class WeightInventoryEngine {
           'CURRENCY AND FINANCIAL BALANCE': 'CURRENCY & FINANCIAL BALANCE',
           'CURRENCY & BALANCE': 'CURRENCY & FINANCIAL BALANCE',
           'CURRENCY': 'CURRENCY & FINANCIAL BALANCE',
+          'CARRIED WEALTH': 'CURRENCY & FINANCIAL BALANCE',
+          'CARRIED CURRENCY': 'CURRENCY & FINANCIAL BALANCE',
+          'WEALTH & CURRENCY': 'CURRENCY & FINANCIAL BALANCE',
           'FINANCIAL BALANCE': 'CURRENCY & FINANCIAL BALANCE',
           'FINANCES': 'CURRENCY & FINANCIAL BALANCE',
           'WEALTH': 'CURRENCY & FINANCIAL BALANCE',
@@ -2977,7 +2994,17 @@ export class WeightInventoryEngine {
       if (detectedSection) {
         currentSection = detectedSection;
         activeContainerName = '';
-        activeSubsection = (currentSection.includes('HOLDING') || currentSection.includes('HELD')) ? 'holding' : 'general';
+        if (cleanHeader.includes('EQUIPPED') || cleanHeader.includes('WORN') || cleanHeader.includes('ARMOR')) {
+          activeSubsection = 'equipped';
+        } else if (cleanHeader.includes('HOLDING') || cleanHeader.includes('HELD') || currentSection.includes('HOLDING') || currentSection.includes('HELD')) {
+          activeSubsection = 'holding';
+        } else if (cleanHeader.includes('STORED') || cleanHeader.includes('STORAGE') || cleanHeader.includes('OWNED')) {
+          activeSubsection = 'stored';
+        } else if (cleanHeader.includes('CONTAINER')) {
+          activeSubsection = 'containers';
+        } else {
+          activeSubsection = 'general';
+        }
         continue;
       }
 
@@ -3466,30 +3493,30 @@ export class WeightInventoryEngine {
         }
 
         // Container definition: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
-        const rawItemName = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').replace(/^\[|\]$/g, '').trim();
+        const rawItemName = line.split(/[|:=]/)[0].replace(/^[-*•>\s]+/, '').replace(/^\[|\]$/g, '').trim();
         const itemNameLower = rawItemName.toLowerCase();
         const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster', 'wallet', 'chit wallet', 'purse', 'cardholder', 'billfold', 'money clip', 'money belt'];
         const isChestContainer = /\bchest\b/i.test(itemNameLower) && !/\b(?:chestplate|chest\s*plate|chest\s*armor|chest\s*guard|across\s*chest)\b/i.test(itemNameLower);
         const hasContainerKeyword = containerKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(itemNameLower)) || isChestContainer;
         const isExplicitItemInContainer = /\bcontainer\s*[:=]/i.test(lower) || /\b(?:inside|in)\s+(?:container|backpack|satchel|pouch|bag|quiver|chest|sack|case|haversack)\b/i.test(lower);
 
-        const isContainerDef = (activeSubsection === 'containers' && !lower.startsWith('total') && !isExplicitItemInContainer) || (
-          hasContainerKeyword &&
-          !isExplicitItemInContainer &&
-          (
-            lower.includes('dimension') ||
-            lower.includes('capacity') ||
-            lower.includes('max space') ||
-            lower.includes('max weight') ||
-            lower.includes('max:') ||
-            lower.includes('holds') ||
-            /\b\d+\s*x\s*\d+/i.test(lower) ||
-            lower.includes('empty weight')
-          )
+        const isIndentedItem = /^\s+[-*•>]/.test(line);
+        const hasContainerSpec =
+          lower.includes('capacity') ||
+          lower.includes('max space') ||
+          lower.includes('max weight') ||
+          lower.includes('max:') ||
+          lower.includes('holds') ||
+          lower.includes('empty weight');
+
+        const isContainerDef = !isIndentedItem && !isExplicitItemInContainer && !lower.startsWith('total') && (
+          (hasContainerKeyword && hasContainerSpec) ||
+          (activeSubsection === 'containers' && (hasContainerKeyword || hasContainerSpec)) ||
+          (hasContainerKeyword && activeSubsection !== 'equipped' && activeSubsection !== 'holding' && !hasItemStat)
         );
 
         if (isContainerDef) {
-          let name = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').trim();
+          let name = line.split(/[|:=]/)[0].replace(/^[-*•>\s]+/, '').trim();
           name = name.replace(/^\[|\]$/g, '').trim();
           const parenIdx = name.search(/[\(\[]/);
           if (parenIdx > 0) {
@@ -3500,17 +3527,17 @@ export class WeightInventoryEngine {
           // Distinguish container empty weight from max capacity
           let containerWeight = 1.0;
           const emptyWeightMatch = line.match(/(?:empty\s*weight|weight|wt)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
+          const capMatch = line.match(/(?:max\s*(?:weight|capacity|space)|capacity|holds\s*up\s*to|max)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (emptyWeightMatch) {
             containerWeight = parseFloat(emptyWeightMatch[1]);
           } else {
             const wResult = this.parseWeight(line);
-            if (wResult.applies && wResult.weight > 0) {
+            if (wResult.applies && wResult.weight > 0 && (!capMatch || Math.abs(wResult.weight - parseFloat(capMatch[1])) > 0.01)) {
               containerWeight = wResult.weight;
             }
           }
 
           let maxWeightCapacity: number | undefined;
-          const capMatch = line.match(/(?:max\s*(?:weight|capacity|space)|capacity|holds\s*up\s*to)[:=\s]*([0-9]+(?:\.[0-9]+)?)\s*(?:lbs?|pounds?)/i);
           if (capMatch) {
             maxWeightCapacity = parseFloat(capMatch[1]);
           } else {
@@ -3523,6 +3550,7 @@ export class WeightInventoryEngine {
           }
 
           activeContainerName = name;
+          activeSubsection = 'inside_containers';
           const contMaxVol = maxDim.applies && (maxDim.height || 0) * (maxDim.width || 0) * (maxDim.depth || 0) > 0
             ? Math.round((maxDim.height || 0) * (maxDim.width || 0) * (maxDim.depth || 0) * 100) / 100
             : undefined;
@@ -3530,31 +3558,48 @@ export class WeightInventoryEngine {
           const stretch = WeightInventoryEngine.getContainerStretchability(name, line);
           const effectiveMaxVol = contMaxVol ? Math.round(contMaxVol * stretch.stretchFactor * 100) / 100 : undefined;
 
-          containers.push({
-            name,
-            weight: containerWeight,
-            dimensions: maxDim,
-            maxDimensions: maxDim,
-            currentDimensions: maxDim,
-            maxWeightCapacity,
-            maxVolume: contMaxVol,
-            stretchFactor: stretch.stretchFactor,
-            effectiveMaxVolume: effectiveMaxVol,
-            isRigid: stretch.isRigid,
-            isStretched: false,
-            currentStretchRatio: 1.0,
-            stretchReason: stretch.description,
-            currentVolume: 0,
-            currencyCount: 0,
-            currencyWeight: 0,
-            currencyVolume: 0,
-            items: [],
-            currentItemsWeight: 0,
-            totalWeight: containerWeight,
-            hasOverflow: false,
-            hasDoesNotFit: false,
-            rawText: line
-          });
+          const existingCont = this.findMatchingContainer(containers, name);
+          if (existingCont) {
+            if (maxWeightCapacity && (!existingCont.maxWeightCapacity || existingCont.maxWeightCapacity === 25)) {
+              existingCont.maxWeightCapacity = maxWeightCapacity;
+            }
+            if (maxDim.raw && (!existingCont.dimensions.raw || existingCont.dimensions.raw === '12x8x4 inches')) {
+              existingCont.dimensions = maxDim;
+              existingCont.maxDimensions = maxDim;
+              existingCont.currentDimensions = maxDim;
+              existingCont.maxVolume = contMaxVol;
+              existingCont.effectiveMaxVolume = effectiveMaxVol;
+            }
+            if (emptyWeightMatch) {
+              existingCont.weight = containerWeight;
+            }
+          } else {
+            containers.push({
+              name,
+              weight: containerWeight,
+              dimensions: maxDim,
+              maxDimensions: maxDim,
+              currentDimensions: maxDim,
+              maxWeightCapacity,
+              maxVolume: contMaxVol,
+              stretchFactor: stretch.stretchFactor,
+              effectiveMaxVolume: effectiveMaxVol,
+              isRigid: stretch.isRigid,
+              isStretched: false,
+              currentStretchRatio: 1.0,
+              stretchReason: stretch.description,
+              currentVolume: 0,
+              currencyCount: 0,
+              currencyWeight: 0,
+              currencyVolume: 0,
+              items: [],
+              currentItemsWeight: 0,
+              totalWeight: containerWeight,
+              hasOverflow: false,
+              hasDoesNotFit: false,
+              rawText: line
+            });
+          }
           continue;
         }
 
@@ -3564,7 +3609,7 @@ export class WeightInventoryEngine {
         }
 
         // Check if line is an item
-        const item = this.parseItemLine(line, activeSubsection === 'inside_containers' ? activeContainerName : undefined);
+        const item = this.parseItemLine(line, (activeSubsection === 'inside_containers' || activeSubsection === 'containers') ? activeContainerName : undefined);
         if (item) {
           // If explicitly marked or parsed in equipped subsection
           if (
