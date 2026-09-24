@@ -1235,7 +1235,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                                                   <span className="text-amber-200/90 font-medium">
                                                     [{c.name}]
                                                   </span>
-                                                  {c.worth ? <span className="text-gray-400 font-normal"> (Worth: {c.worth})</span> : null}
+                                                  {c.worth && !/^(?:credits?|digital|coins?|currency|money|cash|none|n\/a|unparsed)$/i.test(c.worth.trim()) && c.worth.trim().toLowerCase() !== c.name.trim().toLowerCase() && !WeightInventoryEngine.isContainerName(c.worth) ? (
+                                                    <span className="text-gray-400 font-normal"> (Worth: {c.worth})</span>
+                                                  ) : null}
                                                   {c.container ? <span className="text-amber-500/80 font-normal"> [{c.container}]</span> : null}
                                                 </div>
                                                 <div className="text-right font-mono text-[8px] text-gray-500 shrink-0">
@@ -1269,7 +1271,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                                                       <span className="text-gray-200 font-medium">
                                                         [{sc.name}]
                                                       </span>
-                                                      {sc.worth ? <span className="text-gray-400 font-normal"> (Worth: {sc.worth})</span> : null}
+                                                      {sc.worth && !/^(?:credits?|digital|coins?|currency|money|cash|none|n\/a|unparsed)$/i.test(sc.worth.trim()) && sc.worth.trim().toLowerCase() !== sc.name.trim().toLowerCase() && !WeightInventoryEngine.isContainerName(sc.worth) ? (
+                                                        <span className="text-gray-400 font-normal"> (Worth: {sc.worth})</span>
+                                                      ) : null}
                                                     </div>
                                                     <div className="text-right font-mono text-[8px] text-gray-500 shrink-0">
                                                       {sc.dimensions?.raw && !sc.isDigital ? `${sc.dimensions.raw} • ` : (sc.isDigital ? 'Digital • ' : '')}

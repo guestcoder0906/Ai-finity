@@ -232,6 +232,36 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Identifies whether a given name or phrase describes a physical container, wallet, pouch, purse, holder, or clip
+   * rather than money/currency itself.
+   */
+  public static isContainerName(name: string): boolean {
+    if (!name || typeof name !== 'string') return false;
+    const lower = name.toLowerCase().replace(/^[\["'`\s]+|[\]"'`\s]+$/g, '').trim();
+    if (!lower) return false;
+    return /\b(?:wallet|chit\s*wallet|credit\s*wallet|pouch|purse|money\s*belt|money\s*clip|cardholder|card\s*holder|chit\s*holder|billfold|coin\s*bag|coin\s*sack|coin\s*pouch|coin\s*purse|backpack|satchel|bag|haversack|rucksack|quiver|bandolier|scabbard|pocket|trunk|crate|case|box|chest|container|lockbox|safe|vault|strongbox)\b/i.test(lower);
+  }
+
+  /**
+   * Sanitizes a currency worth/value string to eliminate unparsed placeholders like "Credits", "Digital", "Coin", "None",
+   * or redundant strings identical to the currency's own name.
+   */
+  public static sanitizeCurrencyWorth(worth?: string, currencyName?: string): string | undefined {
+    if (!worth || typeof worth !== 'string') return undefined;
+    let trimmed = worth.trim().replace(/^[-*•>\s]+/, '').replace(/^[\(\[]|[\)\]]$/g, '').trim();
+    trimmed = trimmed.replace(/^worth[:=\s]+/i, '').trim();
+    if (!trimmed) return undefined;
+    const lower = trimmed.toLowerCase();
+    if (/^(?:credits?|digital|coins?|currency|money|cash|none|n\/a|unparsed)$/i.test(lower)) {
+      return undefined;
+    }
+    if (currencyName && lower === currencyName.trim().toLowerCase()) {
+      return undefined;
+    }
+    return trimmed;
+  }
+
+  /**
    * Sanitizes a currency name to prevent leaking field prefixes or location names into the currency label.
    */
   public static sanitizeCurrencyName(name: string): string {
@@ -254,7 +284,7 @@ export class WeightInventoryEngine {
     cleaned = WeightInventoryEngine.cleanDuplicateRepeatedPhrases(cleaned);
     cleaned = cleaned.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
 
-    return cleaned || 'Credits';
+    return cleaned;
   }
 
   /**
@@ -308,7 +338,7 @@ export class WeightInventoryEngine {
         totalWeight: 0,
         unitVolume: 0,
         totalVolume: 0,
-        defaultWorth: lower.includes('credit') ? 'Credits' : 'Digital'
+        defaultWorth: undefined
       };
     }
 
@@ -359,25 +389,25 @@ export class WeightInventoryEngine {
       singleDim = this.parseDimensions('7x3.6x1.75 inches');
       singleW = explicitWeight !== undefined && amount > 0 ? explicitWeight / amount : 27.0;
       unitVol = 44.1;
-      defaultWorth = 'Bullion';
+      defaultWorth = undefined;
     } else if (/gem|jewel|ruby|diamond|emerald|sapphire/i.test(lower)) {
       // 5. Gems / Jewels / Trade stones
       singleDim = this.parseDimensions('0.8x0.8x0.8 inches');
       singleW = 0.03;
       unitVol = 0.512;
-      defaultWorth = 'Gem';
+      defaultWorth = undefined;
     } else if (/cap|bottle\s*cap/i.test(lower)) {
       // 6. Bottle caps
       singleDim = this.parseDimensions('1.2x1.2x0.2 inches');
       singleW = 0.005;
       unitVol = 0.288;
-      defaultWorth = '1 Cap';
+      defaultWorth = undefined;
     } else {
       // 7. Standard fantasy/historical coins (Gold, Silver, Copper, Electrum, Platinum, Crowns, Ducats, etc.)
       singleDim = this.parseDimensions('1.2x1.2x0.08 inches');
       singleW = 0.02; // ~50 coins per pound
       unitVol = 0.115;
-      defaultWorth = lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : '1 Coin');
+      defaultWorth = lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : undefined);
     }
 
     const singleRaw = singleDim.raw || `${singleDim.height}x${singleDim.width}x${singleDim.depth} inches`;
@@ -462,6 +492,28 @@ export class WeightInventoryEngine {
       (lower.startsWith('(') && lower.endsWith(')') && !lower.includes('gold') && !lower.includes('coin') && !lower.includes('credit'))
     ) {
       return entries;
+    }
+
+    // Skip container definition lines that do not contain explicit currency
+    const isContDefLine = /^(?:\[[^\]]+\]|[a-zA-Z0-9_\s'-]+)\s*:\s*(?:dimensions|capacity|stretch|max\s*capacity|empty\s*weight)/i.test(cleanedLine);
+    if (isContDefLine && !lower.includes('contains:') && !lower.includes('contents:')) {
+      return entries;
+    }
+
+    // Starting Carried Item Limit Compliance lines: strip leading compliance prefix if present
+    if (
+      lower.includes('starting carried item') ||
+      lower.includes('starting item limit') ||
+      lower.includes('item limit compliance') ||
+      lower.includes('limit compliance') ||
+      lower.includes('items accounting') ||
+      lower.includes('carrying limit')
+    ) {
+      if (/net[:=\s]+/i.test(cleanedLine)) {
+        cleanedLine = cleanedLine.replace(/^.*?net[:=\s]+/i, '').trim();
+      } else {
+        return entries;
+      }
     }
 
     // Helper to sanitize extracted location
@@ -549,7 +601,7 @@ export class WeightInventoryEngine {
     let entryWorthStr: string | undefined;
     const worthMatch = cleanedLine.match(/(?:worth|value|face\s*value|market\s*value)[:=\s]+([^|;,()]+)/i);
     if (worthMatch) {
-      entryWorthStr = worthMatch[1].trim();
+      entryWorthStr = WeightInventoryEngine.sanitizeCurrencyWorth(worthMatch[1].trim());
     }
 
     // Extract explicit quantity if specified: e.g. "Quantity: 1", "Qty: 5", "Count: 10"
@@ -577,6 +629,15 @@ export class WeightInventoryEngine {
         .replace(/:?\s*[0-9]+(?:\.[0-9]+)?\s*(?:lbs?|pounds?|kg|grams?)\b/gi, ' ');
     }
 
+    // Extract and strip containers from contentToScan so wallet/pouch names aren't parsed as currency
+    contentToScan = contentToScan.replace(/(?:\b\d+(?:,\d+)*(?:\.\d+)?\s*(?:x\s*)?)?[a-zA-Z0-9_\s'-]*(?:chit\s*wallet|credit\s*wallet|wallet|coin\s*pouch|pouch|coin\s*purse|purse|money\s*belt|money\s*clip|cardholder|card\s*holder|chit\s*holder|billfold|coin\s*bag)\b/gi, (match) => {
+      const stripped = match.replace(/^\d+(?:,\d+)*(?:\.\d+)?\s*(?:x\s*)?/, '').trim();
+      if (WeightInventoryEngine.isContainerName(stripped) && !container) {
+        container = stripped;
+      }
+      return ' ';
+    });
+
     // Clean pipes, brackets, and delimiters for structured lines
     const strippedScan = contentToScan.replace(/[|;()\[\]]+/g, ' ').replace(/^[-*•>\s]+/, '').replace(/\s+/g, ' ').trim();
 
@@ -593,14 +654,14 @@ export class WeightInventoryEngine {
     if (explicitNameMatch) {
       let rawName = (explicitNameMatch[1] || explicitNameMatch[2] || explicitNameMatch[3] || explicitNameMatch[4] || '').trim();
       rawName = WeightInventoryEngine.sanitizeCurrencyName(rawName);
-      if (rawName && rawName.toLowerCase() !== 'none' && rawName !== '0') {
+      if (rawName && rawName.toLowerCase() !== 'none' && rawName !== '0' && !WeightInventoryEngine.isContainerName(rawName)) {
         let amt = explicitAmtMatch ? parseFloat(explicitAmtMatch[1]) : (explicitQty !== undefined ? explicitQty : 1);
         if (isNaN(amt) || amt <= 0) amt = 1;
         const defs = this.inferCurrencyDefaults(rawName, entryDimsStr, entryWeight, amt);
         entries.push({
           name: rawName,
           amount: amt,
-          worth: entryWorthStr || defs.defaultWorth,
+          worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, rawName),
           dimensions: defs.dimensions,
           singleDimensions: defs.singleDimensions,
           singleDimensionsRaw: defs.singleDimensionsRaw,
@@ -615,6 +676,8 @@ export class WeightInventoryEngine {
           rawText: cleanedLine
         });
         return entries;
+      } else if (rawName && WeightInventoryEngine.isContainerName(rawName) && !container) {
+        container = rawName;
       }
     }
 
@@ -622,7 +685,9 @@ export class WeightInventoryEngine {
     const bracketCoinMatch = cleanedLine.match(/(?:([0-9]+(?:\.[0-9]+)?)\s*x\s*)?\[([0-9]{4}\s+[^\]]+|[^\]]+)\](?:\s*x?\s*([0-9]+(?:\.[0-9]+)?))?/i);
     if (bracketCoinMatch) {
       const innerName = bracketCoinMatch[2].trim();
-      if (
+      if (WeightInventoryEngine.isContainerName(innerName)) {
+        if (!container) container = innerName;
+      } else if (
         !/chase|bank account|vault|stash|home|safe|hide\[/i.test(innerName) &&
         /coin|dollar|morgan|cent|penny|dime|quarter|credit|gold|silver|copper|ingot|bar|cash|money|\b\d{4}\b/i.test(innerName)
       ) {
@@ -641,7 +706,7 @@ export class WeightInventoryEngine {
         entries.push({
           name: innerName,
           amount: amt,
-          worth: entryWorthStr || defs.defaultWorth,
+          worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, innerName),
           dimensions: defs.dimensions,
           singleDimensions: defs.singleDimensions,
           singleDimensionsRaw: defs.singleDimensionsRaw,
@@ -681,72 +746,78 @@ export class WeightInventoryEngine {
         // firstNum is the actual quantity, restText is "1921 Morgan Dollar Coin"
         const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
         const cName = restText.replace(/[\[\]]+$/, '').replace(/:$/, '').trim();
-        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
-        entries.push({
-          name: cName,
-          amount: amt,
-          worth: entryWorthStr || defs.defaultWorth,
-          dimensions: defs.dimensions,
-          singleDimensions: defs.singleDimensions,
-          singleDimensionsRaw: defs.singleDimensionsRaw,
-          isDigital: defs.isDigital,
-          unitVolume: defs.unitVolume,
-          totalVolume: defs.totalVolume,
-          singleWeight: defs.singleWeight,
-          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
-          container,
-          location,
-          isHiddenLocation,
-          rawText: cleanedLine
-        });
-        return entries;
+        if (!WeightInventoryEngine.isContainerName(cName)) {
+          const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+          entries.push({
+            name: cName,
+            amount: amt,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, cName),
+            dimensions: defs.dimensions,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: cleanedLine
+          });
+          return entries;
+        }
       } else if (isFirstNumYear && isCoinDenom.test(restText)) {
         // Example: "1921 Morgan Dollar Coin"
         // 1921 is the YEAR in the coin's name! Quantity is 1!
         const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : 1;
         const cName = `${yMatch[1]} ${restText}`.replace(/:$/, '').trim();
-        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
-        entries.push({
-          name: cName,
-          amount: amt,
-          worth: entryWorthStr || defs.defaultWorth,
-          dimensions: defs.dimensions,
-          singleDimensions: defs.singleDimensions,
-          singleDimensionsRaw: defs.singleDimensionsRaw,
-          isDigital: defs.isDigital,
-          unitVolume: defs.unitVolume,
-          totalVolume: defs.totalVolume,
-          singleWeight: defs.singleWeight,
-          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
-          container,
-          location,
-          isHiddenLocation,
-          rawText: cleanedLine
-        });
-        return entries;
+        if (!WeightInventoryEngine.isContainerName(cName)) {
+          const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+          entries.push({
+            name: cName,
+            amount: amt,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, cName),
+            dimensions: defs.dimensions,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: cleanedLine
+          });
+          return entries;
+        }
       } else if (cleanedLine.includes('|') && restText && !secondNumMatch) {
         // Structured pipe format e.g. "1x Morgan Dollar | Worth: $1.00" or "50x Gold Coins | Worth: 50 GP"
         const amt = explicitQty !== null && explicitQty !== undefined ? explicitQty : firstNum;
         const cName = restText.replace(/:$/, '').trim();
-        const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
-        entries.push({
-          name: cName,
-          amount: amt,
-          worth: entryWorthStr || defs.defaultWorth,
-          dimensions: defs.dimensions,
-          singleDimensions: defs.singleDimensions,
-          singleDimensionsRaw: defs.singleDimensionsRaw,
-          isDigital: defs.isDigital,
-          unitVolume: defs.unitVolume,
-          totalVolume: defs.totalVolume,
-          singleWeight: defs.singleWeight,
-          weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
-          container,
-          location,
-          isHiddenLocation,
-          rawText: cleanedLine
-        });
-        return entries;
+        if (!WeightInventoryEngine.isContainerName(cName)) {
+          const defs = this.inferCurrencyDefaults(cName, entryDimsStr, entryWeight, amt);
+          entries.push({
+            name: cName,
+            amount: amt,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, cName),
+            dimensions: defs.dimensions,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: cleanedLine
+          });
+          return entries;
+        }
       }
     }
 
@@ -762,7 +833,7 @@ export class WeightInventoryEngine {
           entries.push({
             name: subName,
             amount: dAmt,
-            worth: entryWorthStr || `$${dAmt.toFixed(2)}`,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || `$${dAmt.toFixed(2)}`, subName),
             dimensions: defs.dimensions,
             singleDimensions: defs.singleDimensions,
             singleDimensionsRaw: defs.singleDimensionsRaw,
@@ -780,14 +851,14 @@ export class WeightInventoryEngine {
       }
     }
 
-    // Comprehensive currency regex including Cash, Scrip, etc.
-    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
+    // Comprehensive currency regex including Cash, Scrip, Cyber-Credits, etc.
+    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s-]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
 
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
       const rawNum = match[1].replace(/[$,\s+-]/g, '');
       const rawAmt = parseFloat(rawNum);
-      const name = match[2].trim();
+      const name = match[2].replace(/^[-*•>\s]+|[-*\s]+$/g, '').trim();
       if (!isNaN(rawAmt) && rawAmt > 0 && name) {
         const lowerName = name.toLowerCase();
         if (
@@ -823,12 +894,22 @@ export class WeightInventoryEngine {
           actualAmt = explicitQty !== null && explicitQty !== undefined ? explicitQty : 1;
         }
 
+        if (WeightInventoryEngine.isContainerName(cleanName)) {
+          if (!container) container = cleanName;
+          continue;
+        }
+
+        const nextChars = contentToScan.substring(currencyRegex.lastIndex, currencyRegex.lastIndex + 30);
+        if (/^\s*(?:chit\s*wallet|wallet|pouch|purse|clip|holder|bag|belt|case|box|container|cardholder|billfold)\b/i.test(nextChars)) {
+          continue;
+        }
+
         if (!entries.some(e => e.amount === actualAmt && (e.name.toLowerCase() === cleanName.toLowerCase() || (e.name === 'Dollars' && /dollar/i.test(cleanName))))) {
           const defs = this.inferCurrencyDefaults(cleanName, entryDimsStr, entryWeight, actualAmt);
           entries.push({
             name: cleanName,
             amount: actualAmt,
-            worth: entryWorthStr || defs.defaultWorth,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, cleanName),
             dimensions: defs.dimensions,
             singleDimensions: defs.singleDimensions,
             singleDimensionsRaw: defs.singleDimensionsRaw,
@@ -847,19 +928,23 @@ export class WeightInventoryEngine {
     }
 
     // Also support prefix currency format: e.g. "Cash: $50" or "Gold Coins: 25" or "Money: $100"
-    const prefixRegex = /\b(cash|money|dollars?|coins?|gold(?:\s+coins?)?|silver(?:\s+coins?)?|copper(?:\s+coins?)?|credits?|scrip|funds?|wealth|balance)\s*[:=]\s*\$?\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
+    const prefixRegex = /\b(cash|money|dollars?|coins?|gold(?:\s+coins?)?|silver(?:\s+coins?)?|copper(?:\s+coins?)?|(?:cyber[- ]?)?credits?|scrip|funds?|wealth|balance)\s*[:=]\s*\$?\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
     let pMatch;
     while ((pMatch = prefixRegex.exec(contentToScan)) !== null) {
       const pName = pMatch[1].trim();
       const pAmt = parseFloat(pMatch[2].replace(/,/g, ''));
       if (!isNaN(pAmt) && pAmt > 0) {
         const cleanName = /cash|money/i.test(pName) ? 'Cash' : (/scrip/i.test(pName) ? 'Scrip' : pName);
+        if (WeightInventoryEngine.isContainerName(cleanName)) {
+          if (!container) container = cleanName;
+          continue;
+        }
         if (!entries.some(e => e.amount === pAmt && e.name.toLowerCase() === cleanName.toLowerCase())) {
           const defs = this.inferCurrencyDefaults(cleanName, entryDimsStr, entryWeight, pAmt);
           entries.push({
             name: cleanName,
             amount: pAmt,
-            worth: entryWorthStr || defs.defaultWorth,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, cleanName),
             dimensions: defs.dimensions,
             singleDimensions: defs.singleDimensions,
             singleDimensionsRaw: defs.singleDimensionsRaw,
@@ -877,7 +962,7 @@ export class WeightInventoryEngine {
       }
     }
 
-    return entries;
+    return entries.filter(e => !WeightInventoryEngine.isContainerName(e.name));
   }
 
   /**
@@ -2318,13 +2403,27 @@ export class WeightInventoryEngine {
       lower.startsWith('containers:') ||
       lower.startsWith('total carried weight') ||
       lower.startsWith('encumbrance') ||
+      lower.includes('starting carried item') ||
       lower.includes('starting carried items') ||
+      lower.includes('starting item limit') ||
+      lower.includes('starting items limit') ||
+      lower.includes('item limit compliance') ||
+      lower.includes('limit compliance') ||
+      lower.includes('compliance. net') ||
+      lower.includes('compliance:') ||
+      lower.startsWith('compliance') ||
       lower.includes('starting items accounting') ||
+      lower.includes('starting item accounting') ||
       lower.includes('items accounting') ||
+      lower.includes('item accounting') ||
       lower.includes('starting carried items limit') ||
       lower.includes('total starting carried items count') ||
+      lower.includes('total starting carried item count') ||
       lower.includes('starting carried items count') ||
+      lower.includes('starting carried item count') ||
       lower.includes('starting carrying limit') ||
+      lower.includes('starting carried items rule') ||
+      lower.includes('starting carried item rule') ||
       lower.includes('stored to respect starting carried item limit') ||
       lower.includes('stored to respect starting') ||
       /^[-\s*•]*\d+\.\s*\[?[^\]:]+\]?\s*\((?:Equipped|Carried|Held|Inside).*?\)$/i.test(line) ||
@@ -2452,10 +2551,20 @@ export class WeightInventoryEngine {
       name.toLowerCase() === 'none' ||
       name.toLowerCase() === '0 lbs' ||
       cleanNameLower.startsWith('total starting') ||
+      cleanNameLower.includes('starting carried item') ||
       cleanNameLower.includes('starting carried items') ||
+      cleanNameLower.includes('starting item limit') ||
+      cleanNameLower.includes('starting items limit') ||
+      cleanNameLower.includes('item limit compliance') ||
+      cleanNameLower.includes('limit compliance') ||
+      cleanNameLower.includes('compliance') ||
       cleanNameLower.includes('items accounting') ||
+      cleanNameLower.includes('item accounting') ||
       cleanNameLower.includes('starting items accounting') ||
+      cleanNameLower.includes('starting item accounting') ||
       cleanNameLower.includes('starting carrying limit') ||
+      cleanNameLower.startsWith('net:') ||
+      cleanNameLower.includes('. net:') ||
       name.toLowerCase() === 'hands' ||
       name.toLowerCase() === 'hand' ||
       name.toLowerCase() === '(two-handed)' ||
@@ -3323,7 +3432,7 @@ export class WeightInventoryEngine {
         // Container definition: e.g. "Backpack: Dimensions 18 inches tall by 12 inches area, Max Capacity: 40 lbs"
         const rawItemName = line.split(/[:=]/)[0].replace(/^[-*•>\s]+/, '').replace(/^\[|\]$/g, '').trim();
         const itemNameLower = rawItemName.toLowerCase();
-        const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster'];
+        const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster', 'wallet', 'chit wallet', 'purse', 'cardholder', 'billfold', 'money clip', 'money belt'];
         const isChestContainer = /\bchest\b/i.test(itemNameLower) && !/\b(?:chestplate|chest\s*plate|chest\s*armor|chest\s*guard|across\s*chest)\b/i.test(itemNameLower);
         const hasContainerKeyword = containerKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(itemNameLower)) || isChestContainer;
         const isExplicitItemInContainer = lower.includes('container:') || lower.includes('inside container') || lower.includes('in backpack') || lower.includes('in satchel') || lower.includes('in pouch') || lower.includes('in bag');
