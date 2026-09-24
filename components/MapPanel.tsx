@@ -331,18 +331,6 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     };
   }, [pages.length, safePageIndex]);
 
-  if (pages.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-gray-500 italic p-6 text-center gap-4 bg-black">
-        <div className="w-12 h-12 border-2 border-dashed border-gray-800 rounded-full animate-spin-slow flex items-center justify-center text-xl">🗺️</div>
-        <div>
-          <p className="font-bold text-gray-400 not-italic">NO ACTIVE MAP DATA</p>
-          <p className="mt-1 text-[10px]">The AI engine generates the world as you move.</p>
-        </div>
-      </div>
-    );
-  }
-
   const currentPage = pages.length > 0 ? pages[safePageIndex] : null;
 
   // Aggregate all NPCs across pages, creatures, entities, and NPC-type areas
@@ -814,6 +802,18 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   // Text scale counteracts zoom to keep text labels the exact same screen size regardless of zooming in/out
   const textScale = zoom > 0 ? +(1 / zoom).toFixed(4) : 1;
+
+  if (pages.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-gray-500 italic p-6 text-center gap-4 bg-black">
+        <div className="w-12 h-12 border-2 border-dashed border-gray-800 rounded-full animate-spin-slow flex items-center justify-center text-xl">🗺️</div>
+        <div>
+          <p className="font-bold text-gray-400 not-italic">NO ACTIVE MAP DATA</p>
+          <p className="mt-1 text-[10px]">The AI engine generates the world as you move.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
