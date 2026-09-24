@@ -8,7 +8,9 @@ import NarrativeWindow from './components/NarrativeWindow';
 import InputArea from './components/InputArea';
 import Modal from './components/Modal';
 import MainMenu from './components/MainMenu';
-import { MultiplayerService } from './services/multiplayer';
+import { MultiplayerService, MultiplayerChatMessage } from './services/multiplayer';
+import { MultiplayerChat } from './components/MultiplayerChat';
+import { ActiveMultiplayerGamesModal } from './components/ActiveMultiplayerGamesModal';
 import { SuggestionGenerator } from './services/suggestionGenerator';
 import WelcomePage from './components/WelcomePage';
 import AuthModal from './components/AuthModal';
@@ -71,7 +73,9 @@ import {
   Maximize2,
   Minimize2,
   Share2,
-  Users
+  Users,
+  MessageSquare,
+  Trash2
 } from 'lucide-react';
 
 // Instantiate services outside component to persist across re-renders
@@ -273,6 +277,11 @@ function App() {
   const [multiplayerService, setMultiplayerService] = useState<MultiplayerService | null>(null);
   const [roomState, setRoomState] = useState<any>(null);
   const roomStateRef = useRef<any>(null);
+  const [chatMessages, setChatMessages] = useState<MultiplayerChatMessage[]>([]);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [lastChatReadCount, setLastChatReadCount] = useState(0);
+  const [isActiveGamesModalOpen, setIsActiveGamesModalOpen] = useState(false);
+  const [isActiveGamesSlotLimitWarning, setIsActiveGamesSlotLimitWarning] = useState(false);
   const [username, setUsername] = useState<string>(() => {
     return localStorage.getItem('aimud_username') || '';
   });
@@ -1201,6 +1210,9 @@ function App() {
         if (state.playerRecommendations) {
           setPlayerRecommendations(sanitizePlayerRecommendations(state.playerRecommendations));
         }
+        if (Array.isArray(state.chatMessages)) {
+          setChatMessages(state.chatMessages);
+        }
         syncFiles();
 
         // Check if we need to show character creation
@@ -1446,8 +1458,129 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       }
     });
 
+    ms.setOnChatMessage((msg) => {
+      setChatMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+    });
+
+    ms.setOnDeleteChatMessage((msgId) => {
+      setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
+    });
+
     setMultiplayerService(ms);
     return ms;
+  };
+
+  // Helper to extract player's character name from file system
+  const getPlayerCharacterName = (playerUsername: string): string | undefined => {
+    if (!playerUsername) return undefined;
+    const pLower = playerUsername.trim().toLowerCase();
+    const fileList = fileSystem.list();
+    const file = fileList.find(f => {
+      const fl = f.toLowerCase();
+      return fl.endsWith(`-${pLower}.txt`) || fl.endsWith(`_${pLower}.txt`) || fl.endsWith(` ${pLower}.txt`);
+    });
+    if (file) {
+      return file.replace(/[-_ ][^-_ ]+\.txt$/i, '').replace('.txt', '').trim();
+    }
+    return undefined;
+  };
+
+  // Sync unread chat message counter
+  useEffect(() => {
+    if (isChatOpen) {
+      setLastChatReadCount(chatMessages.length);
+    }
+  }, [isChatOpen, chatMessages.length]);
+
+  const unreadChatCount = isChatOpen ? 0 : Math.max(0, chatMessages.length - lastChatReadCount);
+
+  // Send multiplayer chat message
+  const handleSendChatMessage = async (
+    text: string,
+    whisperTo?: string[],
+    replyTo?: MultiplayerChatMessage['replyTo']
+  ) => {
+    if (multiplayerService) {
+      return await multiplayerService.sendChatMessage(text, whisperTo, replyTo);
+    }
+    return null;
+  };
+
+  // Delete chat message (sender, host, mod, or admin)
+  const handleDeleteChatMessage = async (messageId: string): Promise<boolean> => {
+    if (multiplayerService) {
+      return await multiplayerService.deleteChatMessage(
+        messageId,
+        currentUser ? { username: currentUser.username, role: currentUser.role } : undefined
+      );
+    }
+    return false;
+  };
+
+  // Host/Staff delete adventure permanently with confirmation
+  const handleDeleteMultiplayerAdventurePermanently = async () => {
+    if (!roomState?.id || !multiplayerService) return;
+    const myUsernameLower = (currentUser?.username || '').trim().toLowerCase();
+    const isHost = (roomState.hostUsername || '').trim().toLowerCase() === myUsernameLower;
+    const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'mod';
+    if (!isHost && !isStaff) {
+      alert("Only the host, moderators, or administrators can permanently delete this multiplayer adventure.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete multiplayer adventure "${roomState.id}"? All room history will be removed and all players will be disconnected. This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await multiplayerService.deleteAdventure(
+        currentUser ? { username: currentUser.username, role: currentUser.role } : undefined
+      );
+      localStorage.removeItem('aimud_roomId');
+      setGameMode('singleplayer');
+      setRoomState(null);
+      setMultiplayerService(null);
+      fileSystem.clear();
+      setNarrative([{ id: 'init', type: 'system', text: `Multiplayer adventure ${roomState.id} was permanently deleted.` }]);
+      alert(`Multiplayer adventure ${roomState.id} has been permanently deleted.`);
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete multiplayer adventure.");
+    }
+  };
+
+  // Free Tier Slot Limit: Free users can only have 1 active multiplayer slot until they leave or the game gets deleted
+  const checkFreeTierSlotLimit = async (targetRoomId?: string): Promise<boolean> => {
+    if (!currentUser) return false;
+    const isFreeTier = !currentUser.tier || currentUser.tier === 'free';
+    const isStaff = currentUser.role === 'admin' || currentUser.role === 'mod';
+    if (!isFreeTier || isStaff) {
+      return true; // Subscribers & staff have unlimited active multiplayer adventure slots
+    }
+
+    try {
+      const activeRooms = await MultiplayerService.getUserActiveRooms(currentUser.username);
+      // If targetRoomId is specified, check if this is an adventure the user has ALREADY joined
+      if (targetRoomId) {
+        const alreadyInRoom = activeRooms.some(r => r.id.toUpperCase() === targetRoomId.toUpperCase());
+        if (alreadyInRoom) {
+          return true; // Resuming their current slot
+        }
+      }
+
+      if (activeRooms.length >= 1) {
+        setIsActiveGamesSlotLimitWarning(true);
+        setIsActiveGamesModalOpen(true);
+        setShowMultiplayerModal(null);
+        return false;
+      }
+    } catch (err) {
+      console.warn("Could not verify user active rooms:", err);
+    }
+    return true;
   };
 
   const handleJoinGame = async (roomId: string, joinUsername?: string) => {
@@ -1458,6 +1591,8 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       setIsAuthModalOpen(true);
       return;
     }
+    const canJoin = await checkFreeTierSlotLimit(roomId);
+    if (!canJoin) return;
     const effectiveJoin = currentUser.username;
     setUsername(effectiveJoin);
     localStorage.setItem('aimud_username', effectiveJoin);
@@ -1549,6 +1684,8 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       setIsAuthModalOpen(true);
       return;
     }
+    const canHost = await checkFreeTierSlotLimit();
+    if (!canHost) return;
     const effectiveHost = currentUser.username;
     setUsername(effectiveHost);
     localStorage.setItem('aimud_username', effectiveHost);
@@ -2267,6 +2404,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
               setMarketInitialTab(tab || 'packs');
               setIsMarketOpen(true);
             }}
+            onOpenActiveGames={() => setIsActiveGamesModalOpen(true)}
           />
         )}
       </>
@@ -2367,6 +2505,10 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
         onOpenAdventures={() => setIsAdventuresModalOpen(true)}
         onOpenCommunity={() => setIsCommunityModalOpen(true)}
         onOpenShareCode={() => setShareRoomModalCode(roomState?.id || null)}
+        onOpenChat={() => setIsChatOpen(prev => !prev)}
+        unreadChatCount={unreadChatCount}
+        onOpenActiveGames={() => setIsActiveGamesModalOpen(true)}
+        onDeleteAdventurePermanently={handleDeleteMultiplayerAdventurePermanently}
         isMobileOpen={isMobilePanelOpen}
         onCloseMobile={() => setIsMobilePanelOpen(false)}
         mobileTab={mobilePanelTab}
@@ -2457,7 +2599,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   </span>
                 ) : actionStatus?.isGuest ? (
                   <span className="text-[10px] bg-amber-950/70 border border-amber-800/60 text-amber-300 px-1.5 py-0.2 rounded font-sans">
-                    {actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3} Guest Free
+                    {actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 5} Guest Free
                   </span>
                 ) : (
                   <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
@@ -2518,17 +2660,46 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
             </div>
 
             <div className="flex items-center gap-2">
-              {gameMode === 'multiplayer' && roomState && (
+              {currentUser && (
                 <button
-                  onClick={() => setShareRoomModalCode(roomState.id)}
-                  className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-800/60 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer"
-                  title="Click to view & share room code"
+                  id="top-my-active-games-btn"
+                  onClick={() => setIsActiveGamesModalOpen(true)}
+                  className="flex items-center gap-1.5 text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer"
+                  title="View Your Active Multiplayer Adventures"
                 >
-                  <Share2 size={11} className="text-emerald-400" />
-                  <span>Room: {roomState.id}</span>
-                  <span className="text-neutral-600">|</span>
-                  <span>{(roomState.players || []).filter((p: any) => p.status === 'active').length} Players</span>
+                  <Users size={11} className="text-blue-400" />
+                  <span>My Games</span>
                 </button>
+              )}
+
+              {gameMode === 'multiplayer' && roomState && (
+                <>
+                  <button
+                    onClick={() => setShareRoomModalCode(roomState.id)}
+                    className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-800/60 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer"
+                    title="Click to view & share room code"
+                  >
+                    <Share2 size={11} className="text-emerald-400" />
+                    <span>Room: {roomState.id}</span>
+                    <span className="text-neutral-600">|</span>
+                    <span>{(roomState.players || []).filter((p: any) => p.status === 'active').length} Players</span>
+                  </button>
+
+                  <button
+                    id="top-multiplayer-chat-btn"
+                    onClick={() => setIsChatOpen(prev => !prev)}
+                    className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-950/70 hover:bg-blue-900/80 border border-blue-800/60 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer relative"
+                    title="Toggle Multiplayer Chat"
+                  >
+                    <MessageSquare size={11} className="text-blue-400" />
+                    <span>Chat</span>
+                    {unreadChatCount > 0 && (
+                      <span className="bg-red-500 text-white font-bold font-mono text-[9px] px-1 rounded-full animate-pulse">
+                        {unreadChatCount}
+                      </span>
+                    )}
+                  </button>
+                </>
               )}
 
               {currentUser ? (
@@ -2662,7 +2833,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                 {actionStatus?.isUnlimited ? (
                   <span className="font-bold">Unlimited</span>
                 ) : actionStatus?.isGuest ? (
-                  <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3}</span>
+                  <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 5}</span>
                 ) : (
                   <span>
                     {actionStatus?.dailyFreeRemaining ?? 0} Free
@@ -2772,34 +2943,74 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   </button>
                 </div>
               ) : (
-                <div className="p-2 bg-blue-950/70 border border-blue-800/70 rounded flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <Users size={12} className="text-blue-400 shrink-0" />
-                    <span className="font-bold text-blue-200 truncate">Room: {roomState.id}</span>
+                <div className="flex flex-col gap-1.5 p-2 bg-blue-950/70 border border-blue-800/70 rounded">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <Users size={12} className="text-blue-400 shrink-0" />
+                      <span className="font-bold text-blue-200 truncate">Room: {roomState.id}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          setIsChatOpen(true);
+                        }}
+                        className="px-2 py-1 bg-blue-900/80 hover:bg-blue-800 text-blue-200 rounded border border-blue-700/60 text-[10px] flex items-center gap-1 cursor-pointer"
+                        title="Open Multiplayer Chat"
+                      >
+                        <MessageSquare size={10} /> Chat {unreadChatCount > 0 && `(${unreadChatCount})`}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          setShareRoomModalCode(roomState.id);
+                        }}
+                        className="px-2 py-1 bg-blue-900/80 hover:bg-blue-800 text-blue-200 rounded border border-blue-700/60 text-[10px] flex items-center gap-1 cursor-pointer"
+                        title="Share Room Code"
+                      >
+                        <Share2 size={10} /> Share
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMobileTopMenuOpen(false);
+                          handleLeaveGame();
+                        }}
+                        className="px-2 py-1 bg-red-950/80 hover:bg-red-900 text-red-300 rounded border border-red-800/60 text-[10px] flex items-center gap-1 cursor-pointer"
+                        title="Leave Multiplayer Game"
+                      >
+                        <LogOutIcon size={10} /> Leave
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+
+                  {(isHost || currentUser?.role === 'admin' || currentUser?.role === 'mod') && (
                     <button
                       onClick={() => {
                         setIsMobileTopMenuOpen(false);
-                        setShareRoomModalCode(roomState.id);
+                        handleDeleteMultiplayerAdventurePermanently();
                       }}
-                      className="px-2 py-1 bg-blue-900/80 hover:bg-blue-800 text-blue-200 rounded border border-blue-700/60 text-[10px] flex items-center gap-1 cursor-pointer"
-                      title="Share Room Code"
+                      className="w-full bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/50 p-1.5 rounded text-[10px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      title="Permanently delete this multiplayer adventure"
                     >
-                      <Share2 size={10} /> Share
+                      <Trash2 size={10} />
+                      <span>Delete Adventure Permanently</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        setIsMobileTopMenuOpen(false);
-                        handleLeaveGame();
-                      }}
-                      className="px-2 py-1 bg-red-950/80 hover:bg-red-900 text-red-300 rounded border border-red-800/60 text-[10px] flex items-center gap-1 cursor-pointer"
-                      title="Leave Multiplayer Game"
-                    >
-                      <LogOutIcon size={10} /> Leave
-                    </button>
-                  </div>
+                  )}
                 </div>
+              )}
+
+              {/* View Active Multiplayer Adventures Button */}
+              {currentUser && (
+                <button
+                  onClick={() => {
+                    setIsMobileTopMenuOpen(false);
+                    setIsActiveGamesModalOpen(true);
+                  }}
+                  className="w-full p-2 bg-neutral-900 hover:bg-neutral-800 text-blue-300 rounded border border-neutral-800 flex items-center justify-center gap-1.5 font-medium transition-colors cursor-pointer"
+                >
+                  <Users size={12} className="text-blue-400" />
+                  <span>My Active Multiplayer Games</span>
+                </button>
               )}
 
               {/* World Files and Map Links in Mobile Menu */}
@@ -3333,6 +3544,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
             setMarketInitialTab(tab || 'packs');
             setIsMarketOpen(true);
           }}
+          onOpenActiveGames={() => setIsActiveGamesModalOpen(true)}
         />
       )}
 
@@ -3402,6 +3614,49 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
           </div>
         </div>
       )}
+
+      {/* Expandable Multiplayer Chat with Floating Button & Controls */}
+      {gameMode === 'multiplayer' && roomState && (
+        <MultiplayerChat
+          messages={chatMessages}
+          currentUsername={currentUser ? currentUser.username : username}
+          currentUser={currentUser}
+          hostUsername={roomState.hostUsername}
+          players={(roomState.players || []).map((p: any) => ({
+            username: p.username,
+            status: p.status || 'active',
+            role: p.role,
+            tier: p.tier,
+            characterName: getPlayerCharacterName(p.username)
+          }))}
+          onSendMessage={handleSendChatMessage}
+          onDeleteMessage={handleDeleteChatMessage}
+          isOpen={isChatOpen}
+          onToggleOpen={() => setIsChatOpen(!isChatOpen)}
+        />
+      )}
+
+      {/* Active Multiplayer Games Modal */}
+      <ActiveMultiplayerGamesModal
+        isOpen={isActiveGamesModalOpen}
+        onClose={() => {
+          setIsActiveGamesModalOpen(false);
+          setIsActiveGamesSlotLimitWarning(false);
+        }}
+        currentUser={currentUser}
+        onSelectRoom={(roomId) => {
+          setIsActiveGamesModalOpen(false);
+          setIsActiveGamesSlotLimitWarning(false);
+          handleJoinGame(roomId);
+        }}
+        onOpenMarket={(tab) => {
+          setIsActiveGamesModalOpen(false);
+          setIsActiveGamesSlotLimitWarning(false);
+          setMarketInitialTab(tab || 'subscriptions');
+          setIsMarketOpen(true);
+        }}
+        slotLimitWarning={isActiveGamesSlotLimitWarning}
+      />
     </div>
   );
 }

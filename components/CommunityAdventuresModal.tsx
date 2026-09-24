@@ -16,12 +16,19 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileText,
-  Trash2
+  Trash2,
+  Heart,
+  MessageSquare,
+  Send,
+  CornerDownRight,
+  TrendingUp,
+  Clock
 } from 'lucide-react';
 import {
   AdventuresService,
   CommunityAdventure,
   CommunityShareType,
+  CommunityComment,
   SavedAdventure
 } from '../services/adventuresService';
 import { UserProfile, isDefaultAdmin } from '../services/authService';
@@ -54,6 +61,13 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [shareFilter, setShareFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'popular'>('newest');
+
+  // Expanded comments section state
+  const [expandedCommentsAdvId, setExpandedCommentsAdvId] = useState<string | null>(null);
+  const [commentInput, setCommentInput] = useState<{ [advId: string]: string }>({});
+  const [isSubmittingComment, setIsSubmittingComment] = useState<{ [advId: string]: boolean }>({});
+  const [likeWarning, setLikeWarning] = useState<string | null>(null);
 
   // Sharing Dialog State
   const [isPostingModalOpen, setIsPostingModalOpen] = useState(false);
@@ -69,13 +83,104 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
   const isAdmin = currentUser?.role === 'admin' || isDefaultAdmin(currentUser?.email, currentUser?.username);
   const isMod = currentUser?.role === 'mod';
   const isStaff = isAdmin || isMod;
-  const canPost = isSubscriber || isStaff || Boolean(currentUser?.canPostCommunityAdventures);
+  const hasUnlimitedPosts = isSubscriber || isStaff || Boolean(currentUser?.canPostCommunityAdventures);
+
+  const myPostsCount = adventures.filter(
+    (a) => currentUser && (a.authorId === currentUser.uid || a.authorName.toLowerCase() === currentUser.username.toLowerCase())
+  ).length;
+
+  const canPost = !!currentUser && (hasUnlimitedPosts || myPostsCount < 1);
 
   const loadCommunityAdventures = async () => {
     setIsLoading(true);
     const list = await AdventuresService.getCommunityAdventures();
     setAdventures(list);
     setIsLoading(false);
+  };
+
+  const handleToggleLike = async (adv: CommunityAdventure) => {
+    if (!currentUser) {
+      setLikeWarning("Please log in to like community adventures.");
+      setTimeout(() => setLikeWarning(null), 3500);
+      return;
+    }
+
+    const isMyPost = (adv.authorId === currentUser.uid) || (adv.authorName.toLowerCase() === currentUser.username.toLowerCase());
+    if (isMyPost) {
+      setLikeWarning("You can't like your own community adventures!");
+      setTimeout(() => setLikeWarning(null), 3500);
+      return;
+    }
+
+    const alreadyLiked = adv.likedBy?.includes(currentUser.uid);
+    const updatedLikedBy = alreadyLiked
+      ? (adv.likedBy || []).filter(id => id !== currentUser.uid)
+      : [...(adv.likedBy || []), currentUser.uid];
+    const updatedLikesCount = updatedLikedBy.length;
+
+    setAdventures(prev => prev.map(a => a.id === adv.id ? { ...a, likedBy: updatedLikedBy, likesCount: updatedLikesCount } : a));
+
+    const res = await AdventuresService.toggleLikeCommunityAdventure(adv.id, currentUser);
+    if (!res.success) {
+      setLikeWarning(res.message || "Failed to update like.");
+      setTimeout(() => setLikeWarning(null), 3500);
+      loadCommunityAdventures();
+    }
+  };
+
+  const handleAddComment = async (advId: string) => {
+    const text = (commentInput[advId] || '').trim();
+    if (!text) return;
+    if (!currentUser) {
+      setLikeWarning("Please log in to comment on community adventures.");
+      setTimeout(() => setLikeWarning(null), 3500);
+      return;
+    }
+
+    try {
+      setIsSubmittingComment(prev => ({ ...prev, [advId]: true }));
+      const res = await AdventuresService.addCommunityComment(advId, currentUser, text);
+      if (res.success && res.comment) {
+        setAdventures(prev => prev.map(a => {
+          if (a.id === advId) {
+            return {
+              ...a,
+              comments: [...(a.comments || []), res.comment!]
+            };
+          }
+          return a;
+        }));
+        setCommentInput(prev => ({ ...prev, [advId]: '' }));
+      } else {
+        alert(res.message || "Failed to post comment.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to post comment.");
+    } finally {
+      setIsSubmittingComment(prev => ({ ...prev, [advId]: false }));
+    }
+  };
+
+  const handleDeleteComment = async (advId: string, commentId: string) => {
+    if (!currentUser) return;
+    try {
+      const res = await AdventuresService.deleteCommunityComment(advId, commentId, currentUser);
+      if (res.success) {
+        setAdventures(prev => prev.map(a => {
+          if (a.id === advId) {
+            return {
+              ...a,
+              comments: (a.comments || []).filter(c => c.id !== commentId)
+            };
+          }
+          return a;
+        }));
+      } else {
+        alert(res.message || "Failed to delete comment.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete comment.");
+    }
   };
 
   const handleDeletePost = async (advId: string, title: string) => {
@@ -110,6 +215,19 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
   const handleOpenPostDialog = () => {
     setPostError(null);
     setPostSuccess(false);
+
+    if (!currentUser) {
+      setPostError('You must be logged into an account to post adventures.');
+      setIsPostingModalOpen(true);
+      return;
+    }
+
+    if (!canPost) {
+      setPostError('Free tier adventurers can have a maximum of 1 active posted adventure in Community Adventures. Delete your existing post or upgrade to an Adventurer subscription for unlimited community posts!');
+      setIsPostingModalOpen(true);
+      return;
+    }
+
     if (!initialAdventureToShare) {
       const firstUser = (narrative || []).find(n => n.type === 'user');
       setPostTitle(firstUser?.text ? firstUser.text.substring(0, 40) + '...' : 'Epic Community Adventure');
@@ -121,8 +239,13 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
     e.preventDefault();
     if (!postTitle.trim()) return;
 
+    if (!currentUser) {
+      setPostError('You must be logged into an account to post to Community Adventures.');
+      return;
+    }
+
     if (!canPost) {
-      setPostError('Posting adventures to Community Adventures requires a membership tier (Adventurer $4.99/mo, Legendary $9.99/mo, or Celestial $14.99/mo) or special permission granted by an Admin/Mod. Upgrade in the Market to share your adventures with everyone!');
+      setPostError('Free tier adventurers can have a maximum of 1 active posted adventure. Delete your existing post or upgrade in the Market for unlimited community adventure slots!');
       return;
     }
 
@@ -175,13 +298,22 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
     }
   };
 
-  const filteredAdventures = adventures.filter(adv => {
-    const matchesSearch = adv.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      adv.authorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      adv.startingPrompt.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = shareFilter === 'all' || adv.shareType === shareFilter;
-    return matchesSearch && matchesFilter;
-  });
+  const filteredAdventures = adventures
+    .filter(adv => {
+      const matchesSearch =
+        adv.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        adv.authorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        adv.startingPrompt.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesFilter = shareFilter === 'all' || adv.shareType === shareFilter;
+      return matchesSearch && matchesFilter;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'popular') {
+        const diff = (b.likesCount || 0) - (a.likesCount || 0);
+        if (diff !== 0) return diff;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
   const getShareTypeBadge = (type: CommunityShareType) => {
     switch (type) {
@@ -247,20 +379,73 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
             />
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
-            <Filter size={13} className="text-neutral-400" />
-            <select
-              value={shareFilter}
-              onChange={(e) => setShareFilter(e.target.value)}
-              className="bg-black border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-neutral-300 focus:outline-none"
-            >
-              <option value="all">All Sharing Types</option>
-              <option value="full">Exact Full Adventure</option>
-              <option value="prompt_only">Only Starting Prompt</option>
-              <option value="initial_generation">Initial AI World Generation</option>
-            </select>
+          <div className="flex items-center gap-2 text-xs flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <Filter size={13} className="text-neutral-400" />
+              <select
+                value={shareFilter}
+                onChange={(e) => setShareFilter(e.target.value)}
+                className="bg-black border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-neutral-300 focus:outline-none cursor-pointer"
+              >
+                <option value="all">All Sharing Types</option>
+                <option value="full">Exact Full Adventure</option>
+                <option value="prompt_only">Only Starting Prompt</option>
+                <option value="initial_generation">Initial AI World Generation</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <TrendingUp size={13} className="text-amber-400" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'newest' | 'popular')}
+                className="bg-black border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-neutral-300 focus:outline-none cursor-pointer"
+              >
+                <option value="newest">🕒 Newest First</option>
+                <option value="popular">🔥 Most Popular (Most Likes)</option>
+              </select>
+            </div>
           </div>
         </div>
+
+        {/* Free Tier Slot Status & Warning */}
+        {currentUser && !hasUnlimitedPosts && (
+          <div className="px-4 py-2 bg-neutral-950 border-b border-neutral-800 text-[11px] text-neutral-400 flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <span>Community Adventure Slots: </span>
+              <strong className={myPostsCount >= 1 ? "text-amber-400 font-mono" : "text-emerald-400 font-mono"}>
+                {myPostsCount} / 1 Active Post (Free Tier)
+              </strong>
+            </div>
+            {onOpenMarket && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenMarket('subscriptions');
+                }}
+                className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold cursor-pointer"
+              >
+                <Sparkles size={11} /> Upgrade for Unlimited Posts
+              </button>
+            )}
+          </div>
+        )}
+
+        {likeWarning && (
+          <div className="px-4 py-2 bg-amber-950/80 border-b border-amber-600/70 text-xs text-amber-200 flex items-center justify-between animate-in fade-in">
+            <span className="flex items-center gap-1.5 font-medium">
+              <AlertTriangle size={13} className="text-amber-400" />
+              {likeWarning}
+            </span>
+            <button
+              onClick={() => setLikeWarning(null)}
+              className="text-neutral-400 hover:text-white text-xs cursor-pointer ml-2"
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         {deleteStatus && (
           <div className="px-6 py-2 bg-neutral-900 border-b border-neutral-800 text-xs text-amber-300 flex items-center justify-between">
@@ -498,13 +683,59 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-neutral-900">
-                    <span className="text-[11px] text-neutral-400 font-mono">
-                      {adv.shareType === 'full' && adv.narrative ? `${adv.narrative.length} story turns` : 'Playable Seed'}
-                    </span>
+                  <div className="flex items-center justify-between pt-2 border-t border-neutral-900 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {/* LIKE BUTTON */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleLike(adv)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
+                          adv.likedBy?.includes(currentUser?.uid || '')
+                            ? 'bg-red-950/70 border-red-500/80 text-red-300 shadow-sm shadow-red-950/40'
+                            : 'bg-neutral-900/80 border-neutral-800 text-neutral-300 hover:border-red-500/60 hover:text-red-300'
+                        }`}
+                        title={
+                          currentUser && (adv.authorId === currentUser.uid || adv.authorName.toLowerCase() === currentUser.username.toLowerCase())
+                            ? "You cannot like your own adventure"
+                            : adv.likedBy?.includes(currentUser?.uid || '')
+                            ? "Unlike adventure"
+                            : "Like adventure"
+                        }
+                      >
+                        <Heart
+                          size={13}
+                          className={
+                            adv.likedBy?.includes(currentUser?.uid || '')
+                              ? 'fill-red-400 text-red-400'
+                              : 'text-neutral-400 group-hover:text-red-400'
+                          }
+                        />
+                        <span className="font-mono text-xs">{adv.likesCount || 0}</span>
+                      </button>
+
+                      {/* COMMENT TOGGLE BUTTON */}
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCommentsAdvId(expandedCommentsAdvId === adv.id ? null : adv.id)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
+                          expandedCommentsAdvId === adv.id
+                            ? 'bg-blue-950/70 border-blue-500/80 text-blue-300 shadow-sm shadow-blue-950/40'
+                            : 'bg-neutral-900/80 border-neutral-800 text-neutral-300 hover:border-blue-500/60 hover:text-blue-300'
+                        }`}
+                        title="View and post comments"
+                      >
+                        <MessageSquare size={13} className="text-blue-400" />
+                        <span className="font-mono text-xs">{adv.comments?.length || 0}</span>
+                        <span className="text-[11px] hidden sm:inline">Comments</span>
+                      </button>
+
+                      <span className="text-[11px] text-neutral-500 font-mono hidden md:inline ml-1">
+                        {adv.shareType === 'full' && adv.narrative ? `${adv.narrative.length} turns` : 'Seed'}
+                      </span>
+                    </div>
 
                     <div className="flex items-center gap-2">
-                      {(isStaff || (currentUser && currentUser.uid === adv.authorUid)) && (
+                      {(isStaff || (currentUser && (currentUser.uid === adv.authorId || currentUser.username.toLowerCase() === adv.authorName.toLowerCase()))) && (
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
@@ -514,14 +745,14 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
                                 ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse'
                                 : 'text-red-400 hover:text-red-300 hover:bg-red-950/60 border-red-900/50'
                             }`}
-                            title={isStaff && adv.authorUid !== currentUser?.uid ? 'Remove Post (Staff Action)' : 'Delete your post'}
+                            title={isStaff && adv.authorId !== currentUser?.uid ? 'Remove Post (Staff Action)' : 'Delete your post'}
                           >
                             <Trash2 size={13} />
                             <span className="text-[11px]">
                               {confirmDeleteId === adv.id
-                                ? 'Click to Confirm Removal'
-                                : isStaff && adv.authorUid !== currentUser?.uid
-                                ? 'Remove Post'
+                                ? 'Confirm Removal'
+                                : isStaff && adv.authorId !== currentUser?.uid
+                                ? 'Staff Remove'
                                 : 'Delete'}
                             </span>
                           </button>
@@ -545,10 +776,101 @@ export const CommunityAdventuresModal: React.FC<CommunityAdventuresModalProps> =
                         className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow cursor-pointer"
                       >
                         <Play size={13} />
-                        <span>Play this Adventure</span>
+                        <span>Play Adventure</span>
                       </button>
                     </div>
                   </div>
+
+                  {/* EXPANDABLE COMMENT SECTION */}
+                  {expandedCommentsAdvId === adv.id && (
+                    <div className="pt-3 mt-1 border-t border-neutral-800/80 space-y-2.5 animate-in fade-in duration-150 bg-neutral-900/40 p-3 rounded-xl border border-neutral-800">
+                      <div className="flex items-center justify-between text-xs text-neutral-400">
+                        <span className="font-bold text-neutral-200 flex items-center gap-1.5">
+                          <MessageSquare size={13} className="text-blue-400" />
+                          <span>Comments ({adv.comments?.length || 0})</span>
+                        </span>
+                        <button
+                          onClick={() => setExpandedCommentsAdvId(null)}
+                          className="text-[11px] text-neutral-500 hover:text-neutral-300 cursor-pointer"
+                        >
+                          Close Comments
+                        </button>
+                      </div>
+
+                      {/* Comment List */}
+                      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                        {(!adv.comments || adv.comments.length === 0) ? (
+                          <div className="text-[11px] text-neutral-500 italic py-2 text-center">
+                            No comments yet. Share your thoughts or feedback for this world!
+                          </div>
+                        ) : (
+                          adv.comments.map((comm) => {
+                            const isMyComment = currentUser && (comm.authorId === currentUser.uid || comm.authorName.toLowerCase() === currentUser.username.toLowerCase());
+                            const canDeleteComm = isMyComment || isStaff;
+
+                            return (
+                              <div
+                                key={comm.id}
+                                className="p-2.5 bg-neutral-950/80 border border-neutral-800/80 rounded-lg text-xs space-y-1"
+                              >
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <GoldenName
+                                      name={comm.authorName}
+                                      tier={comm.authorTier}
+                                      isGolden={comm.authorTier === 'legendary'}
+                                      className="font-bold text-white text-[11px]"
+                                    />
+                                    <span className="text-[10px] text-neutral-500 font-mono">
+                                      {new Date(comm.createdAt).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  {canDeleteComm && (
+                                    <button
+                                      onClick={() => handleDeleteComment(adv.id, comm.id)}
+                                      className="text-[10px] text-neutral-500 hover:text-red-400 transition-colors p-0.5 cursor-pointer"
+                                      title="Delete comment"
+                                    >
+                                      <Trash2 size={11} />
+                                    </button>
+                                  )}
+                                </div>
+                                <p className="text-neutral-200 text-xs break-words leading-relaxed whitespace-pre-wrap">
+                                  {comm.text}
+                                </p>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Comment input form */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleAddComment(adv.id);
+                        }}
+                        className="flex items-center gap-2 pt-1"
+                      >
+                        <input
+                          type="text"
+                          placeholder={currentUser ? "Write a comment..." : "Log in to post a comment..."}
+                          disabled={!currentUser}
+                          value={commentInput[adv.id] || ''}
+                          onChange={(e) => setCommentInput(prev => ({ ...prev, [adv.id]: e.target.value }))}
+                          className="flex-1 bg-black border border-neutral-700 focus:border-blue-500 rounded-lg px-3 py-1.5 text-xs text-white placeholder-neutral-500 outline-none"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!currentUser || !(commentInput[adv.id] || '').trim() || isSubmittingComment[adv.id]}
+                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                        >
+                          <Send size={11} />
+                          <span>{isSubmittingComment[adv.id] ? 'Posting...' : 'Comment'}</span>
+                        </button>
+                      </form>
+                    </div>
+                  )}
                 </div>
               );
             })

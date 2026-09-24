@@ -898,7 +898,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                   {isGuest ? `${effectiveStatus.dailyFreeRemaining} / ${effectiveStatus.dailyFreeTotal}` : effectiveStatus.dailyFreeRemaining}
                 </span>
                 <span className="text-[10px] text-neutral-400 ml-1">
-                  {isGuest ? "(3 trial actions)" : "(+10 beta bonus)"}
+                  {isGuest ? "(5 trial actions)" : "(+10 beta bonus)"}
                 </span>
               </div>
             )}

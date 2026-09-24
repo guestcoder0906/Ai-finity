@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Share2, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Share2, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins, MessageSquare, Trash2 } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -50,6 +50,10 @@ interface SidebarProps {
   onSetMobileTab?: (tab: 'files' | 'map') => void;
   isMinimized?: boolean;
   onToggleMinimize?: (explicit?: boolean) => void;
+  onOpenChat?: () => void;
+  unreadChatCount?: number;
+  onOpenActiveGames?: () => void;
+  onDeleteAdventurePermanently?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -93,7 +97,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   mobileTab,
   onSetMobileTab,
   isMinimized: propIsMinimized,
-  onToggleMinimize
+  onToggleMinimize,
+  onOpenChat,
+  unreadChatCount = 0,
+  onOpenActiveGames,
+  onDeleteAdventurePermanently
 }) => {
 
   const [activeTab, setActiveTab] = useState<'files' | 'map'>('files');
@@ -685,29 +693,84 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
             ))}
           </div>
+
+          {/* Multiplayer Realm Toolbar: Chat, My Games, Permanent Deletion */}
+          <div className="p-2 bg-neutral-950/90 border-t border-neutral-800/80 flex flex-col gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
+              {onOpenChat && (
+                <button
+                  onClick={onOpenChat}
+                  className="bg-blue-900/50 hover:bg-blue-800/70 text-blue-200 border border-blue-700/60 p-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer relative"
+                  title="Open Multiplayer Chat"
+                >
+                  <MessageSquare size={12} className="text-blue-300" />
+                  <span>Chat</span>
+                  {unreadChatCount > 0 && (
+                    <span className="bg-red-500 text-white font-bold font-mono text-[9px] px-1 rounded-full animate-pulse">
+                      {unreadChatCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {onOpenActiveGames && (
+                <button
+                  onClick={onOpenActiveGames}
+                  className="bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-700/60 p-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  title="View All My Active Adventures"
+                >
+                  <Users size={12} className="text-neutral-400" />
+                  <span>My Games</span>
+                </button>
+              )}
+            </div>
+
+            {(isHost || currentUser?.role === 'admin' || currentUser?.role === 'mod') && onDeleteAdventurePermanently && (
+              <button
+                onClick={onDeleteAdventurePermanently}
+                className="w-full bg-red-950/40 hover:bg-red-900/60 text-red-300 hover:text-red-200 border border-red-800/50 p-1 rounded text-[10px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                title="Permanently delete this multiplayer adventure"
+              >
+                <Trash2 size={10} />
+                <span>Delete Adventure Permanently</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {(!roomState || gameMode === 'singleplayer') && (
         <div className="hidden md:flex flex-col border-b border-neutral-800 p-2 gap-2 bg-neutral-950">
-          <button
-            onClick={() => {
-              if (onCloseMobile) onCloseMobile();
-              onHostClick();
-            }}
-            className="w-full bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer"
-          >
-            Host Multiplayer
-          </button>
-          <button
-            onClick={() => {
-              if (onCloseMobile) onCloseMobile();
-              onJoinClick();
-            }}
-            className="w-full bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 border border-emerald-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer"
-          >
-            Join Multiplayer
-          </button>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              onClick={() => {
+                if (onCloseMobile) onCloseMobile();
+                onHostClick();
+              }}
+              className="bg-blue-900/40 hover:bg-blue-800/60 text-blue-300 border border-blue-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer font-semibold"
+            >
+              Host Multiplayer
+            </button>
+            <button
+              onClick={() => {
+                if (onCloseMobile) onCloseMobile();
+                onJoinClick();
+              }}
+              className="bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 border border-emerald-800/50 p-1.5 rounded text-xs transition-colors cursor-pointer font-semibold"
+            >
+              Join Multiplayer
+            </button>
+          </div>
+          {onOpenActiveGames && currentUser && (
+            <button
+              onClick={onOpenActiveGames}
+              className="w-full bg-neutral-900/90 hover:bg-neutral-800 text-blue-300 border border-neutral-800 hover:border-blue-900/60 p-1 rounded text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              title="View my active multiplayer games"
+            >
+              <Users size={11} className="text-blue-400" />
+              <span>My Active Adventures</span>
+            </button>
+          )}
         </div>
       )}
 

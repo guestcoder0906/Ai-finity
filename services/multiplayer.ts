@@ -2,6 +2,24 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import { FileSystem } from './fileSystem';
 
+export interface MultiplayerChatMessage {
+  id: string;
+  senderUsername: string;
+  senderRole?: 'admin' | 'mod' | 'user';
+  senderTier?: string;
+  senderGlowingName?: boolean;
+  characterName?: string;
+  text: string;
+  timestamp: number;
+  whisperTo?: string[];
+  replyTo?: {
+    id: string;
+    senderUsername: string;
+    characterName?: string;
+    text: string;
+  };
+}
+
 export class MultiplayerService {
   private supabase: SupabaseClient;
   private channel: RealtimeChannel | null = null;
@@ -11,6 +29,8 @@ export class MultiplayerService {
   private currentUserMeta: { tier?: string; role?: 'admin' | 'mod' | 'user'; showGlowingName?: boolean } | null = null;
   private pendingSyncTasks: Array<() => Promise<void>> = [];
   private isProcessingSync = false;
+  private onChatMessage?: (msg: MultiplayerChatMessage) => void;
+  private onDeleteChatMessage?: (msgId: string) => void;
 
   private enqueueSync<T>(task: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve) => {
@@ -111,7 +131,8 @@ export class MultiplayerService {
         pendingInputs: {},
         recommendations: [],
         playerRecommendations: {},
-        worldTime: ''
+        worldTime: '',
+        chatMessages: []
       };
 
       const { error } = await this.supabase
@@ -236,6 +257,18 @@ export class MultiplayerService {
         }
         if (this.onUndoTurn) {
           this.onUndoTurn(payload.payload);
+        }
+      })
+      .on('broadcast', { event: 'send_chat_message' }, (payload: any) => {
+        const msg = payload?.payload?.message;
+        if (msg && this.onChatMessage) {
+          this.onChatMessage(msg);
+        }
+      })
+      .on('broadcast', { event: 'delete_chat_message' }, (payload: any) => {
+        const msgId = payload?.payload?.messageId;
+        if (msgId && this.onDeleteChatMessage) {
+          this.onDeleteChatMessage(msgId);
         }
       });
 
@@ -514,6 +547,119 @@ export class MultiplayerService {
     this.onUndoTurn = cb;
   }
 
+  setOnChatMessage(cb: (msg: MultiplayerChatMessage) => void) {
+    this.onChatMessage = cb;
+  }
+
+  setOnDeleteChatMessage(cb: (msgId: string) => void) {
+    this.onDeleteChatMessage = cb;
+  }
+
+  async sendChatMessage(
+    text: string,
+    whisperTo?: string[],
+    replyTo?: MultiplayerChatMessage['replyTo']
+  ): Promise<MultiplayerChatMessage | null> {
+    if (!this.roomId || !this.currentUsername || !text.trim()) return null;
+
+    // Detect character name from file system convention: CharacterName-USERNAME.txt
+    let characterName: string | undefined;
+    if (this.fileSystem) {
+      const uLower = this.currentUsername.trim().toLowerCase();
+      const files = this.fileSystem.list();
+      const charFile = files.find(f => {
+        const lower = f.toLowerCase();
+        return lower.endsWith(`-${uLower}.txt`) || lower.endsWith(`_${uLower}.txt`) || lower.endsWith(` ${uLower}.txt`);
+      });
+      if (charFile) {
+        characterName = charFile.replace(/[-_ ][^-_ ]+\.txt$/i, '').replace('.txt', '').trim();
+      }
+    }
+
+    const message: MultiplayerChatMessage = {
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      senderUsername: this.currentUsername,
+      senderRole: this.currentUserMeta?.role || 'user',
+      senderTier: this.currentUserMeta?.tier || 'free',
+      senderGlowingName: this.currentUserMeta?.showGlowingName,
+      characterName,
+      text: text.trim(),
+      timestamp: Date.now(),
+      whisperTo: whisperTo && whisperTo.length > 0 ? whisperTo.map(u => u.trim().toLowerCase()) : undefined,
+      replyTo: replyTo ? {
+        id: replyTo.id,
+        senderUsername: replyTo.senderUsername,
+        characterName: replyTo.characterName,
+        text: replyTo.text.slice(0, 120)
+      } : undefined
+    };
+
+    // Low-latency broadcast to all room subscribers
+    this.channel?.send({
+      type: 'broadcast',
+      event: 'send_chat_message',
+      payload: { message }
+    });
+
+    // Notify local listener right away
+    if (this.onChatMessage) {
+      this.onChatMessage(message);
+    }
+
+    // Persist asynchronously to DB room record
+    this.enqueueSync(async () => {
+      const { data } = await this.supabase.from('rooms').select('state').eq('id', this.roomId).single();
+      if (data && data.state) {
+        const state = data.state;
+        const currentMessages: MultiplayerChatMessage[] = state.chatMessages || [];
+        // Avoid duplicate if already inserted
+        if (!currentMessages.some(m => m.id === message.id)) {
+          state.chatMessages = [...currentMessages, message].slice(-500);
+          await this.supabase.from('rooms').update({ state }).eq('id', this.roomId);
+        }
+      }
+    });
+
+    return message;
+  }
+
+  async deleteChatMessage(messageId: string, currentUser?: { username: string; role?: string }): Promise<boolean> {
+    if (!this.roomId) return false;
+    const { data } = await this.supabase.from('rooms').select('state, host_username').eq('id', this.roomId).single();
+    if (!data || !data.state) return false;
+
+    const state = data.state;
+    const messages: MultiplayerChatMessage[] = state.chatMessages || [];
+    const target = messages.find(m => m.id === messageId);
+    if (!target) return false;
+
+    const myUser = (currentUser?.username || this.currentUsername || '').trim().toLowerCase();
+    const isSender = (target.senderUsername || '').trim().toLowerCase() === myUser;
+    const isHost = (data.host_username || state.hostUsername || '').trim().toLowerCase() === myUser;
+    const role = currentUser?.role || this.currentUserMeta?.role;
+    const isStaff = role === 'admin' || role === 'mod';
+
+    if (!isSender && !isHost && !isStaff) {
+      throw new Error("Only the sender, room host, moderators, or admins can delete this message.");
+    }
+
+    state.chatMessages = messages.filter(m => m.id !== messageId);
+    await this.supabase.from('rooms').update({ state }).eq('id', this.roomId);
+
+    this.channel?.send({
+      type: 'broadcast',
+      event: 'delete_chat_message',
+      payload: { messageId }
+    });
+
+    if (this.onDeleteChatMessage) {
+      this.onDeleteChatMessage(messageId);
+    }
+
+    this.onStateUpdate(state);
+    return true;
+  }
+
   async undoTurn(snapshotData: any) {
     if (!this.roomId) return;
     this.channel?.send({
@@ -533,13 +679,136 @@ export class MultiplayerService {
     });
   }
 
-  async deleteAdventure() {
+  async deleteAdventure(user?: { username: string; role?: string }) {
     if (!this.roomId) return;
+    if (user) {
+      const { data } = await this.supabase.from('rooms').select('host_username').eq('id', this.roomId).single();
+      if (data) {
+        const isHost = (data.host_username || '').trim().toLowerCase() === user.username.trim().toLowerCase();
+        const isStaff = user.role === 'admin' || user.role === 'mod';
+        if (!isHost && !isStaff) {
+          throw new Error('Only the host, moderators, or administrators can permanently delete this multiplayer adventure.');
+        }
+      }
+    }
     this.channel?.send({
       type: 'broadcast',
       event: 'adventure_deleted'
     });
     await this.supabase.from('rooms').delete().eq('id', this.roomId);
     this.leaveRoom();
+  }
+
+  // --- Static Room Management & Query Methods ---
+
+  static async getUserActiveRooms(username: string): Promise<Array<{
+    id: string;
+    hostUsername: string;
+    state: any;
+    isHost: boolean;
+    characterName?: string;
+    playerCount: number;
+    gameState: string;
+    worldTime?: string;
+  }>> {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey || !username) return [];
+
+    try {
+      const client = createClient(supabaseUrl, supabaseAnonKey);
+      const { data, error } = await client.from('rooms').select('id, host_username, state');
+      if (error || !data) {
+        console.warn("Could not query rooms:", error);
+        return [];
+      }
+
+      const uLower = username.trim().toLowerCase();
+      const myRooms = data.filter((r: any) => {
+        const isHost = (r.host_username || r.state?.hostUsername || '').trim().toLowerCase() === uLower;
+        const isInPlayers = Array.isArray(r.state?.players) && r.state.players.some((p: any) => (p.username || '').trim().toLowerCase() === uLower);
+        return isHost || isInPlayers;
+      });
+
+      return myRooms.map((r: any) => {
+        const state = r.state || {};
+        const isHost = (r.host_username || state.hostUsername || '').trim().toLowerCase() === uLower;
+        let charName: string | undefined;
+
+        if (state.fileSystemState?.files) {
+          const fileKeys = Object.keys(state.fileSystemState.files);
+          const match = fileKeys.find(f => {
+            const lower = f.toLowerCase();
+            return lower.endsWith(`-${uLower}.txt`) || lower.endsWith(`_${uLower}.txt`) || lower.endsWith(` ${uLower}.txt`);
+          });
+          if (match) {
+            charName = match.replace(/[-_ ][^-_ ]+\.txt$/i, '').replace('.txt', '').trim();
+          }
+        }
+
+        return {
+          id: r.id,
+          hostUsername: r.host_username || state.hostUsername || 'Unknown',
+          state,
+          isHost,
+          characterName: charName,
+          playerCount: Array.isArray(state.players) ? state.players.length : 1,
+          gameState: state.gameState || 'waiting_for_world',
+          worldTime: state.worldTime || ''
+        };
+      });
+    } catch (err) {
+      console.error("Error fetching user active rooms:", err);
+      return [];
+    }
+  }
+
+  static async leaveRoomPermanently(roomId: string, username: string): Promise<boolean> {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey || !roomId || !username) return false;
+
+    try {
+      const client = createClient(supabaseUrl, supabaseAnonKey);
+      const { data } = await client.from('rooms').select('state, host_username').eq('id', roomId).single();
+      if (!data || !data.state) return false;
+      const state = data.state;
+      const uLower = username.trim().toLowerCase();
+
+      if (Array.isArray(state.players)) {
+        state.players = state.players.filter((p: any) => (p.username || '').trim().toLowerCase() !== uLower);
+      }
+
+      await client.from('rooms').update({ state }).eq('id', roomId);
+      return true;
+    } catch (err) {
+      console.error("Error leaving room permanently:", err);
+      return false;
+    }
+  }
+
+  static async deleteRoomPermanently(roomId: string, user: { username: string; role?: string }): Promise<boolean> {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey || !roomId) return false;
+
+    try {
+      const client = createClient(supabaseUrl, supabaseAnonKey);
+      const { data } = await client.from('rooms').select('host_username, state').eq('id', roomId).single();
+      if (!data) return false;
+
+      const isHost = (data.host_username || data.state?.hostUsername || '').trim().toLowerCase() === user.username.trim().toLowerCase();
+      const isStaff = user.role === 'admin' || user.role === 'mod';
+      if (!isHost && !isStaff) {
+        throw new Error('Only the host, moderators, or administrators can permanently delete this multiplayer adventure.');
+      }
+
+      const { error } = await client.from('rooms').delete().eq('id', roomId);
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error("Error deleting room permanently:", err);
+      throw err;
+    }
   }
 }

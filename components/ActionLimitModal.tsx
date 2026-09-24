@@ -61,7 +61,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
             </h3>
             <p className="text-xs text-neutral-400">
               {isGuest
-                ? "You've used all 3 free initial preview actions for this guest session."
+                ? "You've used all 5 free initial preview actions for this guest session."
                 : "You've used all 30 free daily actions today (20 base + 10 Beta bonus)."}
             </p>
           </div>

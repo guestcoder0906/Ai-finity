@@ -20,6 +20,7 @@ interface MainMenuProps {
   guestId?: string;
   onOpenMarket?: (tab?: 'packs' | 'subscriptions' | 'apikey') => void;
   onOpenAuth?: (tab?: 'login' | 'signup') => void;
+  onOpenActiveGames?: () => void;
 }
 
 export default function MainMenu({
@@ -33,7 +34,8 @@ export default function MainMenu({
   guestName,
   guestId,
   onOpenMarket,
-  onOpenAuth
+  onOpenAuth,
+  onOpenActiveGames
 }: MainMenuProps) {
   const [mode, setMode] = useState<'host' | 'join'>(initialMode);
   const [username, setUsername] = useState('');
@@ -245,47 +247,23 @@ export default function MainMenu({
         {/* HOST MODE */}
         {mode === 'host' && (
           <div className="flex flex-col gap-4">
-            <h2 className="text-base font-bold text-center text-blue-300">Host Multiplayer Realm</h2>
-
-            <div>
-              <label className="text-xs text-neutral-400 block mb-1">
-                Player Display Name
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={isLoggedIn}
-                  readOnly={isLoggedIn}
-                  placeholder="Enter unique guest name..."
-                  value={isLoggedIn && currentUser ? currentUser.username : username}
-                  onChange={(e) => !isLoggedIn && setUsername(e.target.value)}
-                  className={`w-full bg-black border rounded-lg p-2.5 text-xs text-white font-mono ${
-                    isLoggedIn ? 'border-neutral-800 text-neutral-400 bg-neutral-950 cursor-not-allowed pr-8 select-none' : 'border-neutral-700 focus:border-blue-500'
-                  }`}
-                />
-                {isLoggedIn && (
-                  <div className="absolute right-2.5 top-2.5 text-neutral-500" title="Account usernames are automatically locked">
-                    <Lock size={14} />
-                  </div>
-                )}
-              </div>
-              <p className="text-[11px] text-neutral-500 mt-1">
-                {isLoggedIn
-                  ? '🔒 Locked: In multiplayer, your account username is used automatically.'
-                  : 'Guests can choose a unique active guest name.'}
+            <div className="text-center space-y-1">
+              <h2 className="text-base font-bold text-blue-300">Host Multiplayer Realm</h2>
+              <p className="text-xs text-neutral-400">
+                You will host as <strong className="text-blue-300">@{currentUser?.username}</strong>. A unique 5-character room code will be generated to invite party members.
               </p>
             </div>
 
             <div className="flex gap-2 mt-2">
               <button
                 onClick={handleHost}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white p-2.5 rounded-lg font-bold text-xs transition-colors shadow"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white p-2.5 rounded-lg font-bold text-xs transition-colors shadow cursor-pointer"
               >
                 Create Room & Host
               </button>
               <button
                 onClick={() => setMode('join')}
-                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 p-2.5 rounded-lg text-xs font-semibold transition-colors"
+                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 p-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
               >
                 Switch to Join
               </button>
@@ -296,34 +274,10 @@ export default function MainMenu({
         {/* JOIN MODE */}
         {mode === 'join' && (
           <div className="flex flex-col gap-4">
-            <h2 className="text-base font-bold text-center text-emerald-300">Join Multiplayer Realm</h2>
-
-            <div>
-              <label className="text-xs text-neutral-400 block mb-1">
-                Player Display Name
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={isLoggedIn}
-                  readOnly={isLoggedIn}
-                  placeholder="Enter unique guest name..."
-                  value={isLoggedIn && currentUser ? currentUser.username : username}
-                  onChange={(e) => !isLoggedIn && setUsername(e.target.value)}
-                  className={`w-full bg-black border rounded-lg p-2.5 text-xs text-white font-mono ${
-                    isLoggedIn ? 'border-neutral-800 text-neutral-400 bg-neutral-950 cursor-not-allowed pr-8 select-none' : 'border-neutral-700 focus:border-emerald-500'
-                  }`}
-                />
-                {isLoggedIn && (
-                  <div className="absolute right-2.5 top-2.5 text-neutral-500" title="Account usernames are automatically locked">
-                    <Lock size={14} />
-                  </div>
-                )}
-              </div>
-              <p className="text-[11px] text-neutral-500 mt-1">
-                {isLoggedIn
-                  ? '🔒 Locked: In multiplayer, your account username is used automatically.'
-                  : 'Guests can choose a unique active guest name.'}
+            <div className="text-center space-y-1">
+              <h2 className="text-base font-bold text-emerald-300">Join Multiplayer Realm</h2>
+              <p className="text-xs text-neutral-400">
+                Joining adventure as <strong className="text-emerald-300">@{currentUser?.username}</strong>
               </p>
             </div>
 
@@ -336,7 +290,7 @@ export default function MainMenu({
                 placeholder="e.g. AB12C"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value.toUpperCase())}
-                className="w-full bg-black border border-neutral-700 rounded-lg p-2.5 text-xs text-white font-mono uppercase tracking-widest text-center"
+                className="w-full bg-black border border-neutral-700 rounded-lg p-2.5 text-xs text-white font-mono uppercase tracking-widest text-center focus:border-emerald-500 outline-none"
                 maxLength={5}
               />
             </div>
@@ -345,17 +299,34 @@ export default function MainMenu({
               <button
                 onClick={handleJoin}
                 disabled={!roomId.trim()}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white p-2.5 rounded-lg font-bold text-xs transition-colors shadow"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white p-2.5 rounded-lg font-bold text-xs transition-colors shadow cursor-pointer"
               >
                 Join Realm
               </button>
               <button
                 onClick={() => setMode('host')}
-                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 p-2.5 rounded-lg text-xs font-semibold transition-colors"
+                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 p-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
               >
                 Switch to Host
               </button>
             </div>
+          </div>
+        )}
+
+        {/* View Active Adventures Shortcut */}
+        {onOpenActiveGames && isLoggedIn && (
+          <div className="mt-4 pt-3 border-t border-neutral-800 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                onCancel();
+                onOpenActiveGames();
+              }}
+              className="w-full text-xs text-blue-300 hover:text-white py-2 px-3 rounded-lg bg-blue-950/40 hover:bg-blue-900/60 border border-blue-800/50 transition-colors flex items-center justify-center gap-1.5 font-medium cursor-pointer"
+            >
+              <Users size={13} className="text-blue-400" />
+              <span>View My Active Adventures</span>
+            </button>
           </div>
         )}
 

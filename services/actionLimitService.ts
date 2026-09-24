@@ -150,7 +150,7 @@ export interface ActionStatus {
 export class ActionLimitService {
   /**
    * Current Game Phase:
-   * 'beta' (registered accounts receive 30 daily free actions [20 base + 10 beta bonus], guests receive 3 trial actions).
+   * 'beta' (registered accounts receive 30 daily free actions [20 base + 10 beta bonus], guests receive 5 trial actions).
    */
   public static readonly CURRENT_PHASE: GamePhase = 'beta';
 
@@ -164,8 +164,8 @@ export class ActionLimitService {
     return this.CURRENT_PHASE;
   }
 
-  // Guests receive a strictly permanent initial trial limit of 3 actions total (in Beta/Release)
-  public static readonly GUEST_ACTION_LIMIT = 3;
+  // Guests receive a strictly permanent initial trial limit of 5 actions total (in Beta/Release)
+  public static readonly GUEST_ACTION_LIMIT = 5;
 
   // Maximum free actions that can be stacked from daily claims (purchased actions are NEVER limited)
   public static readonly MAX_FREE_STACK = 200;
@@ -214,7 +214,7 @@ export class ActionLimitService {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           // If this is a guest: DO NOT RESET ACTIONS ON DATE CHANGE.
-          // Guest limit of 3 actions is permanently saved for each guest.
+          // Guest limit of 5 actions is permanently saved for each guest.
           if (!user) {
             const guestUsed = typeof parsed.dailyActionsUsed === 'number' ? parsed.dailyActionsUsed : 0;
             return {
@@ -319,10 +319,10 @@ export class ActionLimitService {
 
     // If user is a guest:
     // In Alpha phase: unlimited actions!
-    // In Beta/Release phase: strict permanent 3 action trial
+    // In Beta/Release phase: strict permanent 5 action trial
     if (!user) {
       const guestUsed = typeof local.dailyActionsUsed === 'number' ? local.dailyActionsUsed : 0;
-      const guestLimit = this.GUEST_ACTION_LIMIT; // 3 in beta/release
+      const guestLimit = this.GUEST_ACTION_LIMIT; // 5 in beta/release
       const isUnlimited = isAlpha || hasCustomKey;
       const guestRemaining = isAlpha ? 999999 : Math.max(0, guestLimit - guestUsed);
       const totalAvailable = isUnlimited ? 999999 : guestRemaining;

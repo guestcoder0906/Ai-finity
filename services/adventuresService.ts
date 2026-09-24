@@ -31,6 +31,15 @@ export interface SavedAdventure {
 
 export type CommunityShareType = 'full' | 'prompt_only' | 'initial_generation';
 
+export interface CommunityComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorTier?: UserTier;
+  text: string;
+  createdAt: string;
+}
+
 export interface CommunityAdventure {
   id: string;
   authorId: string;
@@ -43,6 +52,8 @@ export interface CommunityAdventure {
   narrative?: NarrativeEntry[];
   files?: Record<string, string>;
   likesCount: number;
+  likedBy?: string[];
+  comments?: CommunityComment[];
   createdAt: string;
 }
 
@@ -184,7 +195,8 @@ export class AdventuresService {
 
   /**
    * Post adventure to Community Adventures
-   * Locked to $9.99+ monthly subscribers (Adventurer or Legendary tier)
+   * Free tier can post at least 1 community adventure slot.
+   * Paid tiers ($4.99/mo+), granted users, admins, and mods get multiple/unlimited posts.
    */
   public static async postToCommunity(
     user: UserProfile | null,
@@ -196,7 +208,7 @@ export class AdventuresService {
       narrative?: NarrativeEntry[];
       files?: Record<string, string>;
     }
-  ): Promise<{ success: boolean; reason?: 'subscription_required' | 'not_logged_in' | 'error'; message?: string }> {
+  ): Promise<{ success: boolean; reason?: 'tier_limit' | 'not_logged_in' | 'error'; message?: string }> {
     if (!user) {
       return {
         success: false,
@@ -206,13 +218,29 @@ export class AdventuresService {
     }
 
     const tier = user.tier || 'free';
-    const canPost = tier === 'adventurer' || tier === 'legendary' || tier === 'celestial' || Boolean(user.canPostCommunityAdventures) || user.role === 'admin' || user.role === 'mod';
-    if (!canPost) {
-      return {
-        success: false,
-        reason: 'subscription_required',
-        message: 'Posting to Community Adventures is an exclusive perk for Adventurer, Legendary, and Celestial monthly members ($4.99/mo+). Upgrade in the Market to share your adventures with the world!'
-      };
+    const hasUnlimitedPosts =
+      tier === 'adventurer' ||
+      tier === 'legendary' ||
+      tier === 'celestial' ||
+      Boolean(user.canPostCommunityAdventures) ||
+      user.role === 'admin' ||
+      user.role === 'mod';
+
+    // If free tier, enforce max 1 posted adventure
+    if (!hasUnlimitedPosts) {
+      try {
+        const allPosts = await this.getCommunityAdventures();
+        const userPosts = allPosts.filter(p => p.authorId === user.uid || p.authorName.toLowerCase() === user.username.toLowerCase());
+        if (userPosts.length >= 1) {
+          return {
+            success: false,
+            reason: 'tier_limit',
+            message: 'Free tier adventurers can have a maximum of 1 active posted adventure in Community Adventures. Delete your existing post or upgrade to an Adventurer subscription for unlimited community posts!'
+          };
+        }
+      } catch (e) {
+        console.warn('Could not check existing community posts count:', e);
+      }
     }
 
     try {
@@ -229,6 +257,8 @@ export class AdventuresService {
         narrative: postData.shareType === 'full' ? postData.narrative : undefined,
         files: postData.shareType === 'full' ? postData.files : undefined,
         likesCount: 0,
+        likedBy: [],
+        comments: [],
         createdAt: new Date().toISOString()
       };
 
@@ -246,16 +276,163 @@ export class AdventuresService {
   public static async getCommunityAdventures(): Promise<CommunityAdventure[]> {
     try {
       const commRef = collection(db, 'community_adventures');
-      const q = query(commRef, orderBy('createdAt', 'desc'), limit(50));
+      const q = query(commRef, orderBy('createdAt', 'desc'), limit(100));
       const snap = await getDocs(q);
       const list: CommunityAdventure[] = [];
       snap.forEach((d) => {
-        list.push(d.data() as CommunityAdventure);
+        const data = d.data() as CommunityAdventure;
+        list.push({
+          ...data,
+          likesCount: Array.isArray(data.likedBy) ? data.likedBy.length : (data.likesCount || 0),
+          likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
+          comments: Array.isArray(data.comments) ? data.comments : []
+        });
       });
       return list;
     } catch (err) {
       console.error('Failed to load community adventures from Firestore:', err);
       return [];
+    }
+  }
+
+  /**
+   * Toggle Like on a Community Adventure
+   * Rules: Users cannot like their own adventures!
+   */
+  public static async toggleLikeCommunityAdventure(
+    adventureId: string,
+    user: UserProfile | null
+  ): Promise<{ success: boolean; isLiked?: boolean; likesCount?: number; message?: string }> {
+    if (!user) {
+      return { success: false, message: 'Please log in to like community adventures.' };
+    }
+
+    try {
+      const postRef = doc(db, 'community_adventures', adventureId);
+      const snap = await getDoc(postRef);
+      if (!snap.exists()) {
+        return { success: false, message: 'Adventure not found.' };
+      }
+
+      const data = snap.data() as CommunityAdventure;
+      const myId = user.uid;
+      const myUsername = user.username.trim().toLowerCase();
+      const isAuthor = (data.authorId === myId) || (data.authorName && data.authorName.trim().toLowerCase() === myUsername);
+
+      if (isAuthor) {
+        return { success: false, message: 'You cannot like your own community adventure!' };
+      }
+
+      let currentLikedBy: string[] = Array.isArray(data.likedBy) ? [...data.likedBy] : [];
+      const alreadyLiked = currentLikedBy.includes(myId);
+
+      if (alreadyLiked) {
+        currentLikedBy = currentLikedBy.filter(id => id !== myId);
+      } else {
+        currentLikedBy.push(myId);
+      }
+
+      const newLikesCount = currentLikedBy.length;
+      await setDoc(postRef, { likedBy: currentLikedBy, likesCount: newLikesCount }, { merge: true });
+
+      return {
+        success: true,
+        isLiked: !alreadyLiked,
+        likesCount: newLikesCount
+      };
+    } catch (err: any) {
+      console.error('Error toggling like:', err);
+      return { success: false, message: err?.message || 'Failed to update like.' };
+    }
+  }
+
+  /**
+   * Add a Comment to a Community Adventure
+   */
+  public static async addCommunityComment(
+    adventureId: string,
+    user: UserProfile | null,
+    text: string
+  ): Promise<{ success: boolean; comment?: CommunityComment; message?: string }> {
+    if (!user) {
+      return { success: false, message: 'Please log in to comment on community adventures.' };
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return { success: false, message: 'Comment cannot be empty.' };
+    }
+
+    try {
+      const postRef = doc(db, 'community_adventures', adventureId);
+      const snap = await getDoc(postRef);
+      if (!snap.exists()) {
+        return { success: false, message: 'Adventure not found.' };
+      }
+
+      const data = snap.data() as CommunityAdventure;
+      const currentComments: CommunityComment[] = Array.isArray(data.comments) ? [...data.comments] : [];
+
+      const newComment: CommunityComment = {
+        id: 'comm_msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        authorId: user.uid,
+        authorName: user.username,
+        authorTier: user.tier || 'free',
+        text: trimmed,
+        createdAt: new Date().toISOString()
+      };
+
+      currentComments.push(newComment);
+      await setDoc(postRef, { comments: currentComments }, { merge: true });
+
+      return { success: true, comment: newComment };
+    } catch (err: any) {
+      console.error('Error adding community comment:', err);
+      return { success: false, message: err?.message || 'Failed to add comment.' };
+    }
+  }
+
+  /**
+   * Delete a Comment from a Community Adventure
+   * Rules: Only comment author, mod, or admin can delete
+   */
+  public static async deleteCommunityComment(
+    adventureId: string,
+    commentId: string,
+    user: UserProfile | null
+  ): Promise<{ success: boolean; message?: string }> {
+    if (!user) {
+      return { success: false, message: 'Authentication required.' };
+    }
+
+    try {
+      const postRef = doc(db, 'community_adventures', adventureId);
+      const snap = await getDoc(postRef);
+      if (!snap.exists()) {
+        return { success: false, message: 'Adventure not found.' };
+      }
+
+      const data = snap.data() as CommunityAdventure;
+      const currentComments: CommunityComment[] = Array.isArray(data.comments) ? [...data.comments] : [];
+      const targetComment = currentComments.find(c => c.id === commentId);
+
+      if (!targetComment) {
+        return { success: false, message: 'Comment not found.' };
+      }
+
+      const isAuthor = targetComment.authorId === user.uid;
+      const isStaff = user.role === 'admin' || user.role === 'mod';
+
+      if (!isAuthor && !isStaff) {
+        return { success: false, message: 'You do not have permission to delete this comment.' };
+      }
+
+      const filtered = currentComments.filter(c => c.id !== commentId);
+      await setDoc(postRef, { comments: filtered }, { merge: true });
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error deleting comment:', err);
+      return { success: false, message: err?.message || 'Failed to delete comment.' };
     }
   }
 
