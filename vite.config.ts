@@ -34,6 +34,9 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
         allowedHosts: true,
+        headers: {
+          'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
+        },
         proxy: {
           '/__/auth': {
             target: 'https://gen-lang-client-0320558179.firebaseapp.com',
@@ -49,6 +52,9 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
         allowedHosts: true,
+        headers: {
+          'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
+        },
         proxy: {
           '/__/auth': {
             target: 'https://gen-lang-client-0320558179.firebaseapp.com',

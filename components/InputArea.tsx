@@ -51,7 +51,7 @@ const InputArea: React.FC<InputAreaProps> = ({
       : isMyTurnReady
         ? "Action submitted. Waiting for other players..."
         : disabled
-          ? "Action input unavailable"
+          ? "Input paused. Click Unlock to resume action input."
           : "Enter action (e.g. explore the forest, check inventory, cast spell)..."
   );
 
@@ -101,11 +101,11 @@ const InputArea: React.FC<InputAreaProps> = ({
             </div>
           )}
         </div>
-        {isProcessing && onCancelProcessing && processingSeconds >= 3 ? (
+        {((isProcessing && processingSeconds >= 3) || (disabled && !isProcessing)) && onCancelProcessing ? (
           <button
             type="button"
             onClick={onCancelProcessing}
-            title="Force unlock action input"
+            title="Unlock action input"
             className="bg-amber-900/80 hover:bg-amber-800 text-amber-200 border border-amber-700 font-bold px-3 sm:px-4 py-2 rounded text-xs transition-all active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer"
           >
             <Unlock size={13} />

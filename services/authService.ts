@@ -663,6 +663,21 @@ export async function loginWithGoogle(): Promise<{
         error: 'Google Sign-In authorization for www.aifinity-rpg.com requires domain authorization in the Firebase project settings.'
       };
     }
+    // Cross-Origin-Opener-Policy recovery: if window.close was intercepted by browser policy, check if user was authenticated
+    if (auth.currentUser) {
+      try {
+        const uid = auth.currentUser.uid;
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        if (userDoc.exists()) {
+          const profile = enrichUserProfileWithDefaults(userDoc.data() as UserProfile);
+          activeProfileCache[uid] = profile;
+          return { user: profile };
+        }
+        return { needsUsername: true, googleUser: auth.currentUser };
+      } catch (recoveryErr) {
+        console.warn("COOP recovery failed:", recoveryErr);
+      }
+    }
     return { error: err.message || 'Google sign in failed.' };
   }
 }

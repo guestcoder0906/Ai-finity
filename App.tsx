@@ -979,7 +979,15 @@ function App() {
     }
     processingCountRef.current = 0;
     setIsProcessing(false);
+    setShowCharacterCreation(false);
+    setGameOver(false);
     aiEngine.cancelAndReset();
+    if (gameMode === 'multiplayer' && (!multiplayerService || !roomState || roomState?.gameState !== 'playing')) {
+      setGameMode('singleplayer');
+      localStorage.setItem('aimud_gameMode', 'singleplayer');
+      localStorage.removeItem('aimud_roomId');
+      setRoomState(null);
+    }
     if (multiplayerService) {
       try {
         (multiplayerService as any).isProcessingSync = false;
@@ -1297,10 +1305,16 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         currentUser ? { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName } : undefined
       );
       localStorage.setItem('aimud_roomId', roomId);
+      localStorage.setItem('aimud_gameMode', 'multiplayer');
       setGameMode('multiplayer');
       setShowMultiplayerModal(null);
     } catch (err: any) {
-      alert(err.message || String(err));
+      console.warn("Failed to join room, reverting to singleplayer:", err);
+      localStorage.removeItem('aimud_roomId');
+      localStorage.setItem('aimud_gameMode', 'singleplayer');
+      setGameMode('singleplayer');
+      setRoomState(null);
+      alert(`Could not join multiplayer room: ${err.message || String(err)}. Returned to singleplayer.`);
     }
   };
 
@@ -1335,13 +1349,28 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         handleJoinGame(savedRoomId, savedUsername);
       } else {
         setGameMode('singleplayer');
+        localStorage.setItem('aimud_gameMode', 'singleplayer');
       }
     }
-
     if (!isInitialized || (gameMode === 'multiplayer' && roomState?.gameState === 'waiting_for_world')) {
       setRecommendations([]);
     }
   }, [gameMode, isInitialized, roomState?.gameState]);
+
+  // Safety watchdog: If gameMode is multiplayer but roomState remains null after 5 seconds, auto-revert to singleplayer
+  useEffect(() => {
+    if (gameMode === 'multiplayer' && !roomState) {
+      const timer = setTimeout(() => {
+        if (gameMode === 'multiplayer' && !roomStateRef.current) {
+          console.warn("[Multiplayer Watchdog] No active room found after timeout, reverting to singleplayer.");
+          localStorage.removeItem('aimud_roomId');
+          localStorage.setItem('aimud_gameMode', 'singleplayer');
+          setGameMode('singleplayer');
+        }
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [gameMode, roomState]);
 
   const handleHostGame = async (hostUsername?: string) => {
     const effectiveHost = currentUser ? currentUser.username : (hostUsername || getMultiplayerUsername([]));
