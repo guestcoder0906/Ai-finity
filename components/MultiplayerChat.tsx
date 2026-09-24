@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { MultiplayerChatMessage } from '../services/multiplayer';
 import { UserProfile } from '../services/authService';
+import { safeStorage } from '../services/safeStorage';
 
 interface MultiplayerChatProps {
   messages: MultiplayerChatMessage[];
@@ -62,6 +63,125 @@ export const MultiplayerChat: React.FC<MultiplayerChatProps> = ({
   const myUsernameLower = (currentUsername || '').trim().toLowerCase();
   const isHost = (hostUsername || '').trim().toLowerCase() === myUsernameLower;
   const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'mod';
+
+  // Draggable button position state (defaults to middle side instead of bottom so it doesn't cover anything)
+  const [btnPos, setBtnPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ pointerX: number; pointerY: number; btnX: number; btnY: number } | null>(null);
+  const hasDraggedRef = useRef(false);
+
+  const clampPosition = (x: number, y: number) => {
+    const btnSize = 50;
+    const margin = 10;
+    const maxX = Math.max(margin, window.innerWidth - btnSize - margin);
+    const maxY = Math.max(60, window.innerHeight - btnSize - margin);
+    return {
+      x: Math.min(Math.max(margin, x), maxX),
+      y: Math.min(Math.max(60, y), maxY),
+    };
+  };
+
+  useEffect(() => {
+    const saved = safeStorage.getItem('aifinity_mp_btn_pos');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          setBtnPos(clampPosition(parsed.x, parsed.y));
+          return;
+        }
+      } catch (e) {}
+    }
+    // Default position: middle side (right edge, centered vertically around 50% height)
+    const defaultX = Math.max(10, window.innerWidth - 62);
+    const defaultY = Math.max(60, Math.round(window.innerHeight * 0.5 - 25));
+    setBtnPos({ x: defaultX, y: defaultY });
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setBtnPos((prev) => {
+        if (!prev) return prev;
+        return clampPosition(prev.x, prev.y);
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
+    if ('button' in e && e.button !== 0) return;
+    const clientX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
+    const clientY = 'clientY' in e ? e.clientY : e.touches[0].clientY;
+
+    const currentX = btnPos?.x ?? (window.innerWidth - 62);
+    const currentY = btnPos?.y ?? (window.innerHeight * 0.5 - 25);
+
+    dragStartRef.current = {
+      pointerX: clientX,
+      pointerY: clientY,
+      btnX: currentX,
+      btnY: currentY,
+    };
+    hasDraggedRef.current = false;
+
+    const handlePointerMove = (moveEvt: MouseEvent | TouchEvent) => {
+      if (!dragStartRef.current) return;
+      const moveX = 'clientX' in moveEvt ? moveEvt.clientX : moveEvt.touches[0].clientX;
+      const moveY = 'clientY' in moveEvt ? moveEvt.clientY : moveEvt.touches[0].clientY;
+
+      const dx = moveX - dragStartRef.current.pointerX;
+      const dy = moveY - dragStartRef.current.pointerY;
+
+      if (!hasDraggedRef.current && Math.hypot(dx, dy) > 4) {
+        hasDraggedRef.current = true;
+        setIsDragging(true);
+      }
+
+      if (hasDraggedRef.current) {
+        if ('cancelable' in moveEvt && moveEvt.cancelable) {
+          moveEvt.preventDefault();
+        }
+        const newX = dragStartRef.current.btnX + dx;
+        const newY = dragStartRef.current.btnY + dy;
+        const clamped = clampPosition(newX, newY);
+        setBtnPos(clamped);
+      }
+    };
+
+    const handlePointerUp = () => {
+      if (dragStartRef.current && hasDraggedRef.current) {
+        setBtnPos((current) => {
+          if (current) {
+            safeStorage.setItem('aifinity_mp_btn_pos', JSON.stringify(current));
+          }
+          return current;
+        });
+      }
+      dragStartRef.current = null;
+      setIsDragging(false);
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+      window.removeEventListener('touchcancel', handlePointerUp);
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove, { passive: false });
+    window.addEventListener('touchend', handlePointerUp);
+    window.addEventListener('touchcancel', handlePointerUp);
+  };
+
+  const handleButtonClick = (e: React.MouseEvent) => {
+    if (hasDraggedRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    onToggleOpen();
+  };
 
   // Handle unread messages count when chat is closed
   useEffect(() => {
@@ -159,27 +279,53 @@ export const MultiplayerChat: React.FC<MultiplayerChatProps> = ({
 
   return (
     <>
-      {/* Floating Chat Toggle Button (Visible when chat is closed) */}
+      {/* Floating Draggable Chat Toggle Button (Visible when chat is closed, located in middle side) */}
       {!isOpen && (
-        <button
-          id="multiplayer-chat-toggle-btn"
-          onClick={onToggleOpen}
-          className="fixed bottom-4 right-4 z-[9990] flex items-center gap-2 px-3.5 py-2.5 bg-neutral-900/95 hover:bg-neutral-800 text-white border border-blue-500/60 rounded-full shadow-2xl backdrop-blur-md transition-all transform hover:scale-105 active:scale-95 cursor-pointer ring-1 ring-blue-400/30 group"
-          title="Open Multiplayer Chat"
+        <div
+          id="multiplayer-chat-toggle-container"
+          style={{
+            position: 'fixed',
+            left: btnPos ? `${btnPos.x}px` : undefined,
+            top: btnPos ? `${btnPos.y}px` : undefined,
+            right: btnPos ? undefined : '12px',
+            bottom: btnPos ? undefined : '50%',
+            transform: btnPos ? undefined : 'translateY(50%)',
+            zIndex: 9990,
+          }}
+          className="touch-none select-none"
         >
-          <div className="relative">
-            <MessageSquare size={18} className="text-blue-400 group-hover:text-blue-300" />
+          <button
+            id="multiplayer-chat-toggle-btn"
+            onClick={handleButtonClick}
+            onMouseDown={handlePointerDown}
+            onTouchStart={handlePointerDown}
+            className={`relative w-12 h-12 rounded-full flex items-center justify-center bg-neutral-900/95 hover:bg-neutral-800 text-white border-2 border-blue-500/80 shadow-[0_4px_24px_rgba(0,0,0,0.8),0_0_16px_rgba(59,130,246,0.4)] backdrop-blur-md transition-transform duration-100 ${
+              isDragging
+                ? 'cursor-grabbing scale-110 ring-2 ring-blue-400 shadow-[0_0_25px_rgba(59,130,246,0.6)]'
+                : 'cursor-grab hover:scale-105 active:scale-95'
+            } group`}
+            title={`Multiplayer Chat (${players.filter((p) => p.status === 'active').length} online) • Click to open, drag to reposition`}
+            aria-label="Multiplayer Chat"
+          >
+            {/* Chat Icon */}
+            <MessageSquare size={22} className="text-blue-400 group-hover:text-blue-300 transition-colors pointer-events-none" />
+
+            {/* Unread message count badge */}
             {unreadCount > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-gradient-to-r from-red-500 to-amber-500 text-white font-bold font-mono text-[10px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse shadow-md">
+              <span className="absolute -top-1.5 -right-1.5 bg-gradient-to-r from-red-500 to-amber-500 text-white font-bold font-mono text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center animate-pulse shadow-md border-2 border-neutral-950 pointer-events-none">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
-          </div>
-          <span className="text-xs font-bold font-sans tracking-wide">Multiplayer Chat</span>
-          <span className="text-[10px] text-blue-300/80 font-mono bg-blue-950/80 border border-blue-800/60 px-1.5 py-0.2 rounded-full">
-            {players.filter(p => p.status === 'active').length} online
-          </span>
-        </button>
+
+            {/* Active player count indicator */}
+            <span
+              className="absolute -bottom-1 -right-1 bg-emerald-500 text-neutral-950 font-extrabold font-mono text-[9px] min-w-[17px] h-[17px] px-0.5 rounded-full flex items-center justify-center border-2 border-neutral-950 shadow pointer-events-none"
+              title={`${players.filter((p) => p.status === 'active').length} players online`}
+            >
+              {players.filter((p) => p.status === 'active').length}
+            </span>
+          </button>
+        </div>
       )}
 
       {/* Expandable Chat Window */}
