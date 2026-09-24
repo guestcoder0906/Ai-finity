@@ -94,6 +94,16 @@ export interface TimeTravelDirective {
   reason?: string;
 }
 
+export interface ActionUsageCost {
+  promptTokens: number;
+  candidatesTokens: number;
+  totalTokens: number;
+  inputCost: number;
+  outputCost: number;
+  totalCost: number;
+  costFormatted: string;
+}
+
 export interface AIResponse {
   narrative: string;
   updates?: UpdateItem[];
@@ -106,6 +116,7 @@ export interface AIResponse {
   inventoryTransactions?: InventoryTransaction[];
   healthTransactions?: HealthTransaction[];
   timeTravel?: TimeTravelDirective;
+  usage?: ActionUsageCost;
 }
 
 export interface Message {
@@ -119,6 +130,7 @@ export interface NarrativeEntry {
   type: 'system' | 'user' | 'ai';
   recommendations?: string[];
   playerRecommendations?: Record<string, string[]>;
+  usage?: ActionUsageCost;
 }
 
 export interface TurnSnapshot {

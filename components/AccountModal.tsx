@@ -566,7 +566,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
                   <p className="text-[11px] text-neutral-300 leading-relaxed">
                     {currentUser.tier === 'celestial'
-                      ? 'You have unlocked the highest realm: Infinite actions with zero turn limits, unlimited adventure save slots, community adventure publishing, and celestial glowing name privileges.'
+                      ? 'You have unlocked the highest realm: 1,000 monthly bonus actions, unlimited adventure save slots, community adventure publishing, and celestial glowing name privileges.'
                       : currentUser.tier === 'legendary'
                       ? 'You receive 600 monthly bonus actions, unlimited adventure save slots, community adventure publishing, and golden glowing name privileges.'
                       : 'You receive 300 monthly bonus actions, unlimited adventure save slots, and community adventure publishing privileges.'}

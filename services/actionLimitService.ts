@@ -107,10 +107,10 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     name: '✨ Celestial Tier',
     price: 14.99,
     billingPeriod: 'month',
-    badge: 'Unlimited 🔥',
+    badge: '+1,000 Actions 🔥',
     highlight: true,
     features: [
-      'UNLIMITED actions (play infinitely with zero action caps)',
+      '10 Free daily actions + 1,000 monthly bonus actions',
       '🌌 Celestial Name (glowing cosmic neon styling like Admin)',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting in Community Adventures',
@@ -349,7 +349,7 @@ export class ActionLimitService {
 
     const dailyFreeTotal = isBeta ? this.TOTAL_DAILY_FREE : (isAlpha ? 999999 : this.BASE_DAILY_FREE);
     const dailyFreeRemaining = isAlpha ? 999999 : Math.max(0, dailyFreeTotal - dailyUsed);
-    const isUnlimited = isAlpha || hasCustomKey || hasInfinite || tier === 'celestial';
+    const isUnlimited = isAlpha || hasCustomKey || hasInfinite;
     const totalAvailable = isUnlimited ? 999999 : (dailyFreeRemaining + purchasedCredits);
     const canPerformAction = isUnlimited || totalAvailable > 0;
 

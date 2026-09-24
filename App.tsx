@@ -1116,7 +1116,7 @@ function App() {
             const newNarrative = [
               ...(roomStateRef.current?.narrative || []),
               { id: Date.now().toString() + 'user', text: formattedPlayersActions, type: 'user' as const },
-              { id: Date.now().toString() + 'ai', text: result.narrative || '', type: 'ai' as const }
+              { id: Date.now().toString() + 'ai', text: result.narrative || '', type: 'ai' as const, usage: result.usage }
             ];
             const safeUpdates = Array.isArray(result.updates) ? result.updates : [];
             const newUpdates = [...safeUpdates, ...(roomStateRef.current?.updates || [])].slice(0, 50);
@@ -1535,7 +1535,12 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
               : (typeof result.narrative === 'object' && result.narrative !== null)
                 ? ((result.narrative as any).text || (result.narrative as any).content || JSON.stringify(result.narrative))
                 : String(result.narrative);
-            setNarrative(prev => [...prev, { id: Date.now().toString() + 'ai', text: safeNarrative, type: 'ai' }]);
+            setNarrative(prev => [...prev, {
+              id: Date.now().toString() + 'ai',
+              text: safeNarrative,
+              type: 'ai',
+              usage: result.usage
+            }]);
           }
           if (result.updates && Array.isArray(result.updates)) {
             setUpdates(prev => [...sanitizeUpdates(result.updates), ...prev].slice(0, 50));

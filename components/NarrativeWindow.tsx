@@ -72,6 +72,22 @@ const NarrativeEntryRow = React.memo(({ entry, username, debugMode }: { entry: N
     return res;
   }, [entry.id, entry.type, entry.text, username, debugMode]);
 
+  // Cost text appended as small text in debug mode for each action
+  const costDisplay = React.useMemo(() => {
+    if (!debugMode || entry.type !== 'ai') return null;
+    if (entry.usage) {
+      const { inputCost, outputCost, totalCost, promptTokens, candidatesTokens } = entry.usage;
+      return `Cost: $${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output | ${promptTokens} in, ${candidatesTokens} out · gemini-3.8-flash-lite)`;
+    }
+    // Fallback estimation for entries generated prior to tracking
+    const estOut = Math.max(1, Math.ceil((entry.text || '').length / 4));
+    const estIn = 1400;
+    const inCost = (estIn * 0.10) / 1_000_000;
+    const outCost = (estOut * 0.40) / 1_000_000;
+    const totCost = inCost + outCost;
+    return `Cost: ~$${totCost.toFixed(6)} total (~$${inCost.toFixed(6)} input + ~$${outCost.toFixed(6)} output | ~${estIn} in, ~${estOut} out · gemini-3.8-flash-lite)`;
+  }, [debugMode, entry.type, entry.usage, entry.text]);
+
   // If the entire entry is hidden (e.g., only contained a target() not meant for us), don't render an empty div
   if (!parsedHtml.trim() && entry.type !== 'user') return null;
 
@@ -82,6 +98,11 @@ const NarrativeEntryRow = React.memo(({ entry, username, debugMode }: { entry: N
       }`}>
       {entry.type === 'user' && <span className="mr-1.5">&gt;</span>}
       <span dangerouslySetInnerHTML={{ __html: parsedHtml }} />
+      {costDisplay && (
+        <span className="text-[10px] text-neutral-500 font-mono select-none ml-2 opacity-85 block sm:inline-block">
+          [{costDisplay}]
+        </span>
+      )}
     </div>
   );
 });

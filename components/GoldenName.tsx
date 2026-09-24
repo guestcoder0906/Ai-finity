@@ -55,7 +55,7 @@ export const GoldenName: React.FC<GoldenNameProps> = ({
   if (isCelestial) {
     const isGlowing = showGlowingName !== false;
     return (
-      <span className={`inline-flex items-center gap-1.5 ${className}`} title="Celestial Player (Unlimited Cosmic Tier)">
+      <span className={`inline-flex items-center gap-1.5 ${className}`} title="Celestial Player (Cosmic Tier - +1,000 Actions)">
         <span
           className={`font-bold transition-all ${
             isGlowing

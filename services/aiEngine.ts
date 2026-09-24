@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { FileSystem } from "./fileSystem";
-import { AIResponse, CheckDef, UpdateItem, TimeTravelDirective } from "../types";
+import { AIResponse, CheckDef, UpdateItem, TimeTravelDirective, ActionUsageCost } from "../types";
 import { WeightInventoryEngine } from "./weightInventoryEngine";
 import { HistoryService } from "./historyService";
 import {
@@ -934,6 +934,7 @@ export class AIEngine {
   async initialize(startingPrompt: string, username?: string): Promise<AIResponse | null> {
     return this.enqueueTask(async () => {
       try {
+        this.resetTurnUsage();
         const charRequirement = username
           ? `CRITICAL CHARACTER CREATION RULE: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "Kaelen Thorne", "Lyra Whisperwind", "Valerius") fitting the world setting. The character's name MUST NOT be the account username "${username}" and MUST NOT be a generic label like "Adventurer" or "Player". The file MUST be named EXACTLY "[CharacterName]-${username}.txt" (e.g. "Kaelen-${username}.txt"). Inside the file under [NAME & DESCRIPTION], specify '- Name: [CharacterName]' and '- Player: ${username}'. On CurrentMap.json, place this character in "players" with username: "${username}" and characterName: "[CharacterName]". PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!`
           : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
@@ -951,6 +952,7 @@ export class AIEngine {
   async processAction(action: string, username?: string, mapScreenshot?: string): Promise<AIResponse | null> {
     return this.enqueueTask(async () => {
       try {
+          this.resetTurnUsage();
           const files = this.getRelevantFiles(username, action);
           const formatFileSet = (fileEntries: [string, string][]) =>
             fileEntries.map(([name, content]) => `=== ${name} ===\n${content}`).join('\n\n');
@@ -2071,6 +2073,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
 
     this.processResponseData(data, username, auditContext);
+    if (this.lastActionUsage) {
+      data.usage = { ...this.lastActionUsage };
+    }
     return data;
   }
 
@@ -4686,6 +4691,18 @@ INSTRUCTIONS:
     return this.cachedAI;
   }
 
+  private lastActionUsage: ActionUsageCost | null = null;
+  private currentTurnAccumulatedUsage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
+
+  public getLastActionUsage(): ActionUsageCost | null {
+    return this.lastActionUsage;
+  }
+
+  public resetTurnUsage(): void {
+    this.currentTurnAccumulatedUsage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
+    this.lastActionUsage = null;
+  }
+
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {
     const controller = new AbortController();
     this.currentAbortController = controller;
@@ -4740,6 +4757,32 @@ INSTRUCTIONS:
       if (this.currentAbortController === controller) {
         this.currentAbortController = null;
       }
+
+      // Track token usage & calculate accurate cost based on gemini-3.8-flash-lite rates:
+      // Input tokens: $0.10 per 1,000,000 tokens ($0.00000010 per token)
+      // Output tokens: $0.40 per 1,000,000 tokens ($0.00000040 per token)
+      const pTokens = (response as any).usageMetadata?.promptTokenCount || 0;
+      const cTokens = (response as any).usageMetadata?.candidatesTokenCount || 0;
+      const tTokens = (response as any).usageMetadata?.totalTokenCount || (pTokens + cTokens);
+
+      this.currentTurnAccumulatedUsage.promptTokens += pTokens;
+      this.currentTurnAccumulatedUsage.candidatesTokens += cTokens;
+      this.currentTurnAccumulatedUsage.totalTokens += tTokens;
+
+      const inputCost = (this.currentTurnAccumulatedUsage.promptTokens * 0.10) / 1_000_000;
+      const outputCost = (this.currentTurnAccumulatedUsage.candidatesTokens * 0.40) / 1_000_000;
+      const totalCost = inputCost + outputCost;
+
+      this.lastActionUsage = {
+        promptTokens: this.currentTurnAccumulatedUsage.promptTokens,
+        candidatesTokens: this.currentTurnAccumulatedUsage.candidatesTokens,
+        totalTokens: this.currentTurnAccumulatedUsage.totalTokens,
+        inputCost,
+        outputCost,
+        totalCost,
+        costFormatted: `$${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output | ${this.currentTurnAccumulatedUsage.promptTokens} in, ${this.currentTurnAccumulatedUsage.candidatesTokens} out · gemini-3.8-flash-lite)`
+      };
+
       return response.text || "{}";
     } catch (e: any) {
       clearTimeout(timeoutId);
