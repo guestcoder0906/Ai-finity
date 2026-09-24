@@ -66,6 +66,7 @@ import {
   PanelLeftOpen,
   PanelLeftClose,
   RotateCcw,
+  RefreshCw,
   Maximize2,
   Minimize2,
   Share2
@@ -203,6 +204,10 @@ function App() {
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [worldTime, setWorldTime] = useState<string>('');
   const [gameOver, setGameOver] = useState(false);
+  const [isTerminatedOpen, setIsTerminatedOpen] = useState(false);
+  const [isCreatingNewAfterDeath, setIsCreatingNewAfterDeath] = useState(false);
+  const [newCharacterDescription, setNewCharacterDescription] = useState('');
+  const [isSubmittingNewCharacter, setIsSubmittingNewCharacter] = useState(false);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [playerRecommendations, setPlayerRecommendations] = useState<Record<string, string[]>>({});
   const [autoRecommendationsEnabled, setAutoRecommendationsEnabled] = useState<boolean>(() => {
@@ -1555,6 +1560,8 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           }
           if (result.gameOver && gameMode === 'singleplayer') {
             setGameOver(true);
+            setIsTerminatedOpen(true);
+            setIsCreatingNewAfterDeath(false);
             setNarrative(prev => [...prev, { id: 'death', text: 'CRITICAL FAILURE: Vital signs zero. Simulation Terminated.', type: 'system' }]);
           }
           syncFiles();
@@ -1724,6 +1731,9 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       setUpdates([]);
       setRecommendations([]);
       setGameOver(false);
+      setIsTerminatedOpen(false);
+      setIsCreatingNewAfterDeath(false);
+      setNewCharacterDescription('');
       setIsInitialized(false);
       setExpandedFile(null);
       syncFiles();
@@ -1731,7 +1741,101 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       localStorage.removeItem('aimud_updates');
       localStorage.removeItem('aimud_recommendations');
     }
+    setIsTerminatedOpen(false);
+    setIsCreatingNewAfterDeath(false);
     setIsResetModalOpen(false);
+  };
+
+  const handleContinueWithNewCharacter = async (desc: string) => {
+    const trimmedDesc = desc.trim();
+    if (!trimmedDesc || isSubmittingNewCharacter) return;
+    setIsSubmittingNewCharacter(true);
+
+    try {
+      const activeUser = activeGameUsername || username || 'Player';
+      const suggestedCharName = extractOrGenerateCharacterName(trimmedDesc, activeUser);
+
+      // Pre-capture screenshot if available
+      let mapScreenshot: string | undefined;
+      if (mapPanelRef.current) {
+        try {
+          mapScreenshot = await mapPanelRef.current.captureScreenshot();
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      const prompt = `[CONTINUE ADVENTURE WITH NEW CHARACTER]
+The previous player character for player "${activeUser}" has died / fallen in the adventure.
+The player has created a NEW character to continue the story within this EXACT SAME ongoing adventure and world!
+
+NEW CHARACTER CONCEPT:
+- Name: ${suggestedCharName}
+- Player: ${activeUser}
+- Description: ${trimmedDesc}
+
+CRITICAL NATURAL STORY INTRODUCTION & PERSISTENCE MANDATES:
+1. SAME ADVENTURE CONTINUES: Do NOT reset the world, erase existing lore, or wipe previous landmarks, locations, or NPCs. The timeline, environment, and world events remain strictly in place.
+2. NATURAL STORY INTRODUCTION: Introduce ${suggestedCharName} into the narrative naturally based on the immediate surroundings, recent events, and current context (e.g. an arriving traveler, a hired mercenary investigating the area, an ally drawn by recent commotion, or a wandering explorer stepping into the scene).
+3. PREDECESSOR AWARENESS: Acknowledge the aftermath or fallen predecessor if contextually fitting to the immediate location.
+4. CHARACTER FILE: Create a full, rich character file named EXACTLY "[CharacterName]-${activeUser}.txt" (e.g. "${suggestedCharName.replace(/[^a-zA-Z0-9]/g, '')}-${activeUser}.txt"). Fill out [NAME & DESCRIPTION], [STATS & MODIFIERS], [ATTACKS & COMBAT ACTIONS], [ABILITIES & MAGIC], [CONTAINERS & CARRIED GEAR], [CURRENCY & FINANCIAL BALANCE], and [STATUS EFFECTS & LORE]. Starting carried items must be <= 2x hand slots.
+5. MAP PERSISTENCE: In CurrentMap.json, place this new character under "players" with username: "${activeUser}" and characterName: "${suggestedCharName}" at their arrival coordinates. Remove or mark deceased the old fallen player character.
+6. ACTIVE STATUS: Set "gameOver": false in your JSON response so the player can immediately resume playing!
+
+Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and establishing this new character naturally in the ongoing adventure.`;
+
+      const result = await aiEngine.processAction(prompt, activeUser, mapScreenshot);
+
+      if (result) {
+        if (result.narrative) {
+          const safeNarrative = typeof result.narrative === 'string'
+            ? result.narrative
+            : (typeof result.narrative === 'object' && result.narrative !== null)
+              ? ((result.narrative as any).text || (result.narrative as any).content || JSON.stringify(result.narrative))
+              : String(result.narrative);
+          setNarrative(prev => [...prev, {
+            id: Date.now().toString() + 'ai',
+            text: safeNarrative,
+            type: 'ai',
+            usage: result.usage
+          }]);
+        }
+        if (result.updates && Array.isArray(result.updates)) {
+          setUpdates(prev => [...sanitizeUpdates(result.updates), ...prev].slice(0, 50));
+        }
+        if (result.recommendations && Array.isArray(result.recommendations)) {
+          setRecommendations(sanitizeRecommendations(result.recommendations));
+        }
+      }
+
+      setGameOver(false);
+      setIsTerminatedOpen(false);
+      setIsCreatingNewAfterDeath(false);
+      setNewCharacterDescription('');
+      syncFiles();
+
+      if (gameMode === 'multiplayer' && multiplayerService && isHost) {
+        multiplayerService.syncState({
+          fileSystemState: fileSystem.exportState(),
+          narrative: [
+            ...(roomStateRef.current?.narrative || []),
+            { id: Date.now().toString() + 'ai', text: result?.narrative || '', type: 'ai' as const, usage: result?.usage }
+          ],
+          updates: [...(result?.updates || []), ...(roomStateRef.current?.updates || [])].slice(0, 50),
+          recommendations: result?.recommendations || [],
+          gameState: 'playing',
+          worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
+          turnProcessed: true
+        });
+      }
+    } catch (err) {
+      console.error("Failed to continue with new character:", err);
+      setGameOver(false);
+      setIsTerminatedOpen(false);
+      setIsCreatingNewAfterDeath(false);
+    } finally {
+      setIsSubmittingNewCharacter(false);
+    }
   };
 
   const handleUndoConfirm = async () => {
@@ -2474,14 +2578,165 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         {/* Floating Status Updates */}
         <LiveStatusUpdates updates={updates} gameOver={gameOver} />
 
-        {gameOver && (
-          <div className="absolute inset-0 flex items-center justify-center bg-red-950/40 backdrop-blur-md z-30 pointer-events-none">
-            <div className="bg-black border-4 border-red-600 p-12 rounded-xl text-center shadow-[0_0_100px_rgba(220,38,38,0.7)] transform animate-in zoom-in duration-500">
-              <h1 className="text-6xl font-black text-red-600 mb-4 tracking-tighter">TERMINATED</h1>
-              <p className="text-xl text-red-400 font-bold mb-6">Vital signs zero. Neural link severed.</p>
-              <div className="h-px bg-red-900 w-full mb-6"></div>
-              <p className="text-gray-400 text-sm animate-pulse">You died! Reset for a new adventure.</p>
+        {/* Terminated Modal (Closable UI) */}
+        {gameOver && isTerminatedOpen && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/85 backdrop-blur-md z-50 p-4 pointer-events-auto overflow-y-auto">
+            <div className="bg-neutral-950 border-2 border-red-600 p-6 sm:p-8 rounded-2xl max-w-lg w-full text-center shadow-[0_0_80px_rgba(220,38,38,0.55)] relative flex flex-col animate-in zoom-in-95 duration-200 my-auto text-left">
+              <button
+                onClick={() => setIsTerminatedOpen(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer text-lg font-bold leading-none"
+                title="Close (Minimize to corner)"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+
+              {!isCreatingNewAfterDeath ? (
+                <div className="flex flex-col items-center text-center">
+                  <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-red-950/80 border border-red-500/50 text-red-400 mb-3 text-2xl shadow-inner">
+                    💀
+                  </div>
+                  <h1 className="text-4xl sm:text-5xl font-black text-red-500 mb-2 tracking-tighter drop-shadow-[0_0_20px_rgba(239,68,68,0.7)]">
+                    YOU HAVE DIED
+                  </h1>
+                  <p className="text-base sm:text-lg text-red-400 font-bold mb-3">
+                    Vital signs zero. Your character has fallen.
+                  </p>
+                  <p className="text-xs sm:text-sm text-neutral-400 mb-6 leading-relaxed max-w-md">
+                    Your journey with this character has ended, but this world and its story live on. You can introduce a new character to continue the same adventure seamlessly, or reset to start a fresh adventure.
+                  </p>
+
+                  <div className="w-full flex flex-col gap-2.5">
+                    <button
+                      onClick={() => setIsCreatingNewAfterDeath(true)}
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-xl font-mono text-xs sm:text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] hover:shadow-[0_0_25px_rgba(37,99,235,0.6)] flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                    >
+                      <span>⚔️</span>
+                      <span>Continue with New Character</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsResetModalOpen(true);
+                      }}
+                      className="w-full bg-red-950/40 hover:bg-red-900/60 text-red-300 hover:text-red-100 font-semibold py-2.5 px-4 rounded-xl border border-red-800/60 font-mono text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-[0.98]"
+                    >
+                      <RefreshCw size={13} className="text-red-400" />
+                      <span>Reset to Start a New Adventure</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsTerminatedOpen(false)}
+                      className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors py-1 cursor-pointer underline decoration-dotted underline-offset-4"
+                    >
+                      Close & Observe World (Minimized to corner)
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col text-left">
+                  <div className="flex items-center justify-between mb-3 border-b border-neutral-800 pb-2.5">
+                    <h2 className="text-base sm:text-lg font-bold text-blue-400 font-mono flex items-center gap-2">
+                      <span>⚔️</span>
+                      <span>Create New Character</span>
+                    </h2>
+                    <button
+                      onClick={() => setIsCreatingNewAfterDeath(false)}
+                      disabled={isSubmittingNewCharacter}
+                      className="text-xs text-gray-400 hover:text-white font-mono cursor-pointer disabled:opacity-50"
+                    >
+                      ← Back
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-neutral-300 mb-2 leading-relaxed">
+                    Your new character will be introduced to the story naturally based on the ongoing context, immediate location, and recent events.
+                  </p>
+
+                  <div className="bg-amber-950/40 border border-amber-900/50 p-2.5 rounded text-[11px] text-amber-300/90 leading-tight mb-3">
+                    <strong>Starting Inventory Limit:</strong> Characters start with at most 2x their hand slots in carried items (e.g. max 4 items for 2 hands). Extra gear belongs in your home/camp stash.
+                  </div>
+
+                  <textarea
+                    value={newCharacterDescription}
+                    onChange={(e) => setNewCharacterDescription(e.target.value)}
+                    disabled={isSubmittingNewCharacter}
+                    rows={4}
+                    className="w-full bg-black border border-neutral-700 focus:border-blue-500 rounded p-2.5 text-white font-mono text-xs resize-none focus:outline-none disabled:opacity-50 mb-3"
+                    placeholder="Describe your character's class, appearance, personality, or background (e.g. A seasoned mercenary hired to investigate the strange occurrences here, a swift scout, a wandering mage...)"
+                  />
+
+                  {isSubmittingNewCharacter ? (
+                    <div className="p-3 bg-blue-950/50 border border-blue-800/60 rounded-xl flex items-center justify-center gap-2.5 text-xs text-blue-300 font-mono animate-pulse">
+                      <div className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                      <span>Introducing character to the adventure...</span>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setIsCreatingNewAfterDeath(false)}
+                        className="w-1/3 bg-neutral-800 hover:bg-neutral-700 text-gray-300 py-2.5 px-3 rounded-xl font-mono text-xs transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => handleContinueWithNewCharacter(newCharacterDescription)}
+                        disabled={!newCharacterDescription.trim()}
+                        className="w-2/3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-2.5 px-3 rounded-xl font-mono text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(37,99,235,0.4)]"
+                      >
+                        <span>Enter Adventure</span>
+                        <span>→</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+          </div>
+        )}
+
+        {/* Minimized Controls in Corner when You Have Died dialog is closed */}
+        {gameOver && !isTerminatedOpen && !showCharacterCreation && (
+          <div className="fixed bottom-20 right-3 sm:right-6 z-40 flex flex-wrap items-center justify-end gap-2 animate-in slide-in-from-bottom-3 duration-300 pointer-events-auto">
+            <button
+              onClick={() => {
+                setIsResetModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-neutral-950/95 hover:bg-red-950/80 text-red-300 hover:text-red-100 border border-red-800/80 px-3.5 py-2.5 rounded-full shadow-[0_0_20px_rgba(220,38,38,0.45)] font-mono text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer backdrop-blur-md"
+              title="Reset to start a new adventure"
+            >
+              <RefreshCw size={12} className="text-red-400" />
+              <span>Reset Adventure</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsTerminatedOpen(true);
+                setIsCreatingNewAfterDeath(true);
+              }}
+              className="flex items-center gap-2.5 bg-neutral-950/95 hover:bg-neutral-900 text-blue-200 border-2 border-blue-500/80 px-4 py-2.5 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.45)] font-mono text-xs font-bold transition-all hover:scale-105 active:scale-95 cursor-pointer backdrop-blur-md group"
+              title="Your character has fallen. Click to continue with a new character."
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+              </span>
+              <span className="text-sm leading-none">⚔️</span>
+              <span>Continue with New Character</span>
+              <span className="text-neutral-400 group-hover:text-white transition-colors text-xs font-sans">↗</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsTerminatedOpen(true);
+                setIsCreatingNewAfterDeath(false);
+              }}
+              className="bg-neutral-900/90 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-700 p-2.5 rounded-full text-xs font-mono transition-colors cursor-pointer shadow-md flex items-center justify-center"
+              title="Expand Death Overview"
+              aria-label="Expand Death Overview"
+            >
+              <Maximize2 size={13} />
+            </button>
           </div>
         )}
 
@@ -2492,6 +2747,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
           onCancelProcessing={handleForceUnlock}
           isMyTurnReady={Boolean(isMyTurnReady)}
           recommendations={effectiveRecommendations}
+          placeholder={gameOver ? "Character has fallen. Click 'Continue with New Character' in corner to resume..." : undefined}
         />
       </div>
 

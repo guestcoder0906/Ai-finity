@@ -742,19 +742,26 @@ const Sidebar: React.FC<SidebarProps> = ({
                 id="sidebar-undo-turn-btn"
                 onClick={onUndo}
                 disabled={undoCount === 0}
-                className={`transition-colors flex items-center gap-1 ${
+                className={`transition-all flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium border shadow-sm ${
                   undoCount === 0
-                    ? 'text-neutral-600 cursor-not-allowed opacity-40'
-                    : 'text-amber-400 hover:text-amber-300 cursor-pointer'
+                    ? 'text-neutral-600 border-neutral-800/40 bg-neutral-900/30 cursor-not-allowed opacity-40'
+                    : 'text-amber-300 border-amber-800/60 bg-amber-950/60 hover:bg-amber-900/80 hover:text-amber-100 cursor-pointer active:scale-95'
                 }`}
                 title={undoCount === 0 ? "No previous turns to undo" : `Undo Turn (${undoCount} available)`}
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={11} className="shrink-0" />
+                <span>Undo</span>
               </button>
             )}
-            {gameMode === 'singleplayer' && (
-              <button onClick={onReset} className="hover:text-red-400 transition-colors" title="Delete Adventure">
-                <RefreshCw size={12} />
+            {(gameMode === 'singleplayer' || (gameMode === 'multiplayer' && roomState?.hostUsername === username)) && (
+              <button
+                id="sidebar-reset-adventure-btn"
+                onClick={onReset}
+                className="flex items-center gap-1 px-2 py-0.5 bg-red-950/70 hover:bg-red-900/90 border border-red-800/80 hover:border-red-600 text-red-300 hover:text-red-100 rounded text-[10px] font-mono font-medium transition-all cursor-pointer shadow-sm active:scale-95"
+                title="Reset and start a new adventure"
+              >
+                <RefreshCw size={11} className="text-red-400 shrink-0" />
+                <span>Reset</span>
               </button>
             )}
             <button
