@@ -1635,6 +1635,10 @@ export class WeightInventoryEngine {
       unit
     };
     cont.currentDimensions = cont.stretchedDimensions;
+
+    // Enforce invariant: When containers stretch, ONLY multiply and expand physical size/dimensions.
+    // NEVER multiply or increase the container's own empty tare weight with it!
+    // cont.weight remains strictly the base empty weight.
   }
 
   /**
