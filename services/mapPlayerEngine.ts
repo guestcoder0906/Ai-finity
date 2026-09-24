@@ -43,7 +43,12 @@ export function isPlayerCharacterFile(
   }
 
   const base = filename.replace(/\.txt$/, '');
-  const cleanBase = base.replace(/[-_]npc$/i, '').trim();
+  const cleanBase = base.replace(/[-_](?:npc|dead|corpse)$/i, '').trim();
+
+  // Deceased characters ending in -dead.txt are preserved corpses/memorials, not active player characters
+  if (base.toLowerCase().endsWith('-dead') || base.toLowerCase().endsWith('_dead')) {
+    return { isPlayer: false, username: '', charName: cleanBase, canonicalName: cleanBase };
+  }
 
   let isPlayer = false;
   let username = '';
@@ -53,7 +58,7 @@ export function isPlayerCharacterFile(
     const playerMatch = content.match(/[-*•]?\s*Player\s*[:=]\s*([^\n\r]+)/i);
     if (playerMatch && playerMatch[1]) {
       const pVal = playerMatch[1].replace(/^[*-•\s]+/, '').trim();
-      if (pVal && !/^(?:none|n\/a|npc|bot|ai|unassigned)$/i.test(pVal)) {
+      if (pVal && !/^(?:none|n\/a|npc|dead|deceased|former|bot|ai|unassigned)/i.test(pVal)) {
         isPlayer = true;
         username = pVal;
       }
@@ -72,7 +77,7 @@ export function isPlayerCharacterFile(
     const suffix = parts[parts.length - 1].trim();
     const prefix = parts.slice(0, -1).join('-').trim();
     const suffixLower = suffix.toLowerCase();
-    if (suffix && !['npc', 'bot', 'ai', 'boss', 'monster', 'creature', 'enemy', 'ally', 'guard', 'merchant'].includes(suffixLower)) {
+    if (suffix && !['npc', 'dead', 'corpse', 'deceased', 'bot', 'ai', 'boss', 'monster', 'creature', 'enemy', 'ally', 'guard', 'merchant'].includes(suffixLower)) {
       isPlayer = true;
       if (!username) username = suffix;
       if (!charName) charName = prefix || suffix;

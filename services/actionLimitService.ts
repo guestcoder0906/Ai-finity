@@ -481,10 +481,21 @@ export class ActionLimitService {
   public static async addPurchasedCredits(
     user: UserProfile | null,
     amount: number,
-    guestId?: string
+    guestId?: string,
+    txId?: string
   ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('Guests cannot buy action packs. Please log in or sign up first.');
+    }
+
+    const existingCredited = new Set<string>(user.creditedActionTxIds || []);
+    if (txId) {
+      const safeId = String(txId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (existingCredited.has(txId) || existingCredited.has(safeId)) {
+        return user; // Already credited, avoid duplicate addition!
+      }
+      existingCredited.add(txId);
+      existingCredited.add(safeId);
     }
 
     const status = this.getActionStatus(user, guestId);
@@ -492,6 +503,7 @@ export class ActionLimitService {
     const today = this.getTodayDateString();
 
     user.actionCredits = newCredits;
+    user.creditedActionTxIds = Array.from(existingCredited);
 
     this.saveLocalState(user, guestId, {
       tier: status.tier,
@@ -501,7 +513,8 @@ export class ActionLimitService {
     });
 
     await updateUserProfile(user.uid, {
-      actionCredits: newCredits
+      actionCredits: newCredits,
+      creditedActionTxIds: Array.from(existingCredited)
     });
 
     return user;
@@ -512,7 +525,8 @@ export class ActionLimitService {
    */
   public static async addPurchasedCreditsByUid(
     uid: string,
-    amount: number
+    amount: number,
+    txId?: string
   ): Promise<UserProfile | null> {
     let profile = await getUserProfile(uid, true);
     if (!profile) {
@@ -527,7 +541,7 @@ export class ActionLimitService {
         createdAt: new Date().toISOString()
       } as UserProfile;
     }
-    const updated = await this.addPurchasedCredits(profile, amount);
+    const updated = await this.addPurchasedCredits(profile, amount, undefined, txId);
     return updated;
   }
 
@@ -619,10 +633,33 @@ export class ActionLimitService {
     addedCredits: number,
     newTier: UserTier | null,
     guestId?: string,
-    minActionCreditsFloor?: number
+    minActionCreditsFloor?: number,
+    newTxIdsToCredit?: string[]
   ): Promise<UserProfile> {
     if (!user || !user.uid) {
       throw new Error('User must be logged in to restore purchases.');
+    }
+
+    const existingCredited = new Set<string>(user.creditedActionTxIds || []);
+    let filteredAddedCredits = addedCredits;
+
+    // Deduplicate against already credited transaction IDs
+    if (newTxIdsToCredit && newTxIdsToCredit.length > 0) {
+      const trulyNewTxIds: string[] = [];
+      for (const id of newTxIdsToCredit) {
+        const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (!existingCredited.has(id) && !existingCredited.has(safeId)) {
+          trulyNewTxIds.push(id);
+          trulyNewTxIds.push(safeId);
+          existingCredited.add(id);
+          existingCredited.add(safeId);
+        }
+      }
+
+      // If all passed transaction IDs have already been credited to this account, do not add more actions
+      if (trulyNewTxIds.length === 0 && addedCredits > 0) {
+        filteredAddedCredits = 0;
+      }
     }
 
     const status = this.getActionStatus(user, guestId);
@@ -661,7 +698,7 @@ export class ActionLimitService {
 
     const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
     // Total credits = existing + packs + subscription bonuses
-    let finalCredits = currentCredits + addedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
+    let finalCredits = currentCredits + filteredAddedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
 
     // If a minimum floor of total purchased credits was provided, ensure credits never drop below it
     if (typeof minActionCreditsFloor === 'number' && finalCredits < minActionCreditsFloor) {
@@ -673,6 +710,7 @@ export class ActionLimitService {
     user.subscriptionExpiresAt = expiresStr;
     user.canSaveMultipleAdventures = true;
     user.canPostCommunityAdventures = true;
+    user.creditedActionTxIds = Array.from(existingCredited);
     if (resolvedTier === 'legendary' || resolvedTier === 'celestial' || isDefaultAdmin(user.email, user.username)) {
       user.showGlowingName = true;
     }
@@ -688,6 +726,7 @@ export class ActionLimitService {
       tier: resolvedTier,
       actionCredits: finalCredits,
       subscriptionExpiresAt: expiresStr || null as any,
+      creditedActionTxIds: Array.from(existingCredited),
       canSaveMultipleAdventures: true,
       canPostCommunityAdventures: true,
       ...(resolvedTier === 'legendary' || resolvedTier === 'celestial' ? { showGlowingName: true } : {})

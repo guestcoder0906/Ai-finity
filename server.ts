@@ -619,11 +619,14 @@ async function startServer() {
         let isMatch = false;
 
         // Strict purchase attribution: each purchase is uniquely attached to the exact account it was bought on.
-        if (userId && sUid && sUid === userId) {
+        // 1. If metadata has userId, it MUST match the requesting user's UID (no username/email fallback if userId belongs to someone else)
+        if (sUid) {
+          isMatch = (Boolean(userId) && sUid === userId);
+        } else if (email && sEmail && sEmail === email && email.includes('@')) {
+          // 2. If no userId in metadata, match by verified non-empty email
           isMatch = true;
-        } else if (username && sUsername && sUsername === username) {
-          isMatch = true;
-        } else if (email && sEmail && sEmail === email && (!sUid || sUid === userId)) {
+        } else if (username && sUsername && sUsername === username && !['player', 'adventurer', 'guest', 'user', 'customer', 'hero', 'unknown', 'none'].includes(username)) {
+          // 3. Match by unique, non-generic username only if no userId was attached
           isMatch = true;
         }
 
@@ -659,11 +662,16 @@ async function startServer() {
         const subCustomer = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
 
         const subEmail = (sub.metadata?.userEmail || sub.metadata?.email || '').toLowerCase().trim();
-        const isSubMatch =
-          (userId && subUid === userId) ||
-          (username && subUsername === username) ||
-          (email && subEmail === email) ||
-          (subCustomer && userCustomerIds.has(subCustomer));
+        let isSubMatch = false;
+        if (subUid) {
+          isSubMatch = (Boolean(userId) && subUid === userId);
+        } else if (subCustomer && userCustomerIds.has(subCustomer)) {
+          isSubMatch = true;
+        } else if (email && subEmail && subEmail === email && email.includes('@')) {
+          isSubMatch = true;
+        } else if (username && subUsername && subUsername === username && !['player', 'adventurer', 'guest', 'user', 'customer', 'hero', 'unknown', 'none'].includes(username)) {
+          isSubMatch = true;
+        }
 
         if (isSubMatch) {
           const isLive = sub.status === 'active' || sub.status === 'trialing';

@@ -145,23 +145,56 @@ function sanitizeNarrativeEntries(raw: any): NarrativeEntry[] {
   });
 }
 
-function extractOrGenerateCharacterName(description?: string, username?: string): string {
-  const cleanUser = (username || '').trim();
+function extractOrGenerateCharacterName(
+  description?: string,
+  username?: string,
+  excludedNames: string[] = []
+): string {
+  const cleanUser = (username || '').trim().toLowerCase();
+  const normalizedExclusions = new Set(
+    excludedNames.map(n => n.trim().toLowerCase()).filter(Boolean)
+  );
+  normalizedExclusions.add(cleanUser);
+  normalizedExclusions.add('adventurer');
+  normalizedExclusions.add('player');
+  normalizedExclusions.add('hero');
+  normalizedExclusions.add('dead');
+  normalizedExclusions.add('npc');
+
   if (description) {
+    const trimmed = description.trim();
     const directNameMatch =
-      description.match(/(?:named|name is|character named|called|character:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
-      description.match(/^(?:I am|I'm|Name:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
-      description.match(/\[(?:Name|Character Name)\]:?\s*([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i);
+      trimmed.match(/(?:named|name is|character named|called|character:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
+      trimmed.match(/^(?:I am|I'm|Name:?|Playing as:?)\s+([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
+      trimmed.match(/\[(?:Name|Character Name)\]:?\s*([A-Z][a-zA-Z'\-]{1,20}(?:\s+[A-Z][a-zA-Z'\-]{1,20})?)/i) ||
+      trimmed.match(/^([A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15})(?:,|\s+is|\s+a|\s+-)/); // e.g. "Brom Ironhand, a dwarf..."
+
     if (directNameMatch && directNameMatch[1]) {
       const cand = directNameMatch[1].trim();
       const candLower = cand.toLowerCase();
-      if (
-        candLower !== cleanUser.toLowerCase() &&
-        candLower !== 'adventurer' &&
-        candLower !== 'player' &&
-        candLower !== 'hero'
-      ) {
+      if (!normalizedExclusions.has(candLower)) {
         return cand;
+      }
+    }
+
+    // Keyword & archetype suggestions from prompt
+    const lowerDesc = trimmed.toLowerCase();
+    const archetypes: Array<{ match: RegExp; names: string[] }> = [
+      { match: /dwarf|blacksmith|forge|hammer|miner|stone/i, names: ['Brom Ironhand', 'Thorik Stonebreaker', 'Dain Deepforge', 'Hulda Fireheart', 'Bardin Coppervein'] },
+      { match: /elf|elven|druid|forest|bow|ranger|scout/i, names: ['Faelar Moonshadow', 'Lyari Swiftwind', 'Aeloria Whisperleaf', 'Caelen Starfall', 'Sylas Verdant'] },
+      { match: /mage|wizard|sorcerer|spell|arcane|witch/i, names: ['Valerius Vance', 'Ignis Pyre', 'Zephyr Astral', 'Morrigan Nightshade', 'Althea Spellweaver'] },
+      { match: /rogue|thief|assassin|shadow|dagger|sneak/i, names: ['Corvus Shadowstep', 'Nyx Blackthorn', 'Vesper Grey', 'Rook Quickfoot', 'Cassian Whisper'] },
+      { match: /paladin|knight|cleric|holy|templar|crusader/i, names: ['Gideon Dawnseeker', 'Lorien Radiant', 'Valeria Sunshield', 'Theron Justicar', 'Aria Pureheart'] },
+      { match: /barbarian|berserker|warrior|fighter|gladiator/i, names: ['Torvald Skullcrusher', 'Ragnar Stormborn', 'Astrid Bloodaxe', 'Grom Ironfist', 'Kragor Mountain'] }
+    ];
+
+    for (const arch of archetypes) {
+      if (arch.match.test(lowerDesc)) {
+        for (const candidate of arch.names) {
+          if (!normalizedExclusions.has(candidate.toLowerCase())) {
+            return candidate;
+          }
+        }
       }
     }
   }
@@ -169,10 +202,20 @@ function extractOrGenerateCharacterName(description?: string, username?: string)
   const fantasyNames = [
     'Kaelen Thorne', 'Lyra Whisperwind', 'Valerius Vance', 'Aria Shadowglen',
     'Theron Ironwood', 'Elira Dawnseeker', 'Darius Stormborn', 'Sylas Nightshade',
-    'Caelum Drake', 'Rowan Ashford', 'Mira Ravencrest', 'Orion Sterling'
+    'Caelum Drake', 'Rowan Ashford', 'Mira Ravencrest', 'Orion Sterling',
+    'Balthazar Stone', 'Elowen Frost', 'Garrett Hawk', 'Seraphina Vale',
+    'Torin Ember', 'Zephyr Cloud', 'Mireille Dusk', 'Kallum Ash'
   ];
-  const seed = (cleanUser || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + (description ? description.length : 0);
-  return fantasyNames[seed % fantasyNames.length];
+
+  const seed = (cleanUser || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + (description ? description.length * 7 + 13 : Date.now());
+  for (let i = 0; i < fantasyNames.length; i++) {
+    const candidate = fantasyNames[(seed + i) % fantasyNames.length];
+    if (!normalizedExclusions.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+
+  return `Adventurer ${Math.floor(100 + Math.random() * 899)}`;
 }
 
 function App() {
@@ -395,7 +438,7 @@ function App() {
 
         // 2. Cross-reference all completed purchases attached to this account
         if (syncRes.purchases && syncRes.purchases.length > 0) {
-          // Collect known transactions from localStorage
+          // Collect known transactions from localStorage and UserProfile
           const localTx = getLocalTransactions(user.uid);
           const knownIds = new Set<string>();
           localTx.forEach((t) => {
@@ -404,6 +447,20 @@ function App() {
               knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
             }
           });
+
+          // Include persistent applied & credited transaction IDs from user profile
+          if (Array.isArray(user.appliedTransactionIds)) {
+            user.appliedTransactionIds.forEach((id) => {
+              knownIds.add(id);
+              knownIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            });
+          }
+          if (Array.isArray(user.creditedActionTxIds)) {
+            user.creditedActionTxIds.forEach((id) => {
+              knownIds.add(id);
+              knownIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            });
+          }
 
           // Also load persistently notified IDs from localStorage to avoid spamming after page reload
           try {
@@ -435,6 +492,8 @@ function App() {
           // Include in-memory notified IDs to prevent any duplicate toast notifications
           notifiedPurchaseIdsRef.current.forEach((id) => knownIds.add(id));
 
+          const creditedTxSet = new Set<string>(user.creditedActionTxIds || []);
+          const newTxIdsToCredit: string[] = [];
           let totalNewCredits = 0;
           let newlyFoundPurchases = false;
           let latestReceipt: PaymentTransactionRecord | null = null;
@@ -464,6 +523,8 @@ function App() {
               notifiedPurchaseIdsRef.current.has(p.id) ||
               notifiedPurchaseIdsRef.current.has(safeId);
 
+            const isAlreadyCredited = creditedTxSet.has(p.id) || creditedTxSet.has(safeId);
+
             if (!isAlreadyKnown) {
               newlyFoundPurchases = true;
               knownIds.add(p.id);
@@ -471,8 +532,13 @@ function App() {
               notifiedPurchaseIdsRef.current.add(p.id);
               notifiedPurchaseIdsRef.current.add(safeId);
 
-              if (p.itemType === 'pack' && p.actionDelta > 0) {
+              // ONLY credit actions if this exact transaction ID was NEVER credited to this account
+              if (!isAlreadyCredited && p.itemType === 'pack' && p.actionDelta > 0) {
                 totalNewCredits += p.actionDelta;
+                newTxIdsToCredit.push(p.id);
+                newTxIdsToCredit.push(safeId);
+                creditedTxSet.add(p.id);
+                creditedTxSet.add(safeId);
               }
 
               const tx: PaymentTransactionRecord = {
@@ -514,14 +580,16 @@ function App() {
               user,
               totalNewCredits,
               targetTier as any,
-              guestId
+              guestId,
+              undefined,
+              newTxIdsToCredit
             );
             setCurrentUser({ ...updated });
             setActionStatus(ActionLimitService.getActionStatus(updated, guestId));
 
-            // Only show toast and receipt modal if there was genuinely a NEW purchase and we haven't shown one in the last 15s
+            // Only show toast and receipt modal if there was genuinely an uncredited purchase and hasn't shown recently
             const now = Date.now();
-            if (newlyFoundPurchases && now - lastPurchaseToastTimeRef.current > 15000) {
+            if (newlyFoundPurchases && (totalNewCredits > 0 || needsTierUpgrade) && now - lastPurchaseToastTimeRef.current > 30000) {
               lastPurchaseToastTimeRef.current = now;
               if (latestReceipt) {
                 setVerifiedReceiptTransaction(latestReceipt);
@@ -842,7 +910,7 @@ function App() {
             if (targetUid) {
               let updatedUser: UserProfile | null = null;
               if (itemType === 'pack' && actionDelta > 0) {
-                updatedUser = await ActionLimitService.addPurchasedCreditsByUid(targetUid, actionDelta);
+                updatedUser = await ActionLimitService.addPurchasedCreditsByUid(targetUid, actionDelta, sessionId);
               } else if (itemType === 'tier') {
                 const targetTier = (itemId || 'adventurer') as any;
                 updatedUser = await ActionLimitService.activateSubscriptionByUid(targetUid, targetTier);
@@ -856,6 +924,15 @@ function App() {
               }
 
               await recordPaymentTransaction(targetUid, txRecord);
+              notifiedPurchaseIdsRef.current.add(sessionId);
+              notifiedPurchaseIdsRef.current.add(String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              try {
+                const rawN = JSON.parse(localStorage.getItem(`aifinity_notified_purchases_${targetUid}`) || '[]');
+                if (Array.isArray(rawN) && !rawN.includes(sessionId)) {
+                  rawN.push(sessionId);
+                  localStorage.setItem(`aifinity_notified_purchases_${targetUid}`, JSON.stringify(rawN.slice(-100)));
+                }
+              } catch (e) {}
 
               // Broadcast update event to all other open tabs
               try {
@@ -1753,7 +1830,87 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
 
     try {
       const activeUser = activeGameUsername || username || 'Player';
-      const suggestedCharName = extractOrGenerateCharacterName(trimmedDesc, activeUser);
+      const uLower = activeUser.toLowerCase();
+      const allFsFiles = fileSystem.list();
+
+      // Collect all dead character names from existing files and map
+      const excludedNames: string[] = [];
+      allFsFiles.forEach(f => {
+        if (f.endsWith('-dead.txt') || f.endsWith('_dead.txt')) {
+          const b = f.replace(/\.txt$/, '').replace(/[-_]dead$/i, '').trim();
+          if (b) excludedNames.push(b);
+        }
+      });
+
+      // Find any current character files for this active player
+      const currentPlayerFiles = allFsFiles.filter(f => {
+        const l = f.toLowerCase();
+        return (
+          l.endsWith(`-${uLower}.txt`) ||
+          l.endsWith(`_${uLower}.txt`) ||
+          l.endsWith(` ${uLower}.txt`) ||
+          l === `${uLower}.txt` ||
+          l === `character-${uLower}.txt`
+        );
+      });
+
+      let deadCharName = '';
+      for (const oldFile of currentPlayerFiles) {
+        const content = fileSystem.read(oldFile) || '';
+        const baseName = oldFile.replace(/\.txt$/, '').split(/[-_]/)[0].trim();
+        deadCharName = baseName;
+        excludedNames.push(baseName);
+
+        // Convert fallen character: charactername-username into charactername-dead.txt
+        const deadFileName = `${baseName}-dead.txt`;
+        let updatedDeadContent = content;
+        updatedDeadContent = updatedDeadContent.replace(
+          new RegExp(`[-*•]?\\s*Player\\s*[:=]\\s*${activeUser}[^\\n\\r]*`, 'gi'),
+          `- Status: Dead (Preserved corpse; former character for ${activeUser})\n- Player: None (Deceased)`
+        );
+        if (!updatedDeadContent.includes('Status: Dead')) {
+          updatedDeadContent = updatedDeadContent.replace(/\[STATUS EFFECTS[^\]]*\]/i, `[STATUS EFFECTS & LORE]\n- Status: Dead (Fallen adventurer)`);
+        }
+
+        fileSystem.delete(oldFile);
+        fileSystem.write(deadFileName, updatedDeadContent);
+      }
+
+      // Remove activeUser from CurrentMap.json players
+      try {
+        const rawMap = fileSystem.read('CurrentMap.json');
+        if (rawMap) {
+          const parsedMap = JSON.parse(rawMap);
+          let mapModified = false;
+          const filterP = (pl: any[]) => {
+            if (!Array.isArray(pl)) return pl;
+            return pl.filter((p: any) => {
+              const pUser = (p.username || '').toLowerCase();
+              const pChar = (p.characterName || p.name || '').toLowerCase();
+              if (pUser === uLower || (deadCharName && pChar === deadCharName.toLowerCase())) {
+                mapModified = true;
+                return false;
+              }
+              return true;
+            });
+          };
+
+          if (Array.isArray(parsedMap.players)) parsedMap.players = filterP(parsedMap.players);
+          if (Array.isArray(parsedMap.pages)) {
+            for (const pg of parsedMap.pages) {
+              if (Array.isArray(pg.players)) pg.players = filterP(pg.players);
+            }
+          }
+
+          if (mapModified) {
+            fileSystem.write('CurrentMap.json', JSON.stringify(parsedMap, null, 2));
+          }
+        }
+      } catch (e) {}
+
+      syncFiles();
+
+      const suggestedCharName = extractOrGenerateCharacterName(trimmedDesc, activeUser, excludedNames);
 
       // Pre-capture screenshot if available
       let mapScreenshot: string | undefined;
@@ -1766,21 +1923,23 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       }
 
       const prompt = `[CONTINUE ADVENTURE WITH NEW CHARACTER]
-The previous player character for player "${activeUser}" has died / fallen in the adventure.
-The player has created a NEW character to continue the story within this EXACT SAME ongoing adventure and world!
+The previous player character "${deadCharName || 'predecessor'}" has fallen / died in this adventure.
+Their corpse is preserved in the world as "${deadCharName || 'Predecessor'}-dead.txt".
+The player "${activeUser}" is now creating and controlling an entirely NEW, DIFFERENT CHARACTER from their prompt:
 
 NEW CHARACTER CONCEPT:
 - Name: ${suggestedCharName}
 - Player: ${activeUser}
-- Description: ${trimmedDesc}
+- Concept & Description: ${trimmedDesc}
 
 CRITICAL NATURAL STORY INTRODUCTION & PERSISTENCE MANDATES:
-1. SAME ADVENTURE CONTINUES: Do NOT reset the world, erase existing lore, or wipe previous landmarks, locations, or NPCs. The timeline, environment, and world events remain strictly in place.
-2. NATURAL STORY INTRODUCTION: Introduce ${suggestedCharName} into the narrative naturally based on the immediate surroundings, recent events, and current context (e.g. an arriving traveler, a hired mercenary investigating the area, an ally drawn by recent commotion, or a wandering explorer stepping into the scene).
-3. PREDECESSOR AWARENESS: Acknowledge the aftermath or fallen predecessor if contextually fitting to the immediate location.
-4. CHARACTER FILE: Create a full, rich character file named EXACTLY "[CharacterName]-${activeUser}.txt" (e.g. "${suggestedCharName.replace(/[^a-zA-Z0-9]/g, '')}-${activeUser}.txt"). Fill out [NAME & DESCRIPTION], [STATS & MODIFIERS], [ATTACKS & COMBAT ACTIONS], [ABILITIES & MAGIC], [CONTAINERS & CARRIED GEAR], [CURRENCY & FINANCIAL BALANCE], and [STATUS EFFECTS & LORE]. Starting carried items must be <= 2x hand slots.
-5. MAP PERSISTENCE: In CurrentMap.json, place this new character under "players" with username: "${activeUser}" and characterName: "${suggestedCharName}" at their arrival coordinates. Remove or mark deceased the old fallen player character.
-6. ACTIVE STATUS: Set "gameOver": false in your JSON response so the player can immediately resume playing!
+1. NEW CHARACTER MUST HAVE A DISTINCT NEW NAME: The character's name is "${suggestedCharName}". Do NOT name this character "${deadCharName || 'the dead character'}" and do NOT name them the account username "${activeUser}".
+2. SAME ADVENTURE CONTINUES: Do NOT reset the world, erase existing lore, or wipe previous landmarks, locations, or NPCs. The timeline, environment, and world events remain strictly in place.
+3. NATURAL STORY INTRODUCTION: Introduce ${suggestedCharName} into the narrative naturally based on the immediate surroundings, recent events, and current context (e.g. an arriving traveler, a hired mercenary investigating the area, an ally drawn by recent commotion, or a wandering explorer stepping into the scene).
+4. PREDECESSOR AWARENESS: Acknowledge the aftermath or fallen predecessor if contextually fitting to the immediate location. Do NOT delete or overwrite "${deadCharName || 'Predecessor'}-dead.txt".
+5. CHARACTER FILE: Create a full, rich character file named EXACTLY "[CharacterName]-${activeUser}.txt" ("${suggestedCharName.replace(/[^a-zA-Z0-9]/g, '')}-${activeUser}.txt"). Fill out [NAME & DESCRIPTION], [STATS & MODIFIERS], [ATTACKS & COMBAT ACTIONS], [ABILITIES & MAGIC], [CONTAINERS & CARRIED GEAR], [CURRENCY & FINANCIAL BALANCE], and [STATUS EFFECTS & LORE]. Starting carried items must be <= 2x hand slots.
+6. MAP PERSISTENCE: In CurrentMap.json, place this new character under "players" with username: "${activeUser}" and characterName: "${suggestedCharName}" at their arrival coordinates. Remove or mark deceased the old fallen player character.
+7. ACTIVE STATUS: Set "gameOver": false in your JSON response so the player can immediately resume playing!
 
 Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and establishing this new character naturally in the ongoing adventure.`;
 
@@ -1806,6 +1965,53 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
         if (result.recommendations && Array.isArray(result.recommendations)) {
           setRecommendations(sanitizeRecommendations(result.recommendations));
         }
+      }
+
+      // Guarantee new character file exists with the distinct name
+      const expectedFileName = `${suggestedCharName.replace(/[^a-zA-Z0-9]/g, '')}-${activeUser}.txt`;
+      if (!fileSystem.exists(expectedFileName)) {
+        const fallbackContent = `[NAME & DESCRIPTION]
+- Name: ${suggestedCharName}
+- Player: ${activeUser}
+- Description: ${trimmedDesc}
+- Physical Dimensions: Height 5'10", Weight 170 lbs
+- Max Lift Strength: 170 lbs (1.0x Body Weight)
+
+[STATS & MODIFIERS]
+- Health: 100 / 100
+- Energy/Mana/Stamina: 100 / 100
+- Speed: 10 m/s
+- Strength: 10 (+0)
+- Dexterity: 10 (+0)
+- Intelligence: 10 (+0)
+- Agility: 10 (+0)
+- Willpower: 10 (+0)
+- Constitution: 10 (+0)
+
+[CURRENTLY HOLDING]
+- Main Hand: Empty
+- Off Hand: Empty
+
+[CONTAINERS & CARRIED GEAR]
+- Carried Weight: 4.0 lbs / 170 lbs (GOOD: Unencumbered)
+- Equipped Containers:
+  * Travel Pack: Dimensions 16x12x6 inches, Capacity 30 lbs, Weight 2 lbs
+  * Coin Pouch: Capacity 5 lbs, Weight 0.5 lbs
+- Carried Inventory (Inside Travel Pack):
+  * Waterskin: 1.5 lbs, 8/8 sips of fresh water
+  * Trail Rations: 1.0 lb, 3 day supply
+  * Bedroll: 3.0 lbs
+
+[CURRENCY & FINANCIAL BALANCE]
+- Currency System: Standard Silver & Gold
+- Carried Balance (On Person): 25 Silver Pieces (Inside Coin Pouch)
+- Stored Wealth: 0
+- Total Net Worth: 25 Silver Pieces
+
+[STATUS EFFECTS & LORE]
+- Status: Healthy (Active adventurer)
+`;
+        fileSystem.write(expectedFileName, fallbackContent);
       }
 
       setGameOver(false);

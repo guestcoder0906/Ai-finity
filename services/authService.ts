@@ -10,6 +10,8 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
+  arrayUnion,
   deleteDoc,
   collection,
   query,
@@ -44,6 +46,8 @@ export interface UserProfile {
   subscriptionCancelAtPeriodEnd?: boolean;
   modActionsGrantedToday?: number;
   modActionsGrantedDate?: string;
+  appliedTransactionIds?: string[];
+  creditedActionTxIds?: string[];
 }
 
 /**
@@ -591,6 +595,14 @@ export async function recordPaymentTransaction(
   // 2. Persist to Firestore
   try {
     await setDoc(doc(db, 'users', uid, 'transactions', safeTxId), fullTx);
+    const userDocRef = doc(db, 'users', uid);
+    const updates: any = {
+      appliedTransactionIds: arrayUnion(safeTxId, rawId)
+    };
+    if (fullTx.actionDelta && fullTx.actionDelta > 0) {
+      updates.creditedActionTxIds = arrayUnion(safeTxId, rawId);
+    }
+    await updateDoc(userDocRef, updates).catch(() => {});
   } catch (err) {
     console.warn('Failed to log payment transaction in Firestore (saved locally):', err);
   }

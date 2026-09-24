@@ -217,11 +217,33 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         currentUser.username || undefined
       );
       if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
-        const existingTx = getLocalTransactions(currentUser.uid);
-        const existingIds = new Set(existingTx.map((t) => t.id));
+        const localTx = getLocalTransactions(currentUser.uid);
+        const existingIds = new Set<string>(localTx.map((t) => t.id));
+        localTx.forEach((t) => {
+          if (t?.id) existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+        });
+
+        // Also cross-reference Firestore and UserProfile credited IDs
+        try {
+          const firestoreTx = await getUserTransactions(currentUser.uid);
+          firestoreTx.forEach((t) => {
+            if (t?.id) {
+              existingIds.add(t.id);
+              existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            }
+          });
+        } catch (e) {}
+
+        if (Array.isArray(currentUser.creditedActionTxIds)) {
+          currentUser.creditedActionTxIds.forEach((id) => {
+            existingIds.add(id);
+            existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+        }
 
         let totalNewCredits = 0;
         let newlyRestoredCount = 0;
+        const newTxIdsToCredit: string[] = [];
         let totalLifetimePackActions = 0;
 
         const tierRank: Record<string, number> = {
@@ -246,10 +268,15 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             }
           }
 
-          if (!existingIds.has(p.id)) {
+          const safeId = String(p.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+          const isAlreadyCredited = existingIds.has(p.id) || existingIds.has(safeId);
+
+          if (!isAlreadyCredited) {
             newlyRestoredCount++;
             if (p.itemType === 'pack' && p.actionDelta > 0) {
               totalNewCredits += p.actionDelta;
+              newTxIdsToCredit.push(p.id);
+              newTxIdsToCredit.push(safeId);
             }
 
             const tx: PaymentTransactionRecord = {
@@ -271,6 +298,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             };
             await recordPaymentTransaction(currentUser.uid, tx);
             existingIds.add(p.id);
+            existingIds.add(safeId);
           }
         }
 
@@ -279,13 +307,15 @@ export const MarketModal: React.FC<MarketModalProps> = ({
         const needsTierUpgrade = Boolean(bestPurchasedTier && bestRank > currentTierRank);
 
         let updated = currentUser;
-        if (totalNewCredits > 0 || needsTierUpgrade || (newlyRestoredCount > 0 && bestPurchasedTier)) {
+        if (totalNewCredits > 0 || needsTierUpgrade) {
           const targetTier = needsTierUpgrade ? bestPurchasedTier : (bestPurchasedTier || undefined);
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             totalNewCredits,
             targetTier as any,
-            guestId
+            guestId,
+            undefined,
+            newTxIdsToCredit
           );
         }
 
@@ -294,7 +324,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
           onStatusUpdated();
         }
 
-        if (newlyRestoredCount > 0 || needsTierUpgrade) {
+        if (totalNewCredits > 0 || needsTierUpgrade) {
           setSyncStatusMessage({
             type: 'success',
             text: `🎉 Membership Verified! Added ${totalNewCredits > 0 ? `+${totalNewCredits} actions` : `credits`} ${bestPurchasedTier ? `& activated ${bestPurchasedTier.toUpperCase()} tier` : ''} on your account.`

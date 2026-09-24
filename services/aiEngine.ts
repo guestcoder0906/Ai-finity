@@ -1203,7 +1203,8 @@ CRITICAL REMINDERS:
      * If an injury is sustained (e.g. broken bone, gash, concussion), record it under [BODY PARTS & STATUS] or [STATUS EFFECTS & CONDITIONS].
      * 0 HP & NEGATIVE HEALTH UNCONSCIOUSNESS & SURVIVAL WINDOW: When a living character reaches 0 HP or below, they enter "Unconscious" status (base 5 minutes of WorldTime). While unconscious, taking more damage reduces health further into negative numbers (-10, -25, etc.). Taking lethal damage >= 15% of max HP while unconscious causes INSTANT DEATH. If dead, subsequent damage continues tracking into negative numbers (e.g. -30, -50). Wakes when HP > 0 or medical aid stabilizes them.
      * MASSIVE DAMAGE OVERKILL: If damage dealt >= 1.5x their CURRENT health in a single event, they are AUTOMATICALLY DEAD, skipping unconsciousness!
-     * DEAD CHARACTER RETENTION & GRADUAL ROT: A dead character's file is NEVER deleted. They remain in files with their negative health recorded. If biological, "- Decomposition / Rot: Stage 1 - Fresh Corpse (Began: [WorldTime]; Gradual biological decay based on WorldTime)" begins and progresses based on WorldTime.txt.
+     * DEAD CHARACTER RETENTION & RENAMING RULE (CRITICAL): A dead character's file is NEVER deleted! Instead, remove the player's username from the character's filename and rename it into "[CharacterName]-dead.txt" (e.g. "Theron-chloe.txt" becomes "Theron-dead.txt"). In "[CharacterName]-dead.txt", change '- Player: [username]' to '- Status: Dead (Preserved corpse; player control ended)' and preserve their negative health and corpse. On CurrentMap.json, remove them from 'players' and place their marker under 'npcs' or corpses as "[CharacterName]-dead". If biological, "- Decomposition / Rot: Stage 1 - Fresh Corpse (Began: [WorldTime]; Gradual biological decay based on WorldTime)" begins and progresses based on WorldTime.txt.
+     * RESURRECTION & RETURNING TO LIFE AS AN NPC (CRITICAL): If a dead character (e.g. from "[CharacterName]-dead.txt") is brought back to life in ANY way (such as a resurrection spell, necromancy, revivify, divine intervention, life potion, or health restored above 0 HP): the AI dynamically detects this from context. Because the player is not controlling them anymore after they died, they are an NPC! Convert and rename their file from "[CharacterName]-dead.txt" to "[CharacterName]-npc.txt". Set '- Type: Non-Player Character (NPC) (Resurrected)' and remove '- Player:'. On CurrentMap.json, place them in 'npcs' with name "[CharacterName]-npc" (NEVER in 'players').
      * GAME OVER: Set "gameOver": true ONLY if the active player character is confirmed DEAD. Do NOT set gameOver for Unconscious state at 0 or negative HP, as survival/rescue is ongoing!
      * Include the stat change in the 'updates' array: {"type": "stat", "text": "Health -X" (or "+X"), "value": -X}.
      * Keep Guide.txt Master Stat Table in 100% sync!
@@ -3860,6 +3861,274 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
+  /**
+   * Reconciles dead characters and resurrected characters:
+   * 1. If a character dies, don't delete them; remove the player's username from the character's name
+   *    and file (e.g. charactername-username into charactername-dead.txt).
+   * 2. If a player's character is alive again (resurrection), AI detects from context and they
+   *    become an NPC instead since the player is no longer controlling them after death.
+   */
+  private reconcileDeadAndResurrectedCharacters(data: AIResponse, username?: string) {
+    if (!data) return;
+    if (!data.files || typeof data.files !== 'object' || Array.isArray(data.files)) {
+      data.files = {};
+    }
+
+    const narrativeLower = (typeof data.narrative === 'string' ? data.narrative : '').toLowerCase();
+    const isResurrectionNarrative =
+      narrativeLower.includes('resurrect') ||
+      narrativeLower.includes('reviv') ||
+      narrativeLower.includes('raised from the dead') ||
+      narrativeLower.includes('brings back to life') ||
+      narrativeLower.includes('brought back to life') ||
+      narrativeLower.includes('restores life') ||
+      narrativeLower.includes('returned to life') ||
+      narrativeLower.includes('breath returns') ||
+      narrativeLower.includes('heart begins beating') ||
+      narrativeLower.includes('wakes from death');
+
+    // 1. RECONCILE RESURRECTED CHARACTERS: *-dead.txt coming back to life -> become NPC!
+    const allFilesList = Array.from(new Set([...Object.keys(data.files), ...this.fs.list()]));
+    const deadFiles = allFilesList.filter(f => f.endsWith('-dead.txt') || f.endsWith('_dead.txt'));
+
+    for (const deadFile of deadFiles) {
+      let content = data.files[deadFile]
+        ? (typeof data.files[deadFile] === 'string' ? data.files[deadFile] : (data.files[deadFile] as any).content)
+        : this.fs.read(deadFile);
+
+      if (typeof content !== 'string') continue;
+
+      const charBaseName = deadFile.replace(/\.txt$/, '').replace(/[-_]dead$/i, '').trim();
+      const charLower = charBaseName.toLowerCase();
+
+      // Check if health is now positive
+      const hpMatch = content.match(/[-*•]?\s*Health\s*[:=]\s*([+-]?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+      const currentHp = hpMatch ? parseFloat(hpMatch[1]) : -1;
+
+      // Check if status is no longer dead, or health is > 0, or narrative specifically resurrects this character
+      const hasDeadStatus = /Status\s*[:=]\s*Dead/i.test(content) || /Status\s*[:=][^\n\r]*\(Dead/i.test(content);
+      const isCharacterNamedInRevive = isResurrectionNarrative && charLower && narrativeLower.includes(charLower);
+      const isAliveAgain = (currentHp > 0 && !hasDeadStatus) || (currentHp > 0 && isCharacterNamedInRevive) || (isCharacterNamedInRevive && !hasDeadStatus);
+
+      if (isAliveAgain) {
+        console.log(`[AI Engine] Dead character "${charBaseName}" resurrected -> converting to autonomous NPC "${charBaseName}-npc.txt"`);
+        const npcFileName = `${charBaseName}-npc.txt`;
+
+        let updatedContent = content;
+        // Ensure HP is at least 10 / max if <= 0
+        if (currentHp <= 0 && hpMatch) {
+          const maxVal = hpMatch[2];
+          updatedContent = updatedContent.replace(hpMatch[0], `- Health: 10 / ${maxVal} (Conscious)`);
+        } else {
+          updatedContent = updatedContent.replace(/\s*\(Dead\)/gi, ' (Alive)');
+        }
+
+        // Remove dead status and set NPC status
+        updatedContent = updatedContent
+          .replace(/Status:\s*Dead[^\n\r]*/gi, 'Status: Healthy (Resurrected autonomous NPC)')
+          .replace(/Status:\s*npc[^\n\r]*/gi, 'Status: Healthy')
+          .replace(/[-*•]?\s*Decomposition\s*\/\s*Rot[^\n\r]*/gi, '');
+
+        // Remove player assignment and mark as NPC
+        if (updatedContent.match(/[-*•]?\s*Player\s*[:=][^\n\r]*/i)) {
+          updatedContent = updatedContent.replace(/[-*•]?\s*Player\s*[:=][^\n\r]*/i, '- Type: Non-Player Character (NPC) (Resurrected former adventurer)\n- Player: None (Independent NPC)');
+        } else if (!updatedContent.includes('Non-Player Character')) {
+          const nameHeader = updatedContent.indexOf('[NAME & DESCRIPTION]');
+          if (nameHeader >= 0) {
+            const insertIdx = updatedContent.indexOf('\n', nameHeader) + 1;
+            updatedContent = updatedContent.slice(0, insertIdx) + '- Type: Non-Player Character (NPC) (Resurrected former adventurer)\n- Player: None (Independent NPC)\n' + updatedContent.slice(insertIdx);
+          }
+        }
+
+        // Apply file transition
+        data.files[deadFile] = null;
+        data.files[npcFileName] = updatedContent;
+        if (this.fs.exists(deadFile)) {
+          this.fs.delete(deadFile);
+        }
+        this.fs.write(npcFileName, updatedContent);
+
+        // Update CurrentMap.json: place in npcs, remove from players
+        this.updateMapForResurrectedNpc(data, charBaseName);
+
+        // Notify in updates
+        if (!data.updates) data.updates = [];
+        data.updates.push({
+          type: 'story',
+          text: `✨ ${charBaseName} has returned to life as an independent NPC!`
+        });
+      }
+    }
+
+    // 2. RECONCILE DEAD CHARACTERS: charactername-username -> charactername-dead while dead
+    const activeFilesList = Array.from(new Set([...Object.keys(data.files), ...this.fs.list()]));
+    for (const f of activeFilesList) {
+      if (!f.endsWith('.txt')) continue;
+      if (
+        f.endsWith('-dead.txt') ||
+        f.endsWith('-npc.txt') ||
+        f.startsWith('World') ||
+        f.startsWith('Guide') ||
+        f.startsWith('Log') ||
+        f.startsWith('History')
+      ) continue;
+
+      let content = data.files[f]
+        ? (typeof data.files[f] === 'string' ? data.files[f] : (data.files[f] as any).content)
+        : this.fs.read(f);
+
+      if (typeof content !== 'string') continue;
+
+      // Check if dead
+      const hpMatch = content.match(/[-*•]?\s*Health\s*[:=]\s*([+-]?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+      const isDeadStatus = /Status\s*[:=]\s*Dead/i.test(content) || /Health\s*[:=][^\n\r]*\(Dead\)/i.test(content);
+      const isDeadHealth = hpMatch && parseFloat(hpMatch[1]) <= 0 && isDeadStatus;
+      const isDeadGameOver = Boolean(data.gameOver && username && f.toLowerCase().includes(username.toLowerCase()));
+
+      if (isDeadStatus || isDeadHealth || isDeadGameOver) {
+        // This character is dead! Convert charactername-username into charactername-dead.txt
+        const baseNoExt = f.replace(/\.txt$/, '');
+        const parts = baseNoExt.split(/[-_]/);
+        const charBaseName = parts.length > 1 ? parts.slice(0, -1).join('-') : parts[0];
+        const deadFileName = `${charBaseName}-dead.txt`;
+
+        if (f !== deadFileName) {
+          console.log(`[AI Engine] Converting fallen player character file "${f}" -> "${deadFileName}"`);
+          let updatedDeadContent = content;
+          if (username) {
+            updatedDeadContent = updatedDeadContent.replace(
+              new RegExp(`[-*•]?\\s*Player\\s*[:=]\\s*${username}[^\\n\\r]*`, 'gi'),
+              `- Status: Dead (Preserved corpse; former character for ${username})\n- Player: None (Deceased)`
+            );
+          } else {
+            updatedDeadContent = updatedDeadContent.replace(
+              /[-*•]?\s*Player\s*[:=][^\n\r]*/gi,
+              '- Status: Dead (Preserved corpse; player control ended)\n- Player: None (Deceased)'
+            );
+          }
+          if (!updatedDeadContent.includes('Status: Dead')) {
+            updatedDeadContent = updatedDeadContent.replace(/\[STATUS EFFECTS[^\]]*\]/i, `[STATUS EFFECTS & LORE]\n- Status: Dead (Fallen adventurer)`);
+          }
+
+          data.files[f] = null;
+          data.files[deadFileName] = updatedDeadContent;
+          if (this.fs.exists(f)) {
+            this.fs.delete(f);
+          }
+          this.fs.write(deadFileName, updatedDeadContent);
+
+          // Update map: remove from players
+          this.updateMapForFallenPlayer(data, charBaseName, username);
+        }
+      }
+    }
+  }
+
+  private updateMapForFallenPlayer(data: AIResponse, charBaseName: string, username?: string) {
+    try {
+      const mapRaw = data.files['CurrentMap.json']
+        ? (typeof data.files['CurrentMap.json'] === 'string' ? data.files['CurrentMap.json'] : (data.files['CurrentMap.json'] as any).content)
+        : this.fs.read('CurrentMap.json');
+      if (!mapRaw) return;
+      const mapObj = typeof mapRaw === 'string' ? JSON.parse(mapRaw) : mapRaw;
+      const uLower = (username || '').toLowerCase();
+      const charLower = charBaseName.toLowerCase();
+
+      let modified = false;
+      const filterPlayers = (playersList: any[]) => {
+        if (!Array.isArray(playersList)) return playersList;
+        return playersList.filter((p: any) => {
+          const pUser = (p.username || '').toLowerCase();
+          const pChar = (p.characterName || p.name || '').toLowerCase();
+          if (uLower && pUser === uLower) {
+            modified = true;
+            return false;
+          }
+          if (pChar && (pChar === charLower || pChar.includes(charLower))) {
+            modified = true;
+            return false;
+          }
+          return true;
+        });
+      };
+
+      if (Array.isArray(mapObj.players)) {
+        mapObj.players = filterPlayers(mapObj.players);
+      }
+      if (Array.isArray(mapObj.pages)) {
+        for (const page of mapObj.pages) {
+          if (Array.isArray(page.players)) {
+            page.players = filterPlayers(page.players);
+          }
+        }
+      }
+
+      if (modified) {
+        const jsonStr = JSON.stringify(mapObj, null, 2);
+        if (typeof data.files['CurrentMap.json'] === 'object' && (data.files['CurrentMap.json'] as any).content !== undefined) {
+          (data.files['CurrentMap.json'] as any).content = jsonStr;
+        } else {
+          data.files['CurrentMap.json'] = jsonStr;
+        }
+        this.fs.write('CurrentMap.json', jsonStr);
+      }
+    } catch (e) {
+      // non-fatal
+    }
+  }
+
+  private updateMapForResurrectedNpc(data: AIResponse, charBaseName: string) {
+    try {
+      const mapRaw = data.files['CurrentMap.json']
+        ? (typeof data.files['CurrentMap.json'] === 'string' ? data.files['CurrentMap.json'] : (data.files['CurrentMap.json'] as any).content)
+        : this.fs.read('CurrentMap.json');
+      if (!mapRaw) return;
+      const mapObj = typeof mapRaw === 'string' ? JSON.parse(mapRaw) : mapRaw;
+      const charLower = charBaseName.toLowerCase();
+      const npcName = `${charBaseName}-npc`;
+
+      // 1. Remove from all players arrays
+      const removePlayer = (playersList: any[]) => {
+        if (!Array.isArray(playersList)) return [];
+        return playersList.filter((p: any) => {
+          const pChar = (p.characterName || p.name || '').toLowerCase();
+          return !(pChar === charLower || pChar.includes(charLower));
+        });
+      };
+
+      if (Array.isArray(mapObj.players)) mapObj.players = removePlayer(mapObj.players);
+      if (Array.isArray(mapObj.pages)) {
+        for (const pg of mapObj.pages) {
+          if (Array.isArray(pg.players)) pg.players = removePlayer(pg.players);
+        }
+      }
+
+      // 2. Ensure present in npcs
+      const targetPage = (Array.isArray(mapObj.pages) && mapObj.pages.length > 0) ? mapObj.pages[0] : null;
+      const npcsArray = targetPage ? (targetPage.npcs || (targetPage.npcs = [])) : (mapObj.npcs || (mapObj.npcs = []));
+      const alreadyHasNpc = npcsArray.some((n: any) => (n.name || '').toLowerCase() === npcName.toLowerCase() || (n.name || '').toLowerCase() === charLower);
+      if (!alreadyHasNpc) {
+        npcsArray.push({
+          name: npcName,
+          type: 'npc',
+          description: `Resurrected former adventurer ${charBaseName}, now autonomous NPC.`,
+          x: 50,
+          y: 50
+        });
+      }
+
+      const jsonStr = JSON.stringify(mapObj, null, 2);
+      if (typeof data.files['CurrentMap.json'] === 'object' && (data.files['CurrentMap.json'] as any).content !== undefined) {
+        (data.files['CurrentMap.json'] as any).content = jsonStr;
+      } else {
+        data.files['CurrentMap.json'] = jsonStr;
+      }
+      this.fs.write('CurrentMap.json', jsonStr);
+    } catch (e) {
+      // non-fatal
+    }
+  }
+
   private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
     if (!data) return;
 
@@ -3952,6 +4221,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
     // Ensure currency transactions and balance changes are synchronized
     this.syncPlayerCurrency(data, username, auditContext);
+
+    // Reconcile dead characters (charactername-username -> charactername-dead) and resurrected characters (dead -> NPC)
+    this.reconcileDeadAndResurrectedCharacters(data, username);
 
     // Dynamically repair any accidentally corrupted player files
     cleanAndRepairPlayerFiles(this.fs);

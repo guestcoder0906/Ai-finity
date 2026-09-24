@@ -18,6 +18,8 @@
         "actionCredits": { "type": "number" },
         "dailyActionsUsed": { "type": "number" },
         "dailyActionsDate": { "type": "string" },
+        "appliedTransactionIds": { "type": "array", "items": { "type": "string" } },
+        "creditedActionTxIds": { "type": "array", "items": { "type": "string" } },
         "authProvider": { "type": "string" },
         "createdAt": { "type": "string" }
       },

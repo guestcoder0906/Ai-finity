@@ -63,16 +63,43 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
         );
         if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
           const localList = getLocalTransactions(currentUser.uid);
-          const existingIds = new Set(localList.map((t) => t.id));
+          const existingIds = new Set<string>(localList.map((t) => t.id));
+          localList.forEach((t) => {
+            if (t?.id) existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+
+          try {
+            const firestoreTx = await getUserTransactions(currentUser.uid);
+            firestoreTx.forEach((t) => {
+              if (t?.id) {
+                existingIds.add(t.id);
+                existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              }
+            });
+          } catch (e) {}
+
+          if (Array.isArray(currentUser.creditedActionTxIds)) {
+            currentUser.creditedActionTxIds.forEach((id) => {
+              existingIds.add(id);
+              existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            });
+          }
+
           let newCredits = 0;
           let highestTier: string | null = null;
           let newFound = 0;
+          const newTxIdsToCredit: string[] = [];
 
           for (const p of syncRes.purchases) {
-            if (!existingIds.has(p.id)) {
+            const safeId = String(p.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const isAlreadyCredited = existingIds.has(p.id) || existingIds.has(safeId);
+
+            if (!isAlreadyCredited) {
               newFound++;
               if (p.itemType === 'pack' && p.actionDelta > 0) {
                 newCredits += p.actionDelta;
+                newTxIdsToCredit.push(p.id);
+                newTxIdsToCredit.push(safeId);
               } else if (p.itemType === 'tier' && p.itemId) {
                 highestTier = p.itemId;
               }
@@ -96,18 +123,19 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
               };
               await recordPaymentTransaction(currentUser.uid, tx);
               existingIds.add(p.id);
+              existingIds.add(safeId);
             }
           }
 
-          if (newFound > 0) {
-            let updated = currentUser;
-            if (newCredits > 0 || highestTier) {
-              updated = await ActionLimitService.applyRestoredPurchases(
-                currentUser,
-                newCredits,
-                highestTier as any
-              );
-            }
+          if (newCredits > 0 || highestTier) {
+            const updated = await ActionLimitService.applyRestoredPurchases(
+              currentUser,
+              newCredits,
+              highestTier as any,
+              undefined,
+              undefined,
+              newTxIdsToCredit
+            );
             if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
             if (onStatusUpdated) onStatusUpdated();
             setSyncNotice(`🎉 Restored ${newFound} Stripe order(s) (+${newCredits} actions${highestTier ? ` & ${highestTier} tier` : ''})!`);
@@ -139,16 +167,43 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
 
       if (syncRes.success && syncRes.purchases && syncRes.purchases.length > 0) {
         const localList = getLocalTransactions(currentUser.uid);
-        const existingIds = new Set(localList.map((t) => t.id));
+        const existingIds = new Set<string>(localList.map((t) => t.id));
+        localList.forEach((t) => {
+          if (t?.id) existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+        });
+
+        try {
+          const firestoreTx = await getUserTransactions(currentUser.uid);
+          firestoreTx.forEach((t) => {
+            if (t?.id) {
+              existingIds.add(t.id);
+              existingIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            }
+          });
+        } catch (e) {}
+
+        if (Array.isArray(currentUser.creditedActionTxIds)) {
+          currentUser.creditedActionTxIds.forEach((id) => {
+            existingIds.add(id);
+            existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+        }
+
         let newCredits = 0;
         let highestTier: string | null = null;
         let newFound = 0;
+        const newTxIdsToCredit: string[] = [];
 
         for (const p of syncRes.purchases) {
-          if (!existingIds.has(p.id)) {
+          const safeId = String(p.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+          const isAlreadyCredited = existingIds.has(p.id) || existingIds.has(safeId);
+
+          if (!isAlreadyCredited) {
             newFound++;
             if (p.itemType === 'pack' && p.actionDelta > 0) {
               newCredits += p.actionDelta;
+              newTxIdsToCredit.push(p.id);
+              newTxIdsToCredit.push(safeId);
             } else if (p.itemType === 'tier' && p.itemId) {
               highestTier = p.itemId;
             }
@@ -172,6 +227,7 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
             };
             await recordPaymentTransaction(currentUser.uid, tx);
             existingIds.add(p.id);
+            existingIds.add(safeId);
           }
         }
 
@@ -180,7 +236,10 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             newCredits,
-            highestTier as any
+            highestTier as any,
+            undefined,
+            undefined,
+            newTxIdsToCredit
           );
         }
         if (onProfileUpdated && updated) onProfileUpdated({ ...updated });
@@ -189,7 +248,7 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
         const updatedRecords = await getUserTransactions(currentUser.uid);
         setTransactions(updatedRecords);
 
-        if (newFound > 0) {
+        if (newCredits > 0 || highestTier) {
           setSyncNotice(`🎉 Successfully restored ${newFound} Stripe order(s) totaling +${newCredits} actions${highestTier ? ` & ${highestTier} tier` : ''}!`);
         } else {
           setSyncNotice(`Verified ${syncRes.count} Stripe transaction(s). All purchases are already up-to-date on your account.`);
