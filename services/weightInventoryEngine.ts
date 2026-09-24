@@ -380,9 +380,9 @@ export class WeightInventoryEngine {
       defaultWorth = '$1.00';
     } else if (/penny|cent|dime|nickel|quarter|small\s*coin/i.test(lower)) {
       // 3. Small coins (penny, cent, dime, nickel, quarter)
-      singleDim = this.parseDimensions('0.95x0.95x0.07 inches');
+      singleDim = this.parseDimensions('0.95x0.95x0.06 inches');
       singleW = 0.012;
-      unitVol = 0.063;
+      unitVol = 0.054;
       defaultWorth = '$0.01';
     } else if (/bar|ingot|bullion/i.test(lower)) {
       // 4. Bullion / Ingots / Bars
@@ -398,29 +398,29 @@ export class WeightInventoryEngine {
       defaultWorth = undefined;
     } else if (/cap|bottle\s*cap/i.test(lower)) {
       // 6. Bottle caps
-      singleDim = this.parseDimensions('1.2x1.2x0.2 inches');
+      singleDim = this.parseDimensions('1.1x1.1x0.15 inches');
       singleW = 0.005;
-      unitVol = 0.288;
+      unitVol = 0.18;
       defaultWorth = undefined;
     } else {
       // 7. Standard fantasy/historical coins (Gold, Silver, Copper, Electrum, Platinum, Crowns, Ducats, etc.)
-      singleDim = this.parseDimensions('1.2x1.2x0.08 inches');
+      singleDim = this.parseDimensions('1.1x1.1x0.07 inches');
       singleW = 0.02; // ~50 coins per pound
-      unitVol = 0.115;
+      unitVol = 0.065; // ~1.1" dia x 0.07" thickness with circular packing
       defaultWorth = lower.includes('gold') ? '1 GP' : lower.includes('silver') ? '1 SP' : lower.includes('copper') ? '1 CP' : (lower.includes('dollar') ? '$1.00' : undefined);
     }
 
     const singleRaw = singleDim.raw || `${singleDim.height}x${singleDim.width}x${singleDim.depth} inches`;
     const totalW = explicitWeight !== undefined ? explicitWeight : Math.round(amount * singleW * 100) / 100;
-    const totalVol = Math.round(amount * unitVol * 1.25 * 100) / 100;
+    const totalVol = Math.round(amount * unitVol * 1.15 * 100) / 100;
 
     // Calculate multiplied 3D stack/bundle dimensions for amount pieces of physical currency
+    // Loose coins in a pouch/container pack together flexibly rather than forming a rigid oversized slab
     let stackDim: ParsedDimensions = singleDim;
     if (amount > 1) {
-      const scale = Math.cbrt(amount * 1.15);
-      const stackH = Math.round(singleDim.height * scale * 10) / 10;
-      const stackW = Math.round(singleDim.width * scale * 10) / 10;
-      const stackD = Math.round(singleDim.depth * scale * 10) / 10;
+      const stackH = Math.min(4.0, Math.round((singleDim.height + Math.cbrt(amount) * 0.25) * 10) / 10);
+      const stackW = Math.min(4.0, Math.round((singleDim.width + Math.cbrt(amount) * 0.25) * 10) / 10);
+      const stackD = Math.min(4.0, Math.round((singleDim.depth * Math.sqrt(amount) * 0.4) * 10) / 10);
       stackDim = {
         height: stackH,
         width: stackW,
@@ -619,7 +619,8 @@ export class WeightInventoryEngine {
       contentToScan = containsMatch[1];
     } else {
       contentToScan = contentToScan
-        .replace(/(?:\[\s*)?location[:=\s]+(?:hide\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)/gi, ' ')
+        .replace(/\[\s*(?:location|secret)[:=\s]+(?:hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]|target\([^)]+\)\[[^\]]+\]|hide(?::all)?\[[^\]]+\]|\[[^\]]+\]|[^\]]+)\]/gi, ' ')
+        .replace(/(?:\[\s*)?(?:location|secret)[:=\s]+(?:hide:(?:besides|except|for)\([^)]+\)\[[^\]]+\]|target\([^)]+\)\[[^\]]+\]|hide(?::all)?\[[^\]]+\]|\[[^\]]+\]|[^,;\r\n()]+)(?:\])?/gi, ' ')
         .replace(/(?:\[\s*)?container[:=\s]+\[[^\]]+\]/gi, ' ')
         .replace(/\[\s*container[:=\s]+[^\]]+\]/gi, ' ')
         .replace(/container[:=\s]+[^|;,\(\)\[\]\r\n]+/gi, ' ')
@@ -1396,7 +1397,7 @@ export class WeightInventoryEngine {
       return false;
     }
 
-    // Explicit foldability markers
+    // Explicit foldability & pliable granular markers (coins, currency, arrows in quiver, soft goods)
     if (
       text.includes('foldable') ||
       text.includes('folded') ||
@@ -1404,7 +1405,20 @@ export class WeightInventoryEngine {
       text.includes('pliable') ||
       text.includes('rollable') ||
       text.includes('rolled') ||
-      text.includes('soft')
+      text.includes('soft') ||
+      text.includes('coin') ||
+      text.includes('currency') ||
+      text.includes('money') ||
+      text.includes('cash') ||
+      text.includes('gold') ||
+      text.includes('silver') ||
+      text.includes('copper') ||
+      text.includes('credits') ||
+      text.includes('arrow') ||
+      text.includes('bolt') ||
+      text.includes('quiver') ||
+      text.includes('ammunition') ||
+      text.includes('ammo')
     ) {
       return true;
     }
@@ -1433,8 +1447,7 @@ export class WeightInventoryEngine {
       text.includes('halberd') ||
       text.includes('mace') ||
       text.includes('warhammer') ||
-      text.includes('bow') ||
-      text.includes('crossbow') ||
+      (/\b(?:longbow|shortbow|crossbow|recurve\s*bow|composite\s*bow)\b/i.test(text) && !text.includes('arrow') && !text.includes('quiver')) ||
       text.includes('chest') ||
       text.includes('crate') ||
       text.includes('vial') ||
@@ -2037,6 +2050,14 @@ export class WeightInventoryEngine {
       const nameLower = it.name.toLowerCase().replace(/^\[|\]$/g, '').trim();
       return (
         nameLower.startsWith('total starting') ||
+        nameLower.includes('initialized starting gear') ||
+        nameLower.includes('starting gear') ||
+        nameLower.includes('starting equipment') ||
+        nameLower.includes('initialized gear') ||
+        nameLower.includes('gear initialized') ||
+        nameLower.startsWith('initialized') ||
+        nameLower.startsWith('starting inventory') ||
+        nameLower.startsWith('starting loadout') ||
         nameLower.includes('starting carried items') ||
         nameLower.includes('items accounting') ||
         nameLower.includes('starting carrying limit') ||
@@ -2551,6 +2572,14 @@ export class WeightInventoryEngine {
       name.toLowerCase() === 'none' ||
       name.toLowerCase() === '0 lbs' ||
       cleanNameLower.startsWith('total starting') ||
+      cleanNameLower.includes('initialized starting gear') ||
+      cleanNameLower.includes('starting gear') ||
+      cleanNameLower.includes('starting equipment') ||
+      cleanNameLower.includes('initialized gear') ||
+      cleanNameLower.includes('gear initialized') ||
+      cleanNameLower.startsWith('initialized') ||
+      cleanNameLower.startsWith('starting inventory') ||
+      cleanNameLower.startsWith('starting loadout') ||
       cleanNameLower.includes('starting carried item') ||
       cleanNameLower.includes('starting carried items') ||
       cleanNameLower.includes('starting item limit') ||
@@ -2895,7 +2924,14 @@ export class WeightInventoryEngine {
           'INVENTORY AND EQUIPMENT': 'INVENTORY & EQUIPMENT',
           'INVENTORY': 'INVENTORY & EQUIPMENT',
           'EQUIPMENT': 'INVENTORY & EQUIPMENT',
+          'EQUIPPED GEAR & ARMOR': 'INVENTORY & EQUIPMENT',
+          'EQUIPPED GEAR AND ARMOR': 'INVENTORY & EQUIPMENT',
+          'EQUIPPED GEAR': 'INVENTORY & EQUIPMENT',
+          'EQUIPPED ARMOR': 'INVENTORY & EQUIPMENT',
+          'ARMOR & GEAR': 'INVENTORY & EQUIPMENT',
+          'GEAR & ARMOR': 'INVENTORY & EQUIPMENT',
           'CONTAINERS & CARRIED GEAR': 'INVENTORY & EQUIPMENT',
+          'CONTAINERS AND CARRIED GEAR': 'INVENTORY & EQUIPMENT',
           'CARRIED GEAR': 'INVENTORY & EQUIPMENT',
 
           'CURRENTLY HOLDING': 'CURRENTLY HOLDING',
@@ -3435,7 +3471,7 @@ export class WeightInventoryEngine {
         const containerKeywords = ['backpack', 'satchel', 'pouch', 'sack', 'bag', 'haversack', 'rucksack', 'quiver', 'bandolier', 'scabbard', 'pocket', 'trunk', 'crate', 'case', 'holster', 'wallet', 'chit wallet', 'purse', 'cardholder', 'billfold', 'money clip', 'money belt'];
         const isChestContainer = /\bchest\b/i.test(itemNameLower) && !/\b(?:chestplate|chest\s*plate|chest\s*armor|chest\s*guard|across\s*chest)\b/i.test(itemNameLower);
         const hasContainerKeyword = containerKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(itemNameLower)) || isChestContainer;
-        const isExplicitItemInContainer = lower.includes('container:') || lower.includes('inside container') || lower.includes('in backpack') || lower.includes('in satchel') || lower.includes('in pouch') || lower.includes('in bag');
+        const isExplicitItemInContainer = /\bcontainer\s*[:=]/i.test(lower) || /\b(?:inside|in)\s+(?:container|backpack|satchel|pouch|bag|quiver|chest|sack|case|haversack)\b/i.test(lower);
 
         const isContainerDef = (activeSubsection === 'containers' && !lower.startsWith('total') && !isExplicitItemInContainer) || (
           hasContainerKeyword &&
@@ -3519,6 +3555,11 @@ export class WeightInventoryEngine {
             hasDoesNotFit: false,
             rawText: line
           });
+          continue;
+        }
+
+        // Check if line is a currency entry in container: handled via carriedCurrencies
+        if (WeightInventoryEngine.parseCurrencyEntries(line).length > 0) {
           continue;
         }
 
@@ -3996,7 +4037,8 @@ export class WeightInventoryEngine {
       for (const eq of equippedGear) {
         const eqLower = eq.name.toLowerCase();
         if (weaponShieldWords.some(w => eqLower.includes(w))) {
-          const isTwoHanded = eqLower.includes('greatsword') || eqLower.includes('bow') || eqLower.includes('two-handed') || eqLower.includes('staff') || eqLower.includes('spear');
+          // Bows are held in 1 hand when equipped/carried; they only require 2 hands dynamically when nocking/drawing an arrow to shoot
+          const isTwoHanded = eqLower.includes('greatsword') || eqLower.includes('greataxe') || eqLower.includes('maul') || eqLower.includes('greatclub') || eqLower.includes('two-handed') || eqLower.includes('staff') || eqLower.includes('spear') || eqLower.includes('halberd') || eqLower.includes('pike') || eqLower.includes('bow and arrow') || eqLower.includes('nocked arrow');
           const limb = isTwoHanded ? 'Both Hands (Two-Handed)' : (currentlyHolding.length === 0 ? 'Main Hand' : 'Off Hand');
           const isOverflow = currentlyHolding.length >= maxStandardHoldCount;
           currentlyHolding.push({
@@ -4207,8 +4249,15 @@ export class WeightInventoryEngine {
 
     for (const cont of containers) {
       cont.items = cont.items.filter(it => !isOwnBodyItem(it.name, it.weight));
-      cont.currentItemsWeight = Math.round(cont.items.reduce((s, it) => s + (it.weight || 0), 0) * 100) / 100;
-      cont.totalWeight = Math.round((cont.weight + cont.currentItemsWeight + (cont.currencyWeight || 0)) * 100) / 100;
+      // cont.items may already contain mirrored currency entries (with it.weight = curWt).
+      // Separate non-currency items from mirrored currency items to prevent double-adding currencyWeight
+      const nonCurrencyItems = cont.items.filter(it => !it.name.startsWith('Amount: ') && WeightInventoryEngine.parseCurrencyEntries(it.name).length === 0);
+      const currencyItems = cont.items.filter(it => it.name.startsWith('Amount: ') || WeightInventoryEngine.parseCurrencyEntries(it.name).length > 0);
+      const nonCurWeight = nonCurrencyItems.reduce((s, it) => s + (it.weight || 0), 0);
+      const curWeight = currencyItems.length > 0 ? currencyItems.reduce((s, it) => s + (it.weight || 0), 0) : (cont.currencyWeight || 0);
+
+      cont.currentItemsWeight = Math.round((nonCurWeight + curWeight) * 100) / 100;
+      cont.totalWeight = Math.round((cont.weight + cont.currentItemsWeight) * 100) / 100;
     }
 
     // Never add passenger weight if entity is mounted or is not carrying actual other passengers
@@ -4224,7 +4273,11 @@ export class WeightInventoryEngine {
     // = Equipped Gear + Containers (empty weight) + Items inside containers (including physical currency in containers) + Carried loose items + Currently Held items
     let totalCarriedWeight = 0;
     for (const eq of equippedGear) {
-      totalCarriedWeight += eq.weight;
+      // Avoid double counting if equipped container is already tracked in containers
+      const alreadyInContainers = containers.some(c => c.name.toLowerCase() === eq.name.toLowerCase());
+      if (!alreadyInContainers) {
+        totalCarriedWeight += eq.weight;
+      }
     }
     for (const cont of containers) {
       totalCarriedWeight += cont.totalWeight;

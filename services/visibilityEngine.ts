@@ -60,7 +60,17 @@ export function parseSecretLocation(
   // Clean repeated phrases
   trimmed = trimmed.replace(/([A-Za-z0-9#_ \-\.]{8,}?)(?:\s*(?:\|\s*)?\1){1,}/g, '$1').trim();
   trimmed = trimmed.replace(/(\[[^\]]{3,}\])(?:\s*\1)+/gi, '$1').trim();
-  trimmed = trimmed.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+
+  // Clean location/secret prefix if wrapped in e.g. "[Location: hide[...]]" or "Location: hide[...]"
+  trimmed = trimmed.replace(/^[\[\s]*(?:location|secret)[:=\s]+/i, '').trim();
+  if (trimmed.startsWith('[') && trimmed.endsWith(']') && !/^(?:hide|target)\b/i.test(trimmed)) {
+    const innerTrimmed = trimmed.slice(1, -1).trim();
+    if (/^(?:hide|target)\b/i.test(innerTrimmed) || !innerTrimmed.includes('[')) {
+      trimmed = innerTrimmed;
+    }
+  }
+  // Trim dangling outer quotes
+  trimmed = trimmed.replace(/^["'`]+|["'`]+$/g, '').trim();
 
   // Pattern 1: hide:besides(Player1, Player2)[Secret location] or hide:except(...)
   const besidesMatch = trimmed.match(/(?:secret[:=\s]*)?hide:(?:besides|except)\(([^)]*)\)\[([^\]]*)\]/i);
@@ -155,9 +165,33 @@ export function parseSecretLocation(
     };
   }
 
+  // Pattern 5: Unclosed hide[... or hide: [tag]
+  const hideUnclosedMatch = trimmed.match(/(?:secret[:=\s]*)?hide(?::all)?\s*\[\s*([^\]]+)/i);
+  if (hideUnclosedMatch) {
+    const secretContent = hideUnclosedMatch[1].replace(/\]+$/, '').trim();
+    const isVisible = debugMode;
+    const display = isVisible
+      ? `Secret (AI/NPC Only): ${secretContent}`
+      : `Secret: [Hidden location (Unknown to players)]`;
+
+    return {
+      isSecret: true,
+      isVisibleToPlayer: isVisible,
+      cleanLocation: isVisible ? secretContent : '[Hidden location]',
+      displayFormatted: display,
+      visibilityType: 'all_players_hidden'
+    };
+  }
+
   // Check if string is simply marked as secret
   const isGenericSecret = trimmed.toLowerCase().startsWith('secret:');
-  const clean = trimmed.replace(/^secret[:=\s]+/i, '').trim();
+  let clean = trimmed.replace(/^secret[:=\s]+/i, '').trim();
+  // Strip dangling outer brackets if unmatched
+  if (clean.startsWith('[') && clean.endsWith(']')) {
+    clean = clean.slice(1, -1).trim();
+  } else if (clean.endsWith(']') && !clean.includes('[')) {
+    clean = clean.slice(0, -1).trim();
+  }
 
   return {
     isSecret: isGenericSecret,
