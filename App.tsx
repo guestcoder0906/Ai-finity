@@ -269,6 +269,7 @@ function App() {
   const [showMultiplayerModal, setShowMultiplayerModal] = useState<'host' | 'join' | null>(null);
   const [shareRoomModalCode, setShareRoomModalCode] = useState<string | null>(null);
   const [urlRoomToJoin, setUrlRoomToJoin] = useState<string>('');
+  const [pendingMultiplayerAction, setPendingMultiplayerAction] = useState<{ mode: 'host' | 'join'; roomId?: string } | null>(null);
   const [multiplayerService, setMultiplayerService] = useState<MultiplayerService | null>(null);
   const [roomState, setRoomState] = useState<any>(null);
   const roomStateRef = useRef<any>(null);
@@ -1047,13 +1048,41 @@ function App() {
       if (roomParam && roomParam.trim()) {
         const cleanRoom = roomParam.trim().toUpperCase();
         setUrlRoomToJoin(cleanRoom);
-        setShowMultiplayerModal('join');
+        if (!currentUser) {
+          setPendingMultiplayerAction({ mode: 'join', roomId: cleanRoom });
+          setAuthModalInitialTab('login');
+          setIsAuthModalOpen(true);
+        } else {
+          setShowMultiplayerModal('join');
+        }
         setCurrentPath('/');
       }
     } catch (e) {
       console.warn('Error reading room from URL:', e);
     }
-  }, []);
+  }, [currentUser]);
+
+  const handleInitiateHost = () => {
+    if (!currentUser) {
+      setPendingMultiplayerAction({ mode: 'host' });
+      setAuthModalInitialTab('signup');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    setShowMultiplayerModal('host');
+  };
+
+  const handleInitiateJoin = (roomId?: string) => {
+    if (!currentUser) {
+      setPendingMultiplayerAction({ mode: 'join', roomId });
+      if (roomId) setUrlRoomToJoin(roomId);
+      setAuthModalInitialTab('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    if (roomId) setUrlRoomToJoin(roomId);
+    setShowMultiplayerModal('join');
+  };
 
   const handleEnterGame = () => {
     if (typeof window !== 'undefined') {
@@ -1422,7 +1451,14 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
   };
 
   const handleJoinGame = async (roomId: string, joinUsername?: string) => {
-    const effectiveJoin = currentUser ? currentUser.username : (joinUsername || getMultiplayerUsername(roomState?.players || []));
+    if (!currentUser) {
+      setPendingMultiplayerAction({ mode: 'join', roomId });
+      setUrlRoomToJoin(roomId);
+      setAuthModalInitialTab('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    const effectiveJoin = currentUser.username;
     setUsername(effectiveJoin);
     localStorage.setItem('aimud_username', effectiveJoin);
     const ms = initMultiplayerService();
@@ -1430,7 +1466,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
       await ms.joinRoom(
         roomId,
         effectiveJoin,
-        currentUser ? { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName } : undefined
+        { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName }
       );
       localStorage.setItem('aimud_roomId', roomId);
       localStorage.setItem('aimud_gameMode', 'multiplayer');
@@ -1470,9 +1506,15 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         });
       }
     } else if (gameMode === 'multiplayer' && !multiplayerService) {
+      // Guests cannot be in multiplayer
+      if (!currentUser) {
+        setGameMode('singleplayer');
+        localStorage.setItem('aimud_gameMode', 'singleplayer');
+        return;
+      }
       // Try to restore multiplayer session
       const savedRoomId = localStorage.getItem('aimud_roomId');
-      const savedUsername = currentUser ? currentUser.username : localStorage.getItem('aimud_username');
+      const savedUsername = currentUser.username;
       if (savedRoomId && savedUsername) {
         handleJoinGame(savedRoomId, savedUsername);
       } else {
@@ -1483,7 +1525,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
     if (!isInitialized || (gameMode === 'multiplayer' && roomState?.gameState === 'waiting_for_world')) {
       setRecommendations([]);
     }
-  }, [gameMode, isInitialized, roomState?.gameState]);
+  }, [gameMode, isInitialized, roomState?.gameState, currentUser]);
 
   // Safety watchdog: If gameMode is multiplayer but roomState remains null after 5 seconds, auto-revert to singleplayer
   useEffect(() => {
@@ -1501,14 +1543,20 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
   }, [gameMode, roomState]);
 
   const handleHostGame = async (hostUsername?: string) => {
-    const effectiveHost = currentUser ? currentUser.username : (hostUsername || getMultiplayerUsername([]));
+    if (!currentUser) {
+      setPendingMultiplayerAction({ mode: 'host' });
+      setAuthModalInitialTab('signup');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    const effectiveHost = currentUser.username;
     setUsername(effectiveHost);
     localStorage.setItem('aimud_username', effectiveHost);
     const ms = initMultiplayerService();
     fileSystem.clear();
     const roomId = await ms.createRoom(
       effectiveHost,
-      currentUser ? { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName } : undefined
+      { tier: currentUser.tier, role: currentUser.role, showGlowingName: currentUser.showGlowingName }
     );
     localStorage.setItem('aimud_roomId', roomId);
     setGameMode('multiplayer');
@@ -2209,6 +2257,12 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
             currentUser={currentUser}
             guestName={guestName}
             guestId={guestId}
+            onOpenAuth={(tab) => {
+              setPendingMultiplayerAction({ mode: showMultiplayerModal || 'host', roomId: urlRoomToJoin });
+              setShowMultiplayerModal(null);
+              setAuthModalInitialTab(tab || 'signup');
+              setIsAuthModalOpen(true);
+            }}
             onOpenMarket={(tab) => {
               setMarketInitialTab(tab || 'packs');
               setIsMarketOpen(true);
@@ -2291,8 +2345,8 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
         onReferenceClick={handleReferenceClick}
         autoRecommendationsEnabled={autoRecommendationsEnabled}
         onToggleAutoRecommendations={() => setAutoRecommendationsEnabled(!autoRecommendationsEnabled)}
-        onHostClick={() => setShowMultiplayerModal('host')}
-        onJoinClick={() => setShowMultiplayerModal('join')}
+        onHostClick={handleInitiateHost}
+        onJoinClick={() => handleInitiateJoin()}
         syncCount={syncCount}
         mapPanelRef={mapPanelRef}
         currentUser={currentUser}
@@ -2699,7 +2753,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   <button
                     onClick={() => {
                       setIsMobileTopMenuOpen(false);
-                      setShowMultiplayerModal('host');
+                      handleInitiateHost();
                     }}
                     className="p-2 bg-blue-900/50 hover:bg-blue-800/70 active:bg-blue-700/80 text-blue-200 rounded border border-blue-700/60 flex items-center justify-center gap-1.5 font-semibold transition-colors cursor-pointer"
                   >
@@ -2709,7 +2763,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   <button
                     onClick={() => {
                       setIsMobileTopMenuOpen(false);
-                      setShowMultiplayerModal('join');
+                      handleInitiateJoin();
                     }}
                     className="p-2 bg-emerald-900/50 hover:bg-emerald-800/70 active:bg-emerald-700/80 text-emerald-200 rounded border border-emerald-700/60 flex items-center justify-center gap-1.5 font-semibold transition-colors cursor-pointer"
                   >
@@ -3100,7 +3154,10 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
       <AuthModal
         isOpen={isAuthModalOpen}
         initialTab={authModalInitialTab}
-        onClose={() => setIsAuthModalOpen(false)}
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setPendingMultiplayerAction(null);
+        }}
         onAuthSuccess={(user) => {
           setCurrentUser(user);
           setActionStatus(ActionLimitService.getActionStatus(user, guestId));
@@ -3108,6 +3165,15 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
           setIsActionLimitModalOpen(false);
           setIsGuestWelcomeOpen(false);
           setIsAuthModalOpen(false);
+
+          // If user initiated hosting or joining multiplayer before logging in, proceed automatically
+          if (pendingMultiplayerAction) {
+            if (pendingMultiplayerAction.roomId) {
+              setUrlRoomToJoin(pendingMultiplayerAction.roomId);
+            }
+            setShowMultiplayerModal(pendingMultiplayerAction.mode);
+            setPendingMultiplayerAction(null);
+          }
         }}
       />
 
@@ -3257,6 +3323,12 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
           currentUser={currentUser}
           guestName={guestName}
           guestId={guestId}
+          onOpenAuth={(tab) => {
+            setPendingMultiplayerAction({ mode: showMultiplayerModal || 'host', roomId: urlRoomToJoin });
+            setShowMultiplayerModal(null);
+            setAuthModalInitialTab(tab || 'signup');
+            setIsAuthModalOpen(true);
+          }}
           onOpenMarket={(tab) => {
             setMarketInitialTab(tab || 'packs');
             setIsMarketOpen(true);

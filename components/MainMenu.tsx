@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Lock, ExternalLink, HelpCircle } from 'lucide-react';
+import { Key, Lock, ExternalLink, HelpCircle, Users, UserPlus, LogIn, AlertCircle } from 'lucide-react';
 import {
   UserProfile,
   isGuestNameActive,
@@ -19,6 +19,7 @@ interface MainMenuProps {
   guestName?: string | null;
   guestId?: string;
   onOpenMarket?: (tab?: 'packs' | 'subscriptions' | 'apikey') => void;
+  onOpenAuth?: (tab?: 'login' | 'signup') => void;
 }
 
 export default function MainMenu({
@@ -31,7 +32,8 @@ export default function MainMenu({
   currentUser,
   guestName,
   guestId,
-  onOpenMarket
+  onOpenMarket,
+  onOpenAuth
 }: MainMenuProps) {
   const [mode, setMode] = useState<'host' | 'join'>(initialMode);
   const [username, setUsername] = useState('');
@@ -72,72 +74,24 @@ export default function MainMenu({
 
   const handleHost = async () => {
     setErrorMsg(null);
-    let finalName = '';
-
-    if (isLoggedIn && currentUser) {
-      // User is logged in: their name is their username automatically
-      finalName = currentUser.username;
-    } else {
-      // Guest: can set their unique active guest name
-      finalName = username.trim();
-      if (!finalName) {
-        setErrorMsg('Please enter a unique guest name.');
-        return;
+    if (!isLoggedIn || !currentUser) {
+      if (onOpenAuth) {
+        onOpenAuth('signup');
       }
-
-      const validation = validateUsernameFormat(finalName);
-      if (!validation.valid) {
-        setErrorMsg(validation.error || 'Invalid guest name format (2-20 alphanumeric characters or underscores).');
-        return;
-      }
-
-      const available = await isGuestNameAvailable(finalName, guestId || '');
-      if (!available) {
-        setErrorMsg(`The guest name "${finalName}" is already taken by another active guest or user. Please choose a unique guest name.`);
-        return;
-      }
-
-      if (guestId) {
-        await reserveGuestName(finalName, guestId);
-      }
-      localStorage.setItem('aifinity_guest_name', finalName);
+      return;
     }
-
+    const finalName = currentUser.username;
     localStorage.setItem('aimud_username', finalName);
     onHostGame(finalName);
   };
 
   const handleJoin = async () => {
     setErrorMsg(null);
-    let finalName = '';
-
-    if (isLoggedIn && currentUser) {
-      // User is logged in: their name is their username automatically
-      finalName = currentUser.username;
-    } else {
-      // Guest: can set their unique active guest name
-      finalName = username.trim();
-      if (!finalName) {
-        setErrorMsg('Please enter a unique guest name.');
-        return;
+    if (!isLoggedIn || !currentUser) {
+      if (onOpenAuth) {
+        onOpenAuth('login');
       }
-
-      const validation = validateUsernameFormat(finalName);
-      if (!validation.valid) {
-        setErrorMsg(validation.error || 'Invalid guest name format (2-20 alphanumeric characters or underscores).');
-        return;
-      }
-
-      const available = await isGuestNameAvailable(finalName, guestId || '');
-      if (!available) {
-        setErrorMsg(`The guest name "${finalName}" is already taken by another active guest or user. Please choose a unique guest name.`);
-        return;
-      }
-
-      if (guestId) {
-        await reserveGuestName(finalName, guestId);
-      }
-      localStorage.setItem('aifinity_guest_name', finalName);
+      return;
     }
 
     if (!roomId.trim()) {
@@ -145,6 +99,7 @@ export default function MainMenu({
       return;
     }
 
+    const finalName = currentUser.username;
     localStorage.setItem('aimud_username', finalName);
     onJoinGame(roomId.trim().toUpperCase(), finalName);
   };
@@ -158,6 +113,69 @@ export default function MainMenu({
       window.location.reload();
     }
   };
+
+  // If user is a guest: Multiplayer strictly requires an account. Display Login / Sign Up Gate.
+  if (!isLoggedIn || !currentUser) {
+    return (
+      <div
+        id="multiplayer-menu-modal"
+        className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto font-sans"
+      >
+        <div className="bg-neutral-900 border border-neutral-700 p-6 md:p-8 rounded-xl shadow-2xl w-[440px] max-w-full my-auto font-sans text-neutral-200 relative animate-in fade-in zoom-in-95 duration-150 text-center">
+          <button
+            onClick={onCancel}
+            className="absolute top-4 right-4 text-neutral-500 hover:text-white text-xl p-1 leading-none rounded cursor-pointer"
+            title="Close"
+          >
+            &times;
+          </button>
+
+          <div className="w-12 h-12 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-400 flex items-center justify-center mx-auto mb-3.5 shadow-lg shadow-blue-500/20">
+            <Users size={24} />
+          </div>
+
+          <h2 className="text-lg sm:text-xl font-black text-white font-mono tracking-wide mb-2">
+            Multiplayer Requires An Account
+          </h2>
+
+          <p className="text-xs text-neutral-300 leading-relaxed mb-6">
+            Guests cannot host or join multiplayer games. Create a free account or log in with your credentials to explore adventures together with other players!
+          </p>
+
+          <div className="space-y-2.5">
+            <button
+              onClick={() => {
+                onCancel();
+                if (onOpenAuth) onOpenAuth('signup');
+              }}
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:from-blue-700 active:to-indigo-700 text-white font-bold text-sm rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition-all cursor-pointer"
+            >
+              <UserPlus size={16} />
+              <span>Create Free Account (30 Free Actions Daily)</span>
+            </button>
+
+            <button
+              onClick={() => {
+                onCancel();
+                if (onOpenAuth) onOpenAuth('login');
+              }}
+              className="w-full py-2.5 px-4 bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600 text-neutral-200 font-semibold text-xs rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer border border-neutral-700"
+            >
+              <LogIn size={15} />
+              <span>Already have an account? Log In</span>
+            </button>
+
+            <button
+              onClick={onCancel}
+              className="w-full py-1 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
