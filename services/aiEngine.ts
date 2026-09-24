@@ -877,14 +877,36 @@ export class AIEngine {
 
   private pendingTasks: Array<() => Promise<void>> = [];
   private isProcessingQueue = false;
+  private currentAbortController: AbortController | null = null;
+
+  public cancelAndReset(): void {
+    if (this.currentAbortController) {
+      try {
+        this.currentAbortController.abort();
+      } catch (err) {
+        console.warn("Could not abort current AI call:", err);
+      }
+      this.currentAbortController = null;
+    }
+    this.pendingTasks = [];
+    this.isProcessingQueue = false;
+  }
 
   private enqueueTask<T>(task: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve) => {
       this.pendingTasks.push(async () => {
+        let timer: any = null;
         try {
-          const res = await task();
+          const res = await Promise.race([
+            task(),
+            new Promise<T>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("AI Action processing timed out")), 32000);
+            })
+          ]);
+          if (timer) clearTimeout(timer);
           resolve(res);
         } catch (err) {
+          if (timer) clearTimeout(timer);
           console.error("Task execution error:", err);
           resolve(null as any);
         }
@@ -1008,11 +1030,20 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
 
           // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
           const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}${partyOverviewContext}\n${userHeader}Player action: ${action}`;
-          const auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.8-flash');
-          const audit = this.extractJSON(auditRaw);
+          let auditRaw = "";
+          let audit: any = null;
+          try {
+            auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.8-flash');
+            audit = this.extractJSON(auditRaw);
+          } catch (auditErr) {
+            console.warn("Audit stage skipped or timed out, proceeding to execution:", auditErr);
+          }
 
-          if (!audit) throw new Error("Audit failed");
-          audit.action = action;
+          if (!audit) {
+            audit = { action, checks: [], narrativeFeedback: "" };
+          } else {
+            audit.action = action;
+          }
 
           // STAGE 2: RESOLUTION (BACKEND CALCULATION)
           let resolvedCheckReport = "";
@@ -4656,6 +4687,16 @@ INSTRUCTIONS:
   }
 
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {
+    const controller = new AbortController();
+    this.currentAbortController = controller;
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort();
+      } catch (e) {
+        // ignore
+      }
+    }, 26000);
+
     try {
       let contents: any;
       if (mapScreenshot) {
@@ -4691,11 +4732,23 @@ INSTRUCTIONS:
           responseMimeType: 'application/json',
           temperature: 0.7,
           maxOutputTokens: 16384,
+          abortSignal: controller.signal
         }
       });
 
+      clearTimeout(timeoutId);
+      if (this.currentAbortController === controller) {
+        this.currentAbortController = null;
+      }
       return response.text || "{}";
-    } catch (e) {
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      if (this.currentAbortController === controller) {
+        this.currentAbortController = null;
+      }
+      if (e?.name === 'AbortError' || controller.signal.aborted) {
+        throw new Error('AI request timed out or was cancelled.');
+      }
       console.error("Gemini API Call Failed", e);
       throw e;
     }

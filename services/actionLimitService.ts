@@ -446,15 +446,21 @@ export class ActionLimitService {
       dailyActionsDate: today
     });
 
-    // If logged in, update Firestore profile and memory
+    // If logged in, update Firestore profile and memory asynchronously without blocking gameplay
     if (user?.uid) {
       user.dailyActionsUsed = newDailyUsed;
       user.dailyActionsDate = today;
       user.actionCredits = newCredits;
-      await updateUserProfile(user.uid, {
-        dailyActionsUsed: newDailyUsed,
-        dailyActionsDate: today,
-        actionCredits: newCredits
+      // Fire-and-forget sync to Firestore with timeout so account actions never get stuck
+      Promise.race([
+        updateUserProfile(user.uid, {
+          dailyActionsUsed: newDailyUsed,
+          dailyActionsDate: today,
+          actionCredits: newCredits
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Profile sync timeout')), 2500))
+      ]).catch(profileErr => {
+        console.warn("Could not sync action count to Firestore:", profileErr);
       });
     }
 

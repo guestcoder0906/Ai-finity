@@ -939,9 +939,60 @@ function App() {
     setCurrentPath('/');
   };
 
+  const watchdogTimerRef = useRef<any>(null);
+
   const updateProcessing = (delta: number) => {
     processingCountRef.current = Math.max(0, processingCountRef.current + delta);
-    setIsProcessing(processingCountRef.current > 0);
+    const active = processingCountRef.current > 0;
+    setIsProcessing(active);
+
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+
+    if (active) {
+      // Safety watchdog: Automatically release lock if stuck for 30s
+      watchdogTimerRef.current = setTimeout(() => {
+        if (processingCountRef.current > 0) {
+          console.warn("[Watchdog] Processing lock automatically released after 30s timeout.");
+          processingCountRef.current = 0;
+          setIsProcessing(false);
+          aiEngine.cancelAndReset();
+          setNarrative(prev => [
+            ...prev,
+            {
+              id: 'timeout-' + Date.now(),
+              text: 'The action took longer than expected and timed out. Action lock released.',
+              type: 'system'
+            }
+          ]);
+        }
+      }, 30000);
+    }
+  };
+
+  const handleForceUnlock = () => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+    processingCountRef.current = 0;
+    setIsProcessing(false);
+    aiEngine.cancelAndReset();
+    if (multiplayerService) {
+      try {
+        (multiplayerService as any).isProcessingSync = false;
+      } catch {}
+    }
+    setNarrative(prev => [
+      ...prev,
+      {
+        id: 'unlocked-' + Date.now(),
+        text: 'Action lock released. You can enter a new action.',
+        type: 'system'
+      }
+    ]);
   };
 
   const isHost = roomState?.hostUsername === username;
@@ -1072,7 +1123,17 @@ function App() {
               worldTime: parseActiveWorldTime(fileSystem.read('WorldTime.txt')),
               turnProcessed: true
             });
+          } else {
+            // Even if AI engine returned null/failed, sync turnProcessed so players are not stuck waiting
+            ms.syncState({
+              turnProcessed: true
+            });
           }
+        } catch (turnErr) {
+          console.error("Multiplayer turn processing failed:", turnErr);
+          ms.syncState({
+            turnProcessed: true
+          });
         } finally {
           updateProcessing(-1);
         }
@@ -1463,7 +1524,26 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
             setNarrative(prev => [...prev, { id: 'death', text: 'CRITICAL FAILURE: Vital signs zero. Simulation Terminated.', type: 'system' }]);
           }
           syncFiles();
+        } else {
+          setNarrative(prev => [
+            ...prev,
+            {
+              id: Date.now().toString() + 'err',
+              text: 'The action took too long or encountered an error. Please try again or rephrase your action.',
+              type: 'system'
+            }
+          ]);
         }
+      } catch (actionErr) {
+        console.error("Action error:", actionErr);
+        setNarrative(prev => [
+          ...prev,
+          {
+            id: Date.now().toString() + 'err',
+            text: 'An error occurred while processing your action. You can try again.',
+            type: 'system'
+          }
+        ]);
       } finally {
         updateProcessing(-1);
       }
@@ -2374,6 +2454,9 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
         <InputArea
           onSend={handleAction}
           disabled={isProcessing || gameOver || isMyTurnReady || showCharacterCreation || (gameMode === 'multiplayer' && roomState?.gameState !== 'playing' && !(roomState?.gameState === 'waiting_for_world' && isHost))}
+          isProcessing={isProcessing}
+          onCancelProcessing={handleForceUnlock}
+          isMyTurnReady={Boolean(isMyTurnReady)}
           recommendations={effectiveRecommendations}
         />
       </div>
