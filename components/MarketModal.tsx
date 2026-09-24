@@ -1365,7 +1365,7 @@ export const MarketModal: React.FC<MarketModalProps> = ({
               <div>
                 <h3 className="text-base font-semibold text-white">Action Packs</h3>
                 <p className="text-xs text-neutral-400">
-                  Instant extra turns that never expire. Automatically used whenever your 20 free daily actions run out.
+                  Instant extra turns that never expire. Automatically used whenever your 30 free daily actions run out.
                 </p>
               </div>
 

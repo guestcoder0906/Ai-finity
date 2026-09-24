@@ -62,7 +62,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
             <p className="text-xs text-neutral-400">
               {isGuest
                 ? "You've used all 3 free initial preview actions for this guest session."
-                : "You've used all 20 free daily actions today (10 base + 10 Beta bonus)."}
+                : "You've used all 30 free daily actions today (20 base + 10 Beta bonus)."}
             </p>
           </div>
         </div>
@@ -78,7 +78,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
               <ul className="text-xs space-y-2 text-neutral-300">
                 <li className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
-                  <span><strong>20 Free Actions Daily:</strong> 10 base + 10 Beta bonus refreshed every day</span>
+                  <span><strong>30 Free Actions Daily:</strong> 20 base + 10 Beta bonus refreshed & stacked every day</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <BookmarkCheck size={13} className="text-blue-400 shrink-0" />
@@ -100,7 +100,7 @@ export const ActionLimitModal: React.FC<ActionLimitModalProps> = ({
                 className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
               >
                 <UserPlus size={16} />
-                <span>Sign Up / Log In (Get 20 Free Actions)</span>
+                <span>Sign Up / Log In (Get 30 Free Actions)</span>
                 <ArrowRight size={15} />
               </button>
             )}

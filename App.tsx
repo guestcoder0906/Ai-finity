@@ -26,6 +26,7 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { ReceiptModal } from './components/ReceiptModal';
 import { ShareRoomModal } from './components/ShareRoomModal';
 import { PurchaseNotificationBanner } from './components/PurchaseNotificationBanner';
+import { DailyClaimNotificationBanner } from './components/DailyClaimNotificationBanner';
 import { LiveStatusUpdates } from './components/LiveStatusUpdates';
 import { auth, db } from './services/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -304,6 +305,7 @@ function App() {
 
   // Action Limits & Monetization state
   const [actionStatus, setActionStatus] = useState<ActionStatus>(() => ActionLimitService.getActionStatus(null, guestId));
+  const [dailyClaimNotification, setDailyClaimNotification] = useState<{ amount: number; stacked?: number; total: number } | null>(null);
   const [isMarketOpen, setIsMarketOpen] = useState(false);
   const [marketInitialTab, setMarketInitialTab] = useState<'packs' | 'subscriptions' | 'apikey'>('packs');
   const [isActionLimitModalOpen, setIsActionLimitModalOpen] = useState(false);
@@ -767,10 +769,52 @@ function App() {
     return () => clearTimeout(fallbackTimer);
   }, []);
 
+  // Check and claim daily actions whenever currentUser loads or day changes
+  const runDailyActionClaimCheck = useCallback(async (userToCheck = currentUser) => {
+    if (!userToCheck || !userToCheck.uid) return;
+    try {
+      const claimResult = await ActionLimitService.checkAndClaimDailyActions(userToCheck, guestId);
+      if (claimResult.claimed) {
+        setDailyClaimNotification({
+          amount: claimResult.amount,
+          stacked: claimResult.stackedFromPrevious,
+          total: claimResult.totalAvailable
+        });
+        const updatedStatus = ActionLimitService.getActionStatus(claimResult.updatedUser || userToCheck, guestId);
+        setActionStatus(updatedStatus);
+      }
+    } catch (e) {
+      console.warn('Error checking daily action claim:', e);
+    }
+  }, [currentUser, guestId]);
+
   // Synchronize actionStatus immediately whenever currentUser or guestId changes
   useEffect(() => {
     setActionStatus(ActionLimitService.getActionStatus(currentUser, guestId));
-  }, [currentUser, guestId]);
+    if (currentUser?.uid) {
+      runDailyActionClaimCheck(currentUser);
+    }
+  }, [currentUser, guestId, runDailyActionClaimCheck]);
+
+  // Check periodically and when tab regains visibility (e.g. overnight date rollover)
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    const interval = setInterval(() => {
+      runDailyActionClaimCheck();
+    }, 60000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runDailyActionClaimCheck();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser, runDailyActionClaimCheck]);
 
   // Singleplayer naming rule:
   // - If logged in: account's username
@@ -2121,6 +2165,15 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
     return (
       <>
         <WelcomePage onEnterGame={handleEnterGame} />
+        {/* Floating Daily Action Claim Banner */}
+        {dailyClaimNotification && (
+          <DailyClaimNotificationBanner
+            amount={dailyClaimNotification.amount}
+            stacked={dailyClaimNotification.stacked}
+            total={dailyClaimNotification.total}
+            onDismiss={() => setDailyClaimNotification(null)}
+          />
+        )}
         {/* Floating Verified Receipt Banner on Welcome Page */}
         <PurchaseNotificationBanner
           message={stripeReturnMessage}
@@ -2168,6 +2221,16 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
       className="flex flex-col md:flex-row w-full bg-black text-gray-200 overflow-hidden relative"
       style={{ height: 'var(--app-height, 100dvh)', maxHeight: 'var(--app-height, 100dvh)' }}
     >
+      {/* Daily Action Claim Notification Banner */}
+      {dailyClaimNotification && (
+        <DailyClaimNotificationBanner
+          amount={dailyClaimNotification.amount}
+          stacked={dailyClaimNotification.stacked}
+          total={dailyClaimNotification.total}
+          onDismiss={() => setDailyClaimNotification(null)}
+        />
+      )}
+
       {/* Stripe Return Notification Banner */}
       <PurchaseNotificationBanner
         message={stripeReturnMessage}
@@ -2340,7 +2403,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                   </span>
                 ) : (
                   <span className="text-[10px] bg-neutral-800 text-emerald-300 px-1.5 py-0.2 rounded font-sans">
-                    {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20} Free
+                    {actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 30} Free
                     {(actionStatus?.purchasedCredits ?? 0) > 0 && ` +${actionStatus.purchasedCredits}`}
                   </span>
                 )}
@@ -2542,7 +2605,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
                 ) : actionStatus?.isGuest ? (
                   <span>{actionStatus?.guestActionsRemaining ?? 0}/{actionStatus?.guestActionsTotal ?? 3}</span>
                 ) : (
-                  <span>{actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 20}</span>
+                  <span>{actionStatus?.dailyFreeRemaining ?? 0}/{actionStatus?.dailyFreeTotal ?? 30}</span>
                 )}
               </button>
 
@@ -2978,6 +3041,7 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
         onAuthSuccess={(user) => {
           setCurrentUser(user);
           setActionStatus(ActionLimitService.getActionStatus(user, guestId));
+          runDailyActionClaimCheck(user);
           setIsActionLimitModalOpen(false);
           setIsGuestWelcomeOpen(false);
           setIsAuthModalOpen(false);

@@ -38,6 +38,7 @@ export interface UserProfile {
   actionCredits?: number;
   dailyActionsUsed?: number;
   dailyActionsDate?: string;
+  lastDailyClaimDate?: string;
   subscriptionExpiresAt?: string | null;
   stripeSubscriptionId?: string | null;
   stripeCustomerId?: string | null;

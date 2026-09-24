@@ -107,9 +107,9 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
                   <Zap size={13} />
                 </div>
                 <div>
-                  <strong className="text-white">20 Free Actions Daily in Beta:</strong>{' '}
+                  <strong className="text-white">30 Free Actions Daily in Beta:</strong>{' '}
                   <span className="text-neutral-300">
-                    Registered accounts receive 20 free actions every day (10 base + 10 Beta bonus)! Guests receive 3 initial trial actions.
+                    Registered accounts receive 30 free actions every day (20 base + 10 Beta bonus) and can stack daily actions! Guests receive 3 initial trial actions.
                   </span>
                 </div>
               </div>
@@ -147,7 +147,7 @@ export const GuestWelcomeModal: React.FC<GuestWelcomeModalProps> = ({
               className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-500 hover:from-amber-400 hover:to-yellow-400 text-neutral-950 font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 transition-all cursor-pointer"
             >
               <UserPlus size={16} />
-              <span>Sign Up / Log In (Get 20 Free Daily Actions)</span>
+              <span>Sign Up / Log In (Get 30 Free Daily Actions)</span>
               <ArrowRight size={15} />
             </button>
 

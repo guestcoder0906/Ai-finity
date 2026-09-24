@@ -676,7 +676,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs">
                     <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg">
-                      <div className="text-neutral-400 text-[10px]">Daily Free (20/day)</div>
+                      <div className="text-neutral-400 text-[10px]">Daily Free ({actionStatus.dailyFreeTotal}/day)</div>
                       <div className="text-sm font-bold text-emerald-400 mt-0.5">
                         {actionStatus.dailyFreeRemaining} / {actionStatus.dailyFreeTotal}
                       </div>

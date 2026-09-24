@@ -67,7 +67,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     price: 0,
     billingPeriod: 'forever',
     features: [
-      '10 Free daily actions (+10 Beta bonus = 20 total daily actions!)',
+      '20 Free daily actions (+10 Beta bonus = 30 total daily actions!)',
       'Single active adventure save slot',
       'Browse Community Adventures',
       'Standard username styling'
@@ -81,7 +81,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     badge: 'Popular',
     highlight: true,
     features: [
-      '10 Free daily actions + 300 monthly bonus actions',
+      '20 Free daily actions + 10 Beta bonus + 300 monthly bonus actions',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting adventures in Community Adventures',
       'Choose between Full Story, Starting Prompt, or AI Initial World Generation sharing'
@@ -95,7 +95,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     badge: 'Great Value',
     highlight: true,
     features: [
-      '10 Free daily actions + 600 monthly bonus actions',
+      '20 Free daily actions + 10 Beta bonus + 600 monthly bonus actions',
       '✨ Golden Name in chat, sidebar, multiplayer & community posts',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting in Community Adventures',
@@ -110,7 +110,7 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     badge: '+1,000 Actions 🔥',
     highlight: true,
     features: [
-      '10 Free daily actions + 1,000 monthly bonus actions',
+      '10 Free daily actions + 10 Beta bonus + 1,000 monthly bonus actions',
       '🌌 Celestial Name (glowing cosmic neon styling like Admin)',
       'Permanent access to saving multiple adventures in Adventures page',
       'Permanent access to posting in Community Adventures',
@@ -147,7 +147,7 @@ export interface ActionStatus {
 export class ActionLimitService {
   /**
    * Current Game Phase:
-   * 'beta' (registered accounts receive 20 daily free actions [10 base + 10 beta bonus], guests receive 3 trial actions).
+   * 'beta' (registered accounts receive 30 daily free actions [20 base + 10 beta bonus], guests receive 3 trial actions).
    */
   public static readonly CURRENT_PHASE: GamePhase = 'beta';
 
@@ -164,10 +164,10 @@ export class ActionLimitService {
   // Guests receive a strictly permanent initial trial limit of 3 actions total (in Beta/Release)
   public static readonly GUEST_ACTION_LIMIT = 3;
 
-  // Registered players receive 10 base + 10 beta bonus = 20 free actions every day (in Beta/Release)
-  public static readonly BASE_DAILY_FREE = 10;
+  // Registered players receive 20 base + 10 beta bonus = 30 free actions every day (in Beta/Release)
+  public static readonly BASE_DAILY_FREE = 20;
   public static readonly BETA_DAILY_BONUS = 10;
-  public static readonly TOTAL_DAILY_FREE = ActionLimitService.BASE_DAILY_FREE + ActionLimitService.BETA_DAILY_BONUS; // 20
+  public static readonly TOTAL_DAILY_FREE = ActionLimitService.BASE_DAILY_FREE + ActionLimitService.BETA_DAILY_BONUS; // 30
 
   private static getTodayDateString(): string {
     const d = new Date();
@@ -217,8 +217,14 @@ export class ActionLimitService {
             };
           }
 
-          // Registered accounts: reset daily counter when date changes
+          // Registered accounts: stack unused actions when date changes!
           if (parsed.dailyActionsDate !== today) {
+            const isCel = parsed.tier === 'celestial';
+            const quota = isCel ? 20 : ActionLimitService.TOTAL_DAILY_FREE;
+            const unusedFromPrev = Math.max(0, quota - (parsed.dailyActionsUsed || 0));
+            if (unusedFromPrev > 0) {
+              parsed.actionCredits = (parsed.actionCredits || 0) + unusedFromPrev;
+            }
             parsed.dailyActionsDate = today;
             parsed.dailyActionsUsed = 0;
             safeStorage.setItem(key, JSON.stringify(parsed));
@@ -347,7 +353,12 @@ export class ActionLimitService {
     const isMod = user.role === 'mod';
     const hasInfinite = Boolean(user.hasInfiniteActions || isAdmin);
 
-    const dailyFreeTotal = isBeta ? this.TOTAL_DAILY_FREE : (isAlpha ? 999999 : this.BASE_DAILY_FREE);
+    const isCelestial = tier === 'celestial';
+    const tierBaseDaily = isCelestial ? 10 : this.BASE_DAILY_FREE; // 10 for celestial, 20 for others
+    const tierBetaBonus = this.BETA_DAILY_BONUS; // 10
+    const tierTotalDaily = tierBaseDaily + tierBetaBonus; // 20 for celestial, 30 for others
+
+    const dailyFreeTotal = isBeta ? tierTotalDaily : (isAlpha ? 999999 : tierBaseDaily);
     const dailyFreeRemaining = isAlpha ? 999999 : Math.max(0, dailyFreeTotal - dailyUsed);
     const isUnlimited = isAlpha || hasCustomKey || hasInfinite;
     const totalAvailable = isUnlimited ? 999999 : (dailyFreeRemaining + purchasedCredits);
@@ -464,13 +475,121 @@ export class ActionLimitService {
       });
     }
 
-    const remainingDaily = Math.max(0, this.TOTAL_DAILY_FREE - newDailyUsed);
+    const remainingDaily = Math.max(0, status.dailyFreeTotal - newDailyUsed);
     const remainingTotal = remainingDaily + newCredits;
 
     return {
       allowed: true,
       remaining: remainingTotal,
       usedCredit
+    };
+  }
+
+  /**
+   * Checks if user has logged in / opened the game on a new day.
+   * If on a new day:
+   * 1. Stacks any unused actions from the previous day into actionCredits.
+   * 2. Resets today's dailyActionsUsed to 0.
+   * 3. Sets dailyActionsDate and lastDailyClaimDate to today.
+   * 4. Updates profile in Firestore & local state.
+   * 5. Returns claim details so UI can trigger "Claimed free daily actions (+50 actions!)" notification.
+   */
+  public static async checkAndClaimDailyActions(
+    user: UserProfile | null,
+    guestId?: string
+  ): Promise<{
+    claimed: boolean;
+    amount: number;
+    stackedFromPrevious: number;
+    totalAvailable: number;
+    updatedUser?: UserProfile;
+  }> {
+    if (!user || !user.uid) {
+      return { claimed: false, amount: 0, stackedFromPrevious: 0, totalAvailable: 0 };
+    }
+
+    const today = this.getTodayDateString();
+    let local = this.getLocalState(user, guestId);
+
+    // Check if user has already claimed today
+    const userClaimDate = user.lastDailyClaimDate;
+    let localClaimDate: string | null = null;
+    try {
+      localClaimDate = safeStorage.getItem(`aifinity_daily_claim_${user.uid}`);
+    } catch (e) {}
+
+    const alreadyClaimed = userClaimDate === today || localClaimDate === today;
+    if (alreadyClaimed) {
+      const currentStatus = this.getActionStatus(user, guestId);
+      return {
+        claimed: false,
+        amount: 0,
+        stackedFromPrevious: 0,
+        totalAvailable: currentStatus.totalAvailableActions
+      };
+    }
+
+    // New day claim!
+    const tier = (user.tier === 'celestial' || local.tier === 'celestial') ? 'celestial' : (user.tier || local.tier || 'free');
+    const isCelestial = tier === 'celestial';
+    const isBeta = this.getPhase() === 'beta';
+    const baseDaily = isCelestial ? 10 : this.BASE_DAILY_FREE; // 10 for celestial, 20 for others
+    const betaBonus = this.BETA_DAILY_BONUS; // 10
+    const todayFreeGrant = isBeta ? (baseDaily + betaBonus) : baseDaily; // 30 (or 20 for celestial)
+
+    // Calculate unused daily actions from the previous day to stack
+    let stackedFromPrevious = 0;
+    const prevDate = user.dailyActionsDate || local.dailyActionsDate;
+    if (prevDate && prevDate !== today) {
+      const prevQuota = isCelestial ? 20 : ActionLimitService.TOTAL_DAILY_FREE;
+      const prevUsed = typeof user.dailyActionsUsed === 'number' ? user.dailyActionsUsed : (local.dailyActionsUsed || 0);
+      stackedFromPrevious = Math.max(0, prevQuota - prevUsed);
+    }
+
+    // Credits: keep existing credits + stacked unused actions
+    const existingCredits = Math.max(
+      typeof user.actionCredits === 'number' ? user.actionCredits : 0,
+      typeof local.actionCredits === 'number' ? local.actionCredits : 0
+    );
+    const newCredits = existingCredits + stackedFromPrevious;
+
+    // Update in-memory user
+    user.actionCredits = newCredits;
+    user.dailyActionsUsed = 0;
+    user.dailyActionsDate = today;
+    user.lastDailyClaimDate = today;
+
+    // Save local state
+    this.saveLocalState(user, guestId, {
+      tier,
+      actionCredits: newCredits,
+      dailyActionsUsed: 0,
+      dailyActionsDate: today
+    });
+    try {
+      safeStorage.setItem(`aifinity_daily_claim_${user.uid}`, today);
+    } catch (e) {}
+
+    // Persist to Firestore
+    try {
+      await updateUserProfile(user.uid, {
+        actionCredits: newCredits,
+        dailyActionsUsed: 0,
+        dailyActionsDate: today,
+        lastDailyClaimDate: today
+      });
+    } catch (err) {
+      console.warn("Could not sync daily action claim to Firestore:", err);
+    }
+
+    const currentStatus = this.getActionStatus(user, guestId);
+
+    return {
+      claimed: true,
+      amount: todayFreeGrant,
+      stackedFromPrevious,
+      totalAvailable: currentStatus.totalAvailableActions,
+      updatedUser: user
     };
   }
 
