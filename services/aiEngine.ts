@@ -900,7 +900,7 @@ export class AIEngine {
           const res = await Promise.race([
             task(),
             new Promise<T>((_, reject) => {
-              timer = setTimeout(() => reject(new Error("AI Action processing timed out")), 32000);
+              timer = setTimeout(() => reject(new Error("AI Action processing timed out")), 65000);
             })
           ]);
           if (timer) clearTimeout(timer);
@@ -1030,22 +1030,8 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             }).join('\n') + `\n* MANDATE: You MUST provide unique, tailored "playerRecommendations" for EACH active player above! Never give duplicate recommendations across different characters.\n`;
           }
 
-          // STAGE 1: TECHNICAL AUDIT (THE "THINKING" PHASE)
-          const auditPrompt = `${ACTION_AUDIT_PROMPT}\n\n[WORLD CONTEXT]\n${worldContext}\n\n[SPATIAL CONTEXT]\n${spatialContext}\n${playerCharacterContext}${partyOverviewContext}\n${userHeader}Player action: ${action}`;
-          let auditRaw = "";
-          let audit: any = null;
-          try {
-            auditRaw = await this.callAI(auditPrompt, mapScreenshot, 'gemini-3.8-flash');
-            audit = this.extractJSON(auditRaw);
-          } catch (auditErr) {
-            console.warn("Audit stage skipped or timed out, proceeding to execution:", auditErr);
-          }
-
-          if (!audit) {
-            audit = { action, checks: [], narrativeFeedback: "" };
-          } else {
-            audit.action = action;
-          }
+          // Fast Single-Pass Execution: Combine audit directives directly into single execution prompt
+          let audit: any = { action, checks: [], filesToCreate: [], filesToUpdate: [] };
 
           // STAGE 2: RESOLUTION (BACKEND CALCULATION)
           let resolvedCheckReport = "";
@@ -1972,8 +1958,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       return { narrative: "System Error: AI returned invalid JSON format." };
     }
 
-    // Phase 2: If checks are required
-    if (data.checks && Array.isArray(data.checks) && data.checks.length > 0) {
+    // Phase 2: Only execute secondary follow-up call if the primary response did not already generate a narrative
+    if (data.checks && Array.isArray(data.checks) && data.checks.length > 0 && (!data.narrative || data.narrative.length < 30 || data.narrative.toLowerCase().includes('roll required'))) {
       // 0. Also process any file updates from Phase 1 so they aren't lost
       this.processResponseData(data, username, auditContext);
 
@@ -4712,7 +4698,7 @@ INSTRUCTIONS:
       } catch (e) {
         // ignore
       }
-    }, 26000);
+    }, 60000);
 
     try {
       let contents: any;
