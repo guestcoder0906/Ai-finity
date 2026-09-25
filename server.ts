@@ -582,6 +582,32 @@ async function startServer() {
     }
   });
 
+// Safe ISO date string parser to prevent RangeError: Invalid time value on missing or malformed timestamps
+function safeIsoDate(val: any, fallbackDate: Date = new Date()): string {
+  try {
+    if (val === null || val === undefined) return fallbackDate.toISOString();
+    if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
+      const ms = val < 10000000000 ? val * 1000 : val;
+      const d = new Date(ms);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+    if (typeof val === 'string' && val.trim().length > 0) {
+      const parsedNum = Number(val);
+      if (!isNaN(parsedNum) && isFinite(parsedNum) && parsedNum > 0) {
+        const ms = parsedNum < 10000000000 ? parsedNum * 1000 : parsedNum;
+        const d = new Date(ms);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+    if (val instanceof Date && !isNaN(val.getTime())) {
+      return val.toISOString();
+    }
+  } catch (e) {}
+  return fallbackDate.toISOString();
+}
+
   // Sync and restore all completed Stripe purchases & active monthly subscriptions for a user
   app.get('/api/stripe/sync-user-purchases', async (req, res) => {
     try {
@@ -646,7 +672,7 @@ async function startServer() {
             customerName: s.customer_details?.name || attachedUsername || 'Customer',
             paymentMethod: s.mode === 'subscription' ? 'Stripe Monthly Subscription' : 'Stripe Checkout',
             status: 'completed',
-            createdAt: new Date(s.created * 1000).toISOString()
+            createdAt: safeIsoDate(s.created, new Date())
           });
         }
       }
@@ -674,7 +700,9 @@ async function startServer() {
              sub.items.data[0]?.price?.unit_amount === 999 ? 'legendary' :
              sub.items.data[0]?.price?.unit_amount === 1499 ? 'celestial' : 'adventurer');
 
-          const periodEnd = new Date(sub.current_period_end * 1000).toISOString();
+          const defaultSubExpiry = new Date();
+          defaultSubExpiry.setDate(defaultSubExpiry.getDate() + 30);
+          const periodEnd = safeIsoDate(sub.current_period_end, defaultSubExpiry);
 
           if (isLive || !activeSub) {
             activeSub = {
