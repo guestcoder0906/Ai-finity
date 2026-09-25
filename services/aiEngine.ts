@@ -654,7 +654,7 @@ ANTI-LAZINESS & ZERO TRUNCATION MANDATE (CRITICAL):
 - NEVER be lazy. You are strictly forbidden from cutting corners, producing rushed one-liner narratives, skipping file sections, or truncating file outputs.
 - ZERO PLACEHOLDERS: NEVER use ellipses (...), abbreviations, or summaries like "// rest of file unchanged", "[same as before]", "... [previous content continues] ...", or skipping any file sections. Every file returned in the 'files' object MUST be 100% complete, fully articulated from top to bottom with every single section, stat, container, item, modifier, and description written out in full.
 - NARRATIVE DEPTH & COMPLETION: The narrative must never be lazy or cut short. Write a rich, immersive, multi-sensory response (typically 2 to 4 substantial paragraphs) covering atmosphere, physical effort and physics, environmental impact, NPC dialogue and body language, and full story consequences.
-- RIGOROUS CURRENCY & WEALTH LOGIC: Never be lazy with character wealth or currency transactions. When creating any character or inhabitant, dynamically reason about who they are (their background, occupation, lineage, social standing, and current situation) and determine authentic, setting-appropriate starting money. Articulate their [CURRENCY & FINANCIAL BALANCE] section with proper denominations, carried inside a realistic container (pouch, wallet, pocket, etc.). Whenever money changes hands—looted, earned, paid, spent, given, or found—record currency transactions accurately in "currencyTransactions", in 'updates', and in the narrative. Never forget currency! Every character who can handle money MUST have their [CURRENCY & FINANCIAL BALANCE] section active!
+- DYNAMIC CURRENCY & WEALTH LOGIC (CRITICAL): Never be lazy with character wealth or currency transactions. Do not rely on rigid hardcoded keywords; the AI dynamically and accurately determines starting wealth, pricing, currency exchanges, loot, rewards, wages, shopping, trading, tips, and financial balances based on authentic world context. Articulate their [CURRENCY & FINANCIAL BALANCE] section with proper denominations, carried inside a realistic container (pouch, wallet, pocket, etc.). Whenever money changes hands—looted, earned, paid, spent, given, or found—record currency transactions accurately in "currencyTransactions", in 'updates', and in the narrative. Never forget currency! Every character who can handle money MUST have their [CURRENCY & FINANCIAL BALANCE] section active!
 
 COMPREHENSIVE STORY & STAT UPDATE RESOLUTION RULE (CRITICAL):
 - Make sure the AI does not forget anything needed to update whenever an action genuinely alters game state (such as combat damage, genuine physical exhaustion from heavy exertion or spellcasting, healing, or inventory changes)—instead of cutting the story short and not finishing that part of the story.
@@ -3632,36 +3632,27 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    // 2. Anti-Laziness Narrative Fallback: If the model generated a narrative that gives or takes currency but forgot structured updates
-    if (typeof data.narrative === 'string' && data.narrative.trim()) {
+    // 2. Dynamic Narrative Fallback: If no structured transactions were returned by the AI, dynamically check narrative context
+    if (transactions.length === 0 && typeof data.narrative === 'string' && data.narrative.trim()) {
       const narrative = data.narrative;
-      // Check for acquisition patterns
-      const gainRegex = /\b(?:finds?|found|receive[ds]?|earned?|rewarded(?:\s+with)?|looted?|collect(?:s|ed)?|pockets?|handed\s+(?:you|him|her|them)|given\s+(?:to\s+)?(?:you|him|her|them)|gains?|gained)\s+([^.!?\n]+)/gi;
-      let gMatch;
-      while ((gMatch = gainRegex.exec(narrative)) !== null) {
-        const phrase = gMatch[1];
-        const parsed = WeightInventoryEngine.parseCurrencyEntries(phrase);
-        for (const p of parsed) {
-          const exists = transactions.some(t =>
-            t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
-          );
-          if (!exists) {
-            transactions.push({
-              name: p.name,
-              amount: Math.abs(p.amount),
-              operation: 'add',
-              rawText: gMatch[0].trim()
-            });
-          }
-        }
-      }
+      const sentences = narrative.split(/[.!?\n]+/);
+      for (const sent of sentences) {
+        const trimmedSent = sent.trim();
+        if (!trimmedSent) continue;
+        const parsed = WeightInventoryEngine.parseCurrencyEntries(trimmedSent);
+        if (parsed.length === 0) continue;
 
-      // Check for spending/giving patterns
-      const lossRegex = /\b(?:pays?|paid|spen[td]|hand(?:ed)?\s+over|donat(?:es?|ed)|tips?|tipped|bought\s+[^.!?\n]+?\s+for)\s+([^.!?\n]+)/gi;
-      let lMatch;
-      while ((lMatch = lossRegex.exec(narrative)) !== null) {
-        const phrase = lMatch[1];
-        const parsed = WeightInventoryEngine.parseCurrencyEntries(phrase);
+        const sentLower = trimmedSent.toLowerCase();
+        // Dynamically determine whether the player is receiving/acquiring or paying/spending
+        const isPlayerRecipient =
+          /\b(?:to\s+(?:you|the\s+player)|gives?\s+(?:you|the\s+player)|paying\s+(?:you|the\s+player)|pays?\s+(?:you|the\s+player)|hands?\s+(?:you|the\s+player)|reward(?:s|ed)?\s+(?:you|the\s+player)|awards?\s+(?:you|the\s+player)|offers?\s+(?:you|the\s+player))\b/i.test(sentLower) ||
+          /\b(?:you|player|hero)\s+(?:receive|received|find|found|loot|looted|earn|earned|collect|collected|pocket|pocketed|gain|gained|sold\s+[^.!?\n]+?\s+for|obtain|obtained|acquire|acquired|take|took|gather|gathered|retrieve|retrieved|recover|recovered)\b/i.test(sentLower);
+
+        const isPlayerPayer =
+          /\b(?:you|player|hero)\s+(?:pay|paid|spend|spent|give|gave|hand\s+over|handed\s+over|donate|donated|tip|tipped|purchase|bought\s+[^.!?\n]+?\s+for|drop|dropped|lose|lost)\b/i.test(sentLower);
+
+        const operation = (isPlayerPayer && !isPlayerRecipient) ? 'deduct' : 'add';
+
         for (const p of parsed) {
           const exists = transactions.some(t =>
             t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
@@ -3670,8 +3661,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             transactions.push({
               name: p.name,
               amount: Math.abs(p.amount),
-              operation: 'deduct',
-              rawText: lMatch[0].trim()
+              operation,
+              container: p.container,
+              rawText: trimmedSent
             });
           }
         }
@@ -3705,6 +3697,36 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       const pStats = WeightInventoryEngine.parseCharacterStatsAndInventory(updatedContent);
       let changed = false;
 
+      // Check if the AI model ALREADY applied this transaction directly into data.files[targetFile]
+      const diskContent = this.fs.read(targetFile);
+      const diskStats = diskContent ? WeightInventoryEngine.parseCharacterStatsAndInventory(diskContent) : null;
+      let alreadyAppliedInIncomingFile = false;
+
+      if (diskStats) {
+        const diskEntry = diskStats.currency.carriedCurrencies.find(c =>
+          c.name.toLowerCase() === tx.name.toLowerCase() ||
+          c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
+          tx.name.toLowerCase().includes(c.name.toLowerCase())
+        );
+        const incomingEntry = pStats.currency.carriedCurrencies.find(c =>
+          c.name.toLowerCase() === tx.name.toLowerCase() ||
+          c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
+          tx.name.toLowerCase().includes(c.name.toLowerCase())
+        );
+        const diskAmt = diskEntry ? diskEntry.amount : 0;
+        const incomingAmt = incomingEntry ? incomingEntry.amount : 0;
+
+        if (isDeduction) {
+          if (diskAmt > 0 && incomingAmt <= diskAmt - tx.amount) {
+            alreadyAppliedInIncomingFile = true;
+          }
+        } else {
+          if (incomingAmt >= diskAmt + tx.amount && diskAmt !== incomingAmt) {
+            alreadyAppliedInIncomingFile = true;
+          }
+        }
+      }
+
       if (isDeduction) {
         // Find matching carried currency by container and/or denomination
         let matchIdx = -1;
@@ -3736,23 +3758,29 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
 
         if (matchIdx >= 0) {
-          const currentAmt = pStats.currency.carriedCurrencies[matchIdx].amount;
-          const newAmt = Math.max(0, currentAmt - tx.amount);
-          if (newAmt === 0) {
-            pStats.currency.carriedCurrencies.splice(matchIdx, 1);
-          } else {
-            pStats.currency.carriedCurrencies[matchIdx].amount = newAmt;
+          if (!alreadyAppliedInIncomingFile) {
+            const currentAmt = pStats.currency.carriedCurrencies[matchIdx].amount;
+            const newAmt = Math.max(0, currentAmt - tx.amount);
+            if (newAmt === 0) {
+              pStats.currency.carriedCurrencies.splice(matchIdx, 1);
+            } else {
+              pStats.currency.carriedCurrencies[matchIdx].amount = newAmt;
+            }
           }
           changed = true;
         }
       } else {
         // Addition
         let matchIdx = pStats.currency.carriedCurrencies.findIndex(c =>
-          c.name.toLowerCase() === tx.name.toLowerCase() &&
+          (c.name.toLowerCase() === tx.name.toLowerCase() ||
+           c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
+           tx.name.toLowerCase().includes(c.name.toLowerCase())) &&
           (!tx.container || (c.container && c.container.toLowerCase().includes(tx.container.toLowerCase())))
         );
         if (matchIdx >= 0) {
-          pStats.currency.carriedCurrencies[matchIdx].amount += tx.amount;
+          if (!alreadyAppliedInIncomingFile) {
+            pStats.currency.carriedCurrencies[matchIdx].amount += tx.amount;
+          }
         } else {
           // Prefer pouch, wallet, purse, pocket, money belt, or first container
           const targetCont = tx.container ||

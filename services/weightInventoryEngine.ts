@@ -483,22 +483,35 @@ export class WeightInventoryEngine {
       cleanedLine = insidePrefix[2].trim();
     }
 
+    // Strip section balance prefixes while dynamically preserving any currency on the line
+    // e.g. "Carried Balance (Coin Pouch): 20 GP, 15 SP" or "- Carried Balance: 100 Gold Coins" or "- Stored Balance: 150 Gold Coins [Location: ...]"
+    const headerPrefixMatch = cleanedLine.match(/^(?:carried|stored(?:\s*\/\s*remote)?)\s*balance(?:\s*\(([^)]+)\)|\s*\[([^\]]+)\])?\s*[:=-]\s*(.*)$/i);
+    if (headerPrefixMatch) {
+      if (headerPrefixMatch[1] || headerPrefixMatch[2]) {
+        const contFromHeader = (headerPrefixMatch[1] || headerPrefixMatch[2]).trim();
+        if (!/^(?:on\s*person|not\s*on\s*person|remote|cash|coins?|funds?|wealth)$/i.test(contFromHeader) && !defaultContainer) {
+          defaultContainer = contFromHeader;
+        }
+      }
+      cleanedLine = headerPrefixMatch[3].trim();
+    }
+
     const lower = cleanedLine.toLowerCase();
 
-    // Skip headers or instructions
+    // Skip purely structural headers, accounting summaries, or empty value indicators
     if (
+      !cleanedLine ||
+      lower === 'none' ||
+      lower === 'none (0)' ||
+      lower === '0' ||
       lower.startsWith('currency type:') ||
       lower.startsWith('- currency type:') ||
-      lower.startsWith('carried balance') ||
-      lower.startsWith('- carried balance') ||
-      lower.startsWith('stored / remote balance') ||
-      lower.startsWith('- stored / remote balance') ||
-      lower.startsWith('stored balance') ||
-      lower.startsWith('- stored balance') ||
+      lower.startsWith('currency:') ||
+      lower.startsWith('- currency:') ||
       lower.startsWith('total carried wealth:') ||
       lower.startsWith('total stored wealth:') ||
       lower.startsWith('total net worth:') ||
-      (lower.startsWith('(') && lower.endsWith(')') && !lower.includes('gold') && !lower.includes('coin') && !lower.includes('credit'))
+      (lower.startsWith('(') && lower.endsWith(')') && !lower.includes('gold') && !lower.includes('coin') && !lower.includes('credit') && !lower.includes('dollar') && !lower.includes('scrip') && !lower.includes('cash'))
     ) {
       return entries;
     }
@@ -640,8 +653,9 @@ export class WeightInventoryEngine {
     }
 
     // Extract and strip containers from contentToScan so wallet/pouch names aren't parsed as currency
-    contentToScan = contentToScan.replace(/(?:\b\d+(?:,\d+)*(?:\.\d+)?\s*(?:x\s*)?)?[a-zA-Z0-9_\s'-]*(?:chit\s*wallet|credit\s*wallet|wallet|coin\s*pouch|pouch|coin\s*purse|purse|money\s*belt|money\s*clip|cardholder|card\s*holder|chit\s*holder|billfold|coin\s*bag)\b/gi, (match) => {
-      const stripped = match.replace(/^\d+(?:,\d+)*(?:\.\d+)?\s*(?:x\s*)?/, '').trim();
+    // Use non-greedy precise matching so currency amounts and names preceding the container are NOT swallowed!
+    contentToScan = contentToScan.replace(/(?:\b(?:in|into|inside|from|within|to)\s+(?:the\s+|a\s+|an\s+|my\s+|his\s+|her\s+|their\s+)?)?(?:\b(?:leather|bifold|hardened|cloth|velvet|canvas|silk|wooden|iron|small|large|cyber[- ]?credit|credit|coin|money)\s+)*(?:chit\s*wallet|credit\s*wallet|wallet|coin\s*pouch|pouch|coin\s*purse|purse|money\s*belt|money\s*clip|cardholder|card\s*holder|chit\s*holder|billfold|coin\s*bag)\b/gi, (match) => {
+      const stripped = match.replace(/^(?:in|into|inside|from|within|to|\s+|the|a|an|my|his|her|their)+/i, '').trim();
       if (WeightInventoryEngine.isContainerName(stripped) && !container) {
         container = stripped;
       }
@@ -873,8 +887,46 @@ export class WeightInventoryEngine {
       }
     }
 
+    // Short coin notation pattern: e.g. "50gp", "15sp", "100cp", "5pp", "500cr" (with or without space)
+    const shortCoinRegex = /\b([-+]?\d+(?:,\d+)*(?:\.\d+)?)\s*(gp|sp|cp|pp|cr)\b/gi;
+    let scMatch;
+    while ((scMatch = shortCoinRegex.exec(contentToScan)) !== null) {
+      const sAmt = parseFloat(scMatch[1].replace(/,/g, ''));
+      const sAbbr = scMatch[2].toUpperCase();
+      if (!isNaN(sAmt) && sAmt > 0) {
+        const fullNameMap: Record<string, string> = {
+          GP: 'Gold Pieces',
+          SP: 'Silver Pieces',
+          CP: 'Copper Pieces',
+          PP: 'Platinum Pieces',
+          CR: 'Credits'
+        };
+        const sName = fullNameMap[sAbbr] || sAbbr;
+        if (!entries.some(e => e.amount === sAmt && (e.name.toLowerCase() === sName.toLowerCase() || e.name.toLowerCase() === sAbbr.toLowerCase() || e.name.toLowerCase().includes(sAbbr.toLowerCase())))) {
+          const defs = this.inferCurrencyDefaults(sName, entryDimsStr, entryWeight, sAmt);
+          entries.push({
+            name: sName,
+            amount: sAmt,
+            worth: WeightInventoryEngine.sanitizeCurrencyWorth(entryWorthStr || defs.defaultWorth, sName),
+            dimensions: defs.dimensions,
+            singleDimensions: defs.singleDimensions,
+            singleDimensionsRaw: defs.singleDimensionsRaw,
+            isDigital: defs.isDigital,
+            unitVolume: defs.unitVolume,
+            totalVolume: defs.totalVolume,
+            singleWeight: defs.singleWeight,
+            weight: entryWeight !== undefined ? entryWeight : defs.totalWeight,
+            container,
+            location,
+            isHiddenLocation,
+            rawText: scMatch[0].trim()
+          });
+        }
+      }
+    }
+
     // Comprehensive currency regex including Cash, Scrip, Cyber-Credits, Digital Credits / Electronic Scrip, etc.
-    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*(?:x\s*)?\[?([a-zA-Z\s\/-]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
+    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*(?:x\s*)?\[?([a-zA-Z\s\/-]+?(?:coins?|credits?|creds?|gold(?:\s+pieces?|\s+coins?)?|silver(?:\s+pieces?|\s+coins?)?|copper(?:\s+pieces?|\s+coins?)?|electrum(?:\s+pieces?|\s+coins?)?|platinum(?:\s+pieces?|\s+coins?)?|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
 
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
@@ -3982,7 +4034,7 @@ export class WeightInventoryEngine {
 
       // [CURRENCY & FINANCIAL BALANCE]
       if (currentSection.includes('CURRENCY') || currentSection.includes('FINANCE') || currentSection.includes('WEALTH') || currentSection.includes('BALANCE')) {
-        if (lower.startsWith('- currency type:') || lower.startsWith('currency type:')) {
+        if (/^[-*•\s]*currency(?:\s*type)?[:=]/i.test(line)) {
           currencyType = line.split(/[:=]/)[1]?.trim() || currencyType;
           continue;
         }
@@ -4015,16 +4067,19 @@ export class WeightInventoryEngine {
           if (activeCurrencySub === 'stored') {
             for (const ent of entries) {
               const matchIdx = storedCurrencies.findIndex(existing =>
-                existing.amount === ent.amount &&
                 (existing.name.toLowerCase() === ent.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ent.name))) &&
                 (!ent.location || !existing.location || existing.location.toLowerCase().includes(ent.location.toLowerCase()) || ent.location.toLowerCase().includes(existing.location.toLowerCase()) || (existing.isHiddenLocation && ent.isHiddenLocation))
               );
               if (matchIdx >= 0) {
+                storedCurrencies[matchIdx].amount = ent.amount;
                 if (!storedCurrencies[matchIdx].location && ent.location) {
                   storedCurrencies[matchIdx].location = ent.location;
                 }
                 if (!storedCurrencies[matchIdx].weight && ent.weight) {
                   storedCurrencies[matchIdx].weight = ent.weight;
+                }
+                if (!storedCurrencies[matchIdx].worth && ent.worth) {
+                  storedCurrencies[matchIdx].worth = ent.worth;
                 }
               } else {
                 storedCurrencies.push(ent);
@@ -4033,16 +4088,20 @@ export class WeightInventoryEngine {
           } else {
             for (const ent of entries) {
               const matchIdx = carriedCurrencies.findIndex(existing =>
-                existing.amount === ent.amount &&
                 (existing.name.toLowerCase() === ent.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ent.name))) &&
                 (!ent.container || !existing.container || existing.container.toLowerCase().includes(ent.container.toLowerCase()) || ent.container.toLowerCase().includes(existing.container.toLowerCase()))
               );
               if (matchIdx >= 0) {
+                // Master balance in [CURRENCY & FINANCIAL BALANCE] takes precedence
+                carriedCurrencies[matchIdx].amount = ent.amount;
                 if (!carriedCurrencies[matchIdx].container && ent.container) {
                   carriedCurrencies[matchIdx].container = ent.container;
                 }
                 if (!carriedCurrencies[matchIdx].weight && ent.weight) {
                   carriedCurrencies[matchIdx].weight = ent.weight;
+                }
+                if (!carriedCurrencies[matchIdx].worth && ent.worth) {
+                  carriedCurrencies[matchIdx].worth = ent.worth;
                 }
               } else {
                 carriedCurrencies.push(ent);
