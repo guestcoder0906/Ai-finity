@@ -1379,6 +1379,9 @@ CRITICAL ANTI-LAZINESS MANDATE:
 DYNAMIC SETTING-APPROPRIATE STARTING CURRENCY & WEALTH (CRITICAL):
 - Never be lazy about money or forget starting funds. Dynamically reason about this character's background, social status, profession, and world setting to determine authentic, realistic starting wealth.
 - In [CURRENCY & FINANCIAL BALANCE], detail their Currency Type, Carried Balance (On Person) itemized with denominations, and assign it to an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. If they have savings, family heirlooms, or deposits, detail them under Stored Balance.
+- CARRIED VS STORED / REMOTE MANDATE: If the character carries a wallet, chit wallet, coin pouch, or cardholder, all money, cash, coins, or digital credits meant to be on them MUST be listed under Carried Balance (On Person) referencing that container. NEVER mark Carried Balance as 0 and put funds in Stored / Remote Balance when they carry a wallet or pouch!
+- CONTAINER CONTENTS INTEGRITY: Never output container names or subheaders (e.g. "• (Inside Leather Bifold Wallet: ...)") as item entries inside a container!
+- RANGED WEAPONS HANDEDNESS: Ranged weapons are NOT always two-handed; when carried or not actively in use, they are held in 1 hand slot under [CURRENTLY HOLDING].
 - In the 'updates' array, include an update acknowledging their starting currency.
 
 STARTING INVENTORY LIMIT RULE (CRITICAL):

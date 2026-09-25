@@ -474,6 +474,15 @@ export class WeightInventoryEngine {
       .replace(/^[-*•>\s]+/, '')
       .trim();
 
+    // Strip leading container prefix if present (e.g. "• (Inside Leather Bifold Wallet: 1 Digital Credit ...)" or "• (Inside Leather Bifold Wallet): ...")
+    const insidePrefix = cleanedLine.match(/^(?:\(|\[)?\s*(?:inside|in(?:\s*container)?|stored\s+in)\s+([a-zA-Z0-9_\s'-]+?)(?:\)|\])?\s*[:=-]\s*(.+)$/i);
+    if (insidePrefix) {
+      if (!defaultContainer) {
+        defaultContainer = insidePrefix[1].trim();
+      }
+      cleanedLine = insidePrefix[2].trim();
+    }
+
     const lower = cleanedLine.toLowerCase();
 
     // Skip headers or instructions
@@ -682,15 +691,21 @@ export class WeightInventoryEngine {
       }
     }
 
-    // Format B: Bracketed name enclosing coin name & year: e.g. "1x [1921 Morgan Dollar Coin]" or "[1921 Morgan Dollar Coin] x1"
-    const bracketCoinMatch = cleanedLine.match(/(?:([0-9]+(?:\.[0-9]+)?)\s*x\s*)?\[([0-9]{4}\s+[^\]]+|[^\]]+)\](?:\s*x?\s*([0-9]+(?:\.[0-9]+)?))?/i);
+    // Format B: Bracketed name enclosing coin name & year: e.g. "1x [1921 Morgan Dollar Coin]", "[1921 Morgan Dollar Coin] x1", or "• 1x [Digital Credits / Electronic Scrip"
+    const bracketCoinMatch = cleanedLine.match(/(?:([0-9]+(?:\.[0-9]+)?)\s*x\s*)?\[([0-9]{4}\s+[^\]\r\n]+|[^\]\r\n]+)(?:\]|$)(?:\s*x?\s*([0-9]+(?:\.[0-9]+)?))?/i);
     if (bracketCoinMatch) {
-      const innerName = bracketCoinMatch[2].trim();
+      let innerName = bracketCoinMatch[2].trim();
+      if (innerName.includes('[Location:')) {
+        innerName = innerName.split(/\[Location:/i)[0].trim();
+      } else if (innerName.includes('Location:')) {
+        innerName = innerName.split(/Location:/i)[0].trim();
+      }
+      innerName = innerName.replace(/[\)\]]+$/, '').trim();
       if (WeightInventoryEngine.isContainerName(innerName)) {
         if (!container) container = innerName;
       } else if (
         !/chase|bank account|vault|stash|home|safe|hide\[/i.test(innerName) &&
-        /coin|dollar|morgan|cent|penny|dime|quarter|credit|gold|silver|copper|ingot|bar|cash|money|\b\d{4}\b/i.test(innerName)
+        /coin|dollar|morgan|cent|penny|dime|quarter|credit|scrip|gold|silver|copper|ingot|bar|cash|money|\b\d{4}\b/i.test(innerName)
       ) {
         let amt = 1;
         if (bracketCoinMatch[1]) {
@@ -858,14 +873,14 @@ export class WeightInventoryEngine {
       }
     }
 
-    // Comprehensive currency regex including Cash, Scrip, Cyber-Credits, etc.
-    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*([a-zA-Z\s-]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
+    // Comprehensive currency regex including Cash, Scrip, Cyber-Credits, Digital Credits / Electronic Scrip, etc.
+    const currencyRegex = /([-+]?\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?)\s*(?:x\s*)?\[?([a-zA-Z\s\/-]+?(?:coins?|credits?|creds?|gold|silver|copper|electrum|platinum|dollars?|bucks?|cash|scrip|cents?|caps?|crowns?|sovereigns?|ducats?|septims?|yen|euros?|rubles?|rupees?|zenny|gil|pieces?\s+of\s+eight|(?:gold|silver|copper|electrum|platinum)\s+pieces?|pieces?\s+of\s+(?:gold|silver|copper)|shillings?|pence|penny|\b(?:gp|sp|cp|pp|cr)\b)\b)/gi;
 
     let match;
     while ((match = currencyRegex.exec(contentToScan)) !== null) {
       const rawNum = match[1].replace(/[$,\s+-]/g, '');
       const rawAmt = parseFloat(rawNum);
-      const name = match[2].replace(/^[-*•>\s]+|[-*\s]+$/g, '').trim();
+      const name = match[2].replace(/^[-*•>\s]+|[-*\s\]]+$/g, '').trim();
       if (!isNaN(rawAmt) && rawAmt > 0 && name) {
         const lowerName = name.toLowerCase();
         if (
@@ -893,6 +908,9 @@ export class WeightInventoryEngine {
         let cleanName = name.replace(/^of\s+/i, '').trim();
         if (/^cash$/i.test(cleanName)) cleanName = 'Cash';
         if (/^scrip$/i.test(cleanName)) cleanName = 'Scrip';
+        if (/^digital credits?$/i.test(cleanName) && cleanedLine.toLowerCase().includes('electronic scrip')) {
+          cleanName = 'Digital Credits / Electronic Scrip';
+        }
 
         // Check if rawAmt is a 4-digit coin mintage year (1000-2999) e.g. "1921 Morgan Dollar"
         let actualAmt = rawAmt;
@@ -2426,6 +2444,29 @@ export class WeightInventoryEngine {
     const trimmed = line.trim().replace(/^[-*•>\s]+/, '').replace(/^\d+[\.)]\s*/, '');
     if (!trimmed || (trimmed.startsWith('[') && trimmed.endsWith(']') && !trimmed.includes(':') && !/\b(?:weight|lbs?|dimensions?)\b/i.test(trimmed))) return null;
 
+    // Reject or strip sub-container headers / container prefixes (e.g. "• (Inside Leather Bifold Wallet)", "(Inside Leather Bifold Wallet):", "Inside Backpack:")
+    const insidePrefixMatch = trimmed.match(/^(?:\(|\[)?\s*(?:inside|in(?:\s*container)?|stored\s+in)\s+([a-zA-Z0-9_\s'-]+?)(?:\)|\])?\s*[:=-]?\s*(.*)$/i);
+    if (insidePrefixMatch) {
+      const containerPrefix = insidePrefixMatch[1].trim();
+      const remainder = insidePrefixMatch[2].trim().replace(/^[:=-]+/, '').trim().replace(/^[\)\]]+/, '').trim();
+      // If there's no remainder or remainder is just empty brackets/punctuation, this is purely a container header, NOT an item!
+      if (!remainder || remainder === ')' || remainder === ']' || /^[:=\s\(\)\[\]]+$/.test(remainder)) {
+        return null;
+      }
+      // If remainder contains currency (e.g. "1 Digital Credit / Electronic Scrip: 0.05 lbs, 3x2 inches" or "10 Gold Coins"), it is currency, NOT an item!
+      if (WeightInventoryEngine.parseCurrencyEntries(remainder).length > 0) {
+        return null;
+      }
+      // If remainder only contains stats without an item name (e.g. "0.05 lbs (3x2 inches)" or "Weight: 0.05 lbs"), it has no valid item name, NOT an item!
+      const hasItemName = /^[a-zA-Z0-9_\s'-]+[:=]/i.test(remainder) || /^[a-zA-Z]{2,}\b/i.test(remainder.replace(/^[\(\[]/, ''));
+      const isOnlyStats = /^(?:weight\s*[:=]|dimensions?\s*[:=]|[0-9.]+\s*(?:lbs?|pounds?|kg|oz|x|[0-9.]+\s*x))\b/i.test(remainder);
+      if (isOnlyStats || !hasItemName) {
+        return null;
+      }
+      // Otherwise recursively parse the remainder with defaultContainer set to containerPrefix
+      return this.parseItemLine(remainder, containerPrefix || defaultContainer);
+    }
+
     // Check if it's a category header or section line
     const lower = trimmed.toLowerCase();
     if (
@@ -2657,7 +2698,18 @@ export class WeightInventoryEngine {
       cleanNameLower.startsWith('occupant weight') ||
       cleanNameLower.startsWith('rider') ||
       cleanNameLower.startsWith('driver') ||
-      cleanNameLower.startsWith('passenger')
+      cleanNameLower.startsWith('passenger') ||
+      cleanNameLower.startsWith('(inside') ||
+      cleanNameLower.startsWith('inside ') ||
+      cleanNameLower.startsWith('(in ') ||
+      cleanNameLower.startsWith('in container') ||
+      cleanNameLower.startsWith('stored in') ||
+      cleanNameLower.includes('inside leather bifold wallet') ||
+      cleanNameLower.includes('leather bifold wallet') ||
+      cleanNameLower === 'wallet' ||
+      cleanNameLower === 'coin pouch' ||
+      cleanNameLower === 'chit wallet' ||
+      WeightInventoryEngine.isContainerName(cleanNameLower.replace(/^[\(\[]?(?:inside|in(?:\s*container)?|stored\s+in)\s+/i, '').replace(/[\)\]]$/, '').trim())
     ) {
       return null;
     }
@@ -3428,10 +3480,10 @@ export class WeightInventoryEngine {
         // Check if line switches active container (e.g. "- Backpack:" or "- Inside Leather Satchel:" or "Small Leather Backpack:")
         // It must NOT be in container definition mode, must not have item stats, and must match a known container.
         if (activeSubsection !== 'containers' && containers.length > 0 && !hasItemStat) {
-          const strippedName = line.replace(/^[-*•>\s]+/, '').replace(/^(?:inside|in(?:\s*container)?|stored in)\s+/i, '').replace(/[:=\(\[\)].*$/, '').trim();
+          const strippedName = line.replace(/^[-*•>\s]+/, '').replace(/^[\(\[]?\s*(?:inside|in(?:\s*container)?|stored\s+in)\s+/i, '').replace(/[\)\]]\s*[:=-]?\s*$/, '').replace(/[:=].*$/, '').trim();
           if (strippedName) {
             const matching = this.findMatchingContainer(containers, strippedName);
-            if (matching && (line.endsWith(':') || line.includes(':') || lower.includes('contents') || lower.includes('inside'))) {
+            if (matching && (line.endsWith(':') || line.includes(':') || lower.includes('contents') || lower.includes('inside') || lower.startsWith('• (inside') || lower.startsWith('- (inside') || lower.startsWith('(inside'))) {
               activeSubsection = 'inside_containers';
               activeContainerName = matching.name;
               continue;
@@ -3608,7 +3660,25 @@ export class WeightInventoryEngine {
         }
 
         // Check if line is a currency entry in container: handled via carriedCurrencies
-        if (WeightInventoryEngine.parseCurrencyEntries(line).length > 0) {
+        const contCurrEntries = WeightInventoryEngine.parseCurrencyEntries(line, undefined, activeContainerName);
+        if (contCurrEntries.length > 0) {
+          for (const ce of contCurrEntries) {
+            const existingIdx = carriedCurrencies.findIndex(existing =>
+              (existing.name.toLowerCase() === ce.name.toLowerCase() || (existing.name === 'Dollars' && /dollar|usd|cash/i.test(ce.name))) &&
+              (!ce.container || !existing.container || existing.container.toLowerCase().includes(ce.container.toLowerCase()) || ce.container.toLowerCase().includes(existing.container.toLowerCase()))
+            );
+            if (existingIdx >= 0) {
+              if (ce.amount > carriedCurrencies[existingIdx].amount) {
+                carriedCurrencies[existingIdx].amount = ce.amount;
+              }
+              if (!carriedCurrencies[existingIdx].container && ce.container) {
+                carriedCurrencies[existingIdx].container = ce.container;
+              }
+            } else {
+              carriedCurrencies.push(ce);
+            }
+            explicitCarriedNone = false;
+          }
           continue;
         }
 
@@ -4056,6 +4126,52 @@ export class WeightInventoryEngine {
               tempVal: parseFloat(tempW[1]),
               baseVal: parseFloat(baseW[1])
             });
+          }
+        }
+      }
+    }
+
+    // Reconcile Carried vs Stored Currencies:
+    // If the character has an equipped wallet, chit wallet, coin pouch, cardholder, money belt, or purse:
+    const carriedWallets = containers.filter(c => WeightInventoryEngine.isContainerName(c.name) || /wallet|pouch|purse|cardholder|money\s*belt/i.test(c.name));
+    if (carriedWallets.length > 0) {
+      // 1. If any stored currency explicitly references a carried container or has container set, move to carriedCurrencies
+      for (let si = storedCurrencies.length - 1; si >= 0; si--) {
+        const sc = storedCurrencies[si];
+        const locLower = (sc.location || '').toLowerCase();
+        const contLower = (sc.container || '').toLowerCase();
+        const matchesWallet = carriedWallets.some(w => {
+          const wLower = w.name.toLowerCase();
+          return contLower.includes(wLower) || locLower.includes(wLower) || (locLower.includes('inside') && locLower.includes('wallet')) || locLower.includes('pouch');
+        });
+        if (matchesWallet || sc.container) {
+          const targetCont = sc.container || carriedWallets[0].name;
+          sc.container = targetCont;
+          sc.location = undefined;
+          sc.isHiddenLocation = false;
+          carriedCurrencies.push(sc);
+          storedCurrencies.splice(si, 1);
+          explicitCarriedNone = false;
+        }
+      }
+
+      // 2. If carriedCurrencies is empty (or 0) BUT storedCurrencies has funds with NO distinct external storage location (e.g. no bank account, vault, cottage, strongbox, hidden stash):
+      // The AI mistakenly put starting carried money / digital credits under Stored / Remote!
+      if (carriedCurrencies.length === 0 && storedCurrencies.length > 0) {
+        for (let si = storedCurrencies.length - 1; si >= 0; si--) {
+          const sc = storedCurrencies[si];
+          const loc = sc.location ? sc.location.trim() : '';
+          const locLower = loc.toLowerCase();
+          const nameLower = sc.name.toLowerCase();
+          const isRemoteBankOrVault = /(?:bank|vault|branch|relay|cottage|house|home|stash|chest|strongbox|box|safe|bunker|depository|hide\[)/i.test(locLower);
+          const isGenericOrSelf = !loc || locLower === 'none' || locLower === '0' || locLower === nameLower || locLower.includes(nameLower) || nameLower.includes(locLower);
+          if (!isRemoteBankOrVault || isGenericOrSelf) {
+            sc.container = carriedWallets[0].name;
+            sc.location = undefined;
+            sc.isHiddenLocation = false;
+            carriedCurrencies.push(sc);
+            storedCurrencies.splice(si, 1);
+            explicitCarriedNone = false;
           }
         }
       }
@@ -4865,6 +4981,18 @@ export class WeightInventoryEngine {
             continue;
           }
         }
+
+        // If the line is an invalid phantom container-name line (e.g. "* (Inside Leather Bifold Wallet: 0.05 lbs (3x2 inches))" or "* (Inside Leather Bifold Wallet)")
+        // that produces neither a valid item nor currency, remove it so it doesn't linger as clutter in the file!
+        const isPhantomContainerLine = /^[-\s*•]*\(?(?:inside|in(?:\s*container)?|stored\s+in)\s+[a-zA-Z0-9_\s'-]+(?:\)|\])?/i.test(trimmed) &&
+          !WeightInventoryEngine.parseItemLine(invLine) &&
+          WeightInventoryEngine.parseCurrencyEntries(invLine).length === 0;
+        if (isPhantomContainerLine) {
+          invModified = true;
+          changes.push(`Removed phantom container line "${trimmed}" from container inventory`);
+          continue;
+        }
+
         newInvLines.push(invLine);
       }
 
