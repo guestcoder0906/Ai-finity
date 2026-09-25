@@ -49,7 +49,10 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [roomToDelete, setRoomToDelete] = useState<ActiveRoomData | null>(null);
+  const [roomToLeave, setRoomToLeave] = useState<ActiveRoomData | null>(null);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [leavingRoomId, setLeavingRoomId] = useState<string | null>(null);
 
   const isFreeTier = !currentUser || currentUser.tier === 'free' || !currentUser.tier;
@@ -79,19 +82,15 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
 
   if (!isOpen) return null;
 
-  const handleLeaveRoom = async (room: ActiveRoomData) => {
-    if (!currentUser?.username) return;
-    const confirmLeave = window.confirm(
-      `Leave multiplayer adventure ${room.id}? You can rejoin later using the room code if it is still active.`
-    );
-    if (!confirmLeave) return;
-
+  const handleConfirmLeave = async () => {
+    if (!roomToLeave || !currentUser?.username) return;
     try {
-      setLeavingRoomId(room.id);
-      await MultiplayerService.leaveRoomPermanently(room.id, currentUser.username);
+      setLeavingRoomId(roomToLeave.id);
+      await MultiplayerService.leaveRoomPermanently(roomToLeave.id, currentUser.username);
+      setRoomToLeave(null);
       await loadRooms();
     } catch (err: any) {
-      alert(err?.message || "Failed to leave multiplayer room.");
+      setError(err?.message || "Failed to leave multiplayer room.");
     } finally {
       setLeavingRoomId(null);
     }
@@ -108,9 +107,40 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
       setRoomToDelete(null);
       await loadRooms();
     } catch (err: any) {
-      alert(err?.message || "Failed to delete multiplayer adventure.");
+      setError(err?.message || "Failed to delete multiplayer adventure.");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteAllRooms = async () => {
+    if (!currentUser?.username || activeRooms.length === 0) return;
+    try {
+      setIsDeletingAll(true);
+      setError(null);
+
+      for (const room of activeRooms) {
+        const canDelete = room.isHost || isStaff;
+        try {
+          if (canDelete) {
+            await MultiplayerService.deleteRoomPermanently(room.id, {
+              username: currentUser.username,
+              role: currentUser.role
+            });
+          } else {
+            await MultiplayerService.leaveRoomPermanently(room.id, currentUser.username);
+          }
+        } catch (roomErr) {
+          console.warn(`Error processing room ${room.id}:`, roomErr);
+        }
+      }
+
+      setShowDeleteAllConfirm(false);
+      await loadRooms();
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete all multiplayer games.");
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -171,18 +201,32 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
             )}
           </div>
 
-          {!hasUnlimitedSlots && onOpenMarket && (
-            <button
-              onClick={() => {
-                onClose();
-                onOpenMarket('subscriptions');
-              }}
-              className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <Sparkles size={12} />
-              <span>Upgrade for Unlimited Slots</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {activeRooms.length > 0 && (
+              <button
+                onClick={() => setShowDeleteAllConfirm(true)}
+                disabled={loading || isDeletingAll}
+                className="px-2.5 py-1 bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                title="Delete or clear all active multiplayer games"
+              >
+                <Trash2 size={12} className="text-red-400" />
+                <span>Delete All</span>
+              </button>
+            )}
+
+            {!hasUnlimitedSlots && onOpenMarket && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenMarket('subscriptions');
+                }}
+                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Sparkles size={12} />
+                <span>Upgrade for Unlimited Slots</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Slot Limit Warning Banner if opened due to cap */}
@@ -289,7 +333,7 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
 
                       {!room.isHost && (
                         <button
-                          onClick={() => handleLeaveRoom(room)}
+                          onClick={() => setRoomToLeave(room)}
                           disabled={leavingRoomId === room.id}
                           className="px-2.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-red-300 border border-neutral-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
                           title="Leave this adventure and free up your slot"
@@ -339,8 +383,21 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-neutral-950 border-t border-neutral-800 flex items-center justify-between text-xs text-neutral-400 shrink-0">
-          <span>Adventures persist until deleted by host, moderator, or administrator.</span>
+        <div className="px-5 py-3 bg-neutral-950 border-t border-neutral-800 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400 shrink-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span>Adventures persist until deleted by host, moderator, or administrator.</span>
+            {activeRooms.length > 0 && (
+              <button
+                onClick={() => setShowDeleteAllConfirm(true)}
+                disabled={loading || isDeletingAll}
+                className="text-red-400 hover:text-red-300 font-semibold cursor-pointer disabled:opacity-50 flex items-center gap-1 transition-colors"
+                title="Delete or leave all active multiplayer games"
+              >
+                <Trash2 size={12} />
+                <span>Delete All ({activeRooms.length})</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg transition-colors cursor-pointer font-semibold"
@@ -351,12 +408,57 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
 
       </div>
 
+      {/* Confirmation Dialog for Leaving Adventure */}
+      {roomToLeave && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4 font-sans animate-in fade-in duration-150"
+        >
+          <div className="bg-neutral-900 border border-neutral-700 rounded-xl p-5 sm:p-6 max-w-md w-full text-neutral-200 shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <LogOut size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Leave Multiplayer Adventure?</h3>
+                <p className="text-xs text-neutral-400">Room Code: <strong className="text-amber-300 font-mono">{roomToLeave.id}</strong></p>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Are you sure you want to leave this adventure? Your slot will be freed up. You can rejoin later using the room code if the game is still active.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setRoomToLeave(null)}
+                disabled={Boolean(leavingRoomId)}
+                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLeave}
+                disabled={Boolean(leavingRoomId)}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg text-xs transition-all shadow-lg shadow-amber-900/30 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <LogOut size={13} />
+                <span>{leavingRoomId ? "Leaving..." : "Leave Adventure"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation Dialog for Permanent Deletion */}
       {roomToDelete && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4"
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4 font-sans animate-in fade-in duration-150"
         >
           <div className="bg-neutral-900 border border-red-500/50 rounded-xl p-5 sm:p-6 max-w-md w-full text-neutral-200 shadow-2xl space-y-4 animate-in zoom-in-95">
             <div className="flex items-center gap-3 text-red-400">
@@ -390,6 +492,55 @@ export const ActiveMultiplayerGamesModal: React.FC<ActiveMultiplayerGamesModalPr
               >
                 <Trash2 size={13} />
                 <span>{isDeleting ? "Deleting..." : "Permanently Delete"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Delete All Multiplayer Games */}
+      {showDeleteAllConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4 font-sans animate-in fade-in duration-150"
+        >
+          <div className="bg-neutral-900 border border-red-500/60 rounded-xl p-5 sm:p-6 max-w-md w-full text-neutral-200 shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="w-11 h-11 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete All Multiplayer Games?</h3>
+                <p className="text-xs text-neutral-400">
+                  Total Active Games: <strong className="text-red-300 font-mono">{activeRooms.length}</strong>
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Are you sure you want to delete all <strong className="text-white font-semibold">{activeRooms.length} active multiplayer adventures</strong>? 
+              Games hosted by you will be permanently deleted for all players, and games you joined will be cleared from your active list.
+              <span className="block mt-1.5 text-red-400 font-bold">This action cannot be undone.</span>
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllConfirm(false)}
+                disabled={isDeletingAll}
+                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAllRooms}
+                disabled={isDeletingAll}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg shadow-red-900/30 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 size={13} className={isDeletingAll ? 'animate-spin' : ''} />
+                <span>{isDeletingAll ? "Deleting All Games..." : "Delete All Games"}</span>
               </button>
             </div>
           </div>
