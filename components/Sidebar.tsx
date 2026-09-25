@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UpdateItem } from '../types';
 import { FileSystem } from '../services/fileSystem';
-import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Share2, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins, MessageSquare, Trash2 } from 'lucide-react';
+import { FileText, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, PanelLeftOpen, PanelLeftClose, Activity, Settings, RefreshCw, RotateCcw, Users, LogOut, Play, Share2, Map as MapIcon, User, Compass, ShoppingCart, Bookmark, Globe, Zap, Scale, Package, AlertTriangle, ShieldCheck, Gauge, X, Shield, AlertOctagon, Hand, Coins, MessageSquare, Trash2, Sparkles } from 'lucide-react';
 import MapPanel, { MapPanelHandle } from './MapPanel';
 import GoldenName from './GoldenName';
 import { ActionStatus } from '../services/actionLimitService';
@@ -962,6 +962,62 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   )}
                                   </div>
                               </div>
+
+                              {/* Active Transformation Appearance */}
+                              {(pStats.temporaryAppearance || (content.match(/[-*•]?\s*Temporary\s+Appearance\s*[:=]\s*([^\r\n]+)/i)?.[1])) && (
+                                <div className="p-2 rounded bg-purple-950/40 border border-purple-800/60 text-[10px] space-y-1">
+                                  <div className="flex items-center gap-1.5 text-purple-300 font-semibold">
+                                    <Sparkles size={12} className="text-purple-400" />
+                                    <span>Active Transformation / Form:</span>
+                                  </div>
+                                  <div className="text-purple-200/95 italic pl-2 text-[9.5px] leading-relaxed">
+                                    "{pStats.temporaryAppearance || content.match(/[-*•]?\s*Temporary\s+Appearance\s*[:=]\s*([^\r\n]+)/i)?.[1]}"
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Active Status Effects & Chained Effects */}
+                              {pStats.activeStatusEffects && pStats.activeStatusEffects.length > 0 && (
+                                <div className="p-2 rounded bg-neutral-950 border border-neutral-800 space-y-1.5">
+                                  <div className="flex items-center justify-between text-[10px] font-semibold">
+                                    <div className="flex items-center gap-1.5 text-amber-300">
+                                      <Zap size={12} className="text-amber-400" />
+                                      <span>Active Status Effects ({pStats.activeStatusEffects.length}):</span>
+                                    </div>
+                                    <span className="text-[8.5px] text-neutral-500 font-mono">Dynamic Timers</span>
+                                  </div>
+                                  <div className="space-y-1">
+                                    {pStats.activeStatusEffects.map((eff, ei) => (
+                                      <div key={ei} className="p-1.5 rounded bg-neutral-900/90 border border-neutral-800/80 text-[9.5px] space-y-0.5">
+                                        <div className="flex items-center justify-between font-medium">
+                                          <span className="text-amber-300 font-semibold">• {eff.name}</span>
+                                          {eff.expires && (
+                                            <span className="text-[8.5px] text-cyan-400 font-mono bg-cyan-950/60 px-1 py-0.2 rounded border border-cyan-800/40">
+                                              Expires: {eff.expires}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {eff.description && (
+                                          <div className="text-gray-300 text-[9px] pl-2 leading-relaxed">
+                                            {eff.description}
+                                          </div>
+                                        )}
+                                        {eff.appearance && (
+                                          <div className="text-purple-300 text-[8.5px] pl-2 italic">
+                                            Form: {eff.appearance}
+                                          </div>
+                                        )}
+                                        {eff.chainedEffect && (
+                                          <div className="text-emerald-400 text-[8.5px] pl-2 font-mono flex items-center gap-1">
+                                            <span>↪ Transitions into:</span>
+                                            <span className="font-semibold">{eff.chainedEffect}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Currently Holding Section */}
                               {pStats.holdingCapacity && pStats.holdingCapacity.applies && (

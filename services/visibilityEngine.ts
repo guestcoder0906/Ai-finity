@@ -26,6 +26,58 @@ export function normalizeUser(username?: string): string {
 }
 
 /**
+ * Evaluates whether a location/entity/item represents something the character/player should naturally know
+ * based on context (such as their home, house, residence, personal dwelling, bedroom, apartment, cottage,
+ * cabin, quarters, homestead, estate, workshop, personal storage, or personal belongings kept there),
+ * unless context explicitly dictates otherwise (e.g. amnesia, memory loss, forgotten memories,
+ * stolen memories, brainwashing, or unknown secret).
+ */
+export function isCharacterKnownContext(text?: string, currentUsername?: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+
+  // If context explicitly dictates memory loss, oblivion, amnesia, or unknown to character:
+  if (
+    lower.includes('amnesia') ||
+    lower.includes('forgotten') ||
+    lower.includes('memory loss') ||
+    lower.includes('memory wipe') ||
+    lower.includes('stolen memory') ||
+    lower.includes('stolen memories') ||
+    lower.includes('brainwash') ||
+    lower.includes('unknown to player') ||
+    lower.includes('unknown to character') ||
+    lower.includes('no memory of') ||
+    lower.includes('unfamiliar to')
+  ) {
+    return false;
+  }
+
+  // Check if it represents the player's home, familiar personal dwelling, or personal storage/base
+  const isHomeOrDwelling =
+    /\b(?:home|house|residence|cottage|apartment|cabin|quarters|dwelling|homestead|estate|manor|bedroom|workshop|smithy|shack|farm|base|safehouse|bunk|inn\s*room|personal\s*chest|personal\s*storage|closet|wardrobe|locker|childhood\s*home|hometown|birthplace)\b/i.test(lower);
+
+  if (isHomeOrDwelling) {
+    return true;
+  }
+
+  // Check if text refers to "my home", "player's home", "character's home", etc.
+  if (/\b(?:my\s+home|player(?:'s)?\s+home|character(?:'s)?\s+home|personal\s+home)\b/i.test(lower)) {
+    return true;
+  }
+
+  // Check if text directly references the current user or character handle
+  if (currentUsername) {
+    const userClean = normalizeUser(currentUsername);
+    if (userClean && userClean.length >= 3 && lower.includes(userClean)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Checks if a player matches any target in a comma-separated list
  */
 export function userMatchesList(targetListStr: string, currentUsername?: string): boolean {
@@ -151,17 +203,22 @@ export function parseSecretLocation(
   const hideAllMatch = trimmed.match(/(?:secret[:=\s]*)?hide(?::all)?\[([^\]]*)\]/i);
   if (hideAllMatch) {
     const secretContent = hideAllMatch[1].trim();
-    const isVisible = debugMode;
+    // Context check: Things the character/player should naturally know based on context
+    // (such as their home, residence, quarters, cottage, personal dwelling) are NOT hidden unless context dictates otherwise
+    const isKnown = isCharacterKnownContext(secretContent, currentUsername);
+    const isVisible = debugMode || isKnown;
     const display = isVisible
-      ? `Secret (AI/NPC Only): ${secretContent}`
+      ? (debugMode && !isKnown
+          ? `Secret (AI/NPC Only): ${secretContent}`
+          : (isKnown ? secretContent : `Secret: ${secretContent}`))
       : `Secret: [Hidden location (Unknown to players)]`;
 
     return {
-      isSecret: true,
+      isSecret: !isKnown,
       isVisibleToPlayer: isVisible,
       cleanLocation: isVisible ? secretContent : '[Hidden location]',
       displayFormatted: display,
-      visibilityType: 'all_players_hidden'
+      visibilityType: isKnown ? 'public' : 'all_players_hidden'
     };
   }
 
@@ -169,17 +226,20 @@ export function parseSecretLocation(
   const hideUnclosedMatch = trimmed.match(/(?:secret[:=\s]*)?hide(?::all)?\s*\[\s*([^\]]+)/i);
   if (hideUnclosedMatch) {
     const secretContent = hideUnclosedMatch[1].replace(/\]+$/, '').trim();
-    const isVisible = debugMode;
+    const isKnown = isCharacterKnownContext(secretContent, currentUsername);
+    const isVisible = debugMode || isKnown;
     const display = isVisible
-      ? `Secret (AI/NPC Only): ${secretContent}`
+      ? (debugMode && !isKnown
+          ? `Secret (AI/NPC Only): ${secretContent}`
+          : (isKnown ? secretContent : `Secret: ${secretContent}`))
       : `Secret: [Hidden location (Unknown to players)]`;
 
     return {
-      isSecret: true,
+      isSecret: !isKnown,
       isVisibleToPlayer: isVisible,
       cleanLocation: isVisible ? secretContent : '[Hidden location]',
       displayFormatted: display,
-      visibilityType: 'all_players_hidden'
+      visibilityType: isKnown ? 'public' : 'all_players_hidden'
     };
   }
 
@@ -248,11 +308,15 @@ export function formatVisibilityMarkup(
   });
 
   // 4. hide[...] or hide:all[...]
-  if (debugMode) {
-    formatted = formatted.replace(/hide(?::all)?\[([^\]]*)\]/gi, '<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded" title="AI/NPC Secret (Hidden from all players)">$1</span>');
-  } else {
-    formatted = formatted.replace(/hide(?::all)?\[[^\]]*\]/gi, '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>');
-  }
+  formatted = formatted.replace(/hide(?::all)?\[([^\]]*)\]/gi, (match, innerText) => {
+    if (isCharacterKnownContext(innerText, currentUsername)) {
+      return innerText;
+    }
+    if (debugMode) {
+      return `<span class="text-yellow-300 bg-yellow-900/20 px-1 border border-dashed border-yellow-800 rounded" title="AI/NPC Secret (Hidden from all players)">${innerText}</span>`;
+    }
+    return '<span class="text-gray-600 italic font-mono">&#91;hidden&#93;</span>';
+  });
 
   return formatted;
 }
@@ -269,7 +333,14 @@ export function isFileVisible(
   if (debugMode || isHost) return true;
 
   // Check if filename has hide[] or hide:all[]
-  if (/hide(?::all)?\[/i.test(filename)) return false;
+  if (/hide(?::all)?\[/i.test(filename)) {
+    // If the file represents the character/player's known home, dwelling, or possessions, don't hide it
+    const innerMatch = filename.match(/hide(?::all)?\[([^\]]+)\]/i);
+    if ((innerMatch && isCharacterKnownContext(innerMatch[1], currentUsername)) || isCharacterKnownContext(filename, currentUsername)) {
+      return true;
+    }
+    return false;
+  }
 
   // Check if filename has hide:besides(...) or hide:except(...)
   const hideBesidesMatch = filename.match(/hide:(?:besides|except)\((.*?)\)/i);
@@ -344,6 +415,14 @@ export function resolveMapEntityName(
   // 4. hide[...] or hide:all[...]
   if (processed.match(/hide(?::all)?\[/i)) {
     isSecret = true;
+    const hideInner = processed.match(/hide(?::all)?\[([^\]]*)\]/i);
+    const innerText = hideInner ? hideInner[1].trim() : '';
+    // Context check: Things the character/player should naturally know based on context
+    // (such as their home, residence, cottage, quarters) are NOT hidden unless context dictates otherwise
+    if (isCharacterKnownContext(innerText, currentUsername)) {
+      return { displayName: innerText, isHidden: false, isSecret: false };
+    }
+
     if (debugMode) {
       processed = processed.replace(/hide(?::all)?\[([^\]]*)\]/gi, '$1 (Hidden)');
     } else {

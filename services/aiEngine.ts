@@ -171,8 +171,12 @@ CRITICAL JSON SYNTAX & BRACKET INTEGRITY (READ CAREFULLY):
 4. Calculate time costs and update global time
 5. Manage status effects with expiration timestamps
 6. Track unique object instances
-13. Use hide[text/json/secret] syntax for information not yet revealed to player
-14. Use target(Player1, Player2)[Secret message] syntax for private narrative or NPC dialogue meant only for specific players. Both hide[] and target() can be used on EXACT file names (e.g. "target(Bob)[Secret Note].txt") OR inside the file content OR in the narrative response.
+13. KNOWLEDGE & VISIBILITY MANDATE (CRITICAL - DO NOT HIDE KNOWN FACTS):
+   - The player character naturally knows their own home, house, residence, personal dwelling, bedroom, quarters, childhood town, and stored personal belongings based on their background, backstory, and context.
+   - NEVER hide things the character/player should naturally know using "hide[...]" or "hide:all[...]" syntax unless narrative context explicitly dictates otherwise (e.g. supernatural amnesia, memory loss curse, brainwashing, or an undiscovered secret room/safe).
+   - In multiplayer, if an item, location, or secret is known to one character but hidden from another, ALWAYS use target(PlayerA)[secret] or hide:besides(PlayerA)[secret], NEVER hide[secret] (which conceals it from everyone including the character who owns and lives in it).
+14. Use hide[text/json/secret] syntax ONLY for genuine secrets, traps, or world information not yet revealed to the character.
+15. Use target(Player1, Player2)[Secret message] syntax for private narrative or NPC dialogue meant only for specific players. Both hide[] and target() can be used on EXACT file names (e.g. "target(Bob)[Secret Note].txt") OR inside the file content OR in the narrative response.
 15. Update files dynamically and accurately
 16. NEVER forget to create/update character files for NPCs, groups of NPCs, weapons, attacks, items, locations, or any entities. If a group appears, you MUST create a shared group file. Items and Attacks MUST NOT be vague; they MUST contain technical rules from the relevant schemas.
 17. KNOWN INVENTORY & EQUIPMENT (CRITICAL): If an item is a general/standard world item (e.g. "Dagger"), create a SEPARATE global technical file for it. If an item is UNIQUE or CUSTOM to a specific entity (e.g. "MakeshiftGauntlet"), define its full TECHNICAL RULES (damage, stamina cost, modifiers) directly within that entity's character file under [INVENTORY & EQUIPMENT]. Vague items are a failure.
@@ -330,8 +334,13 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
 - CRITICAL: Character-specific abilities belong ONLY in this character's file. Do NOT put them in WorldRules.txt or other files.
 
 [STATUS EFFECTS & LORE]
-- Effects: (List with expiration timestamps: [Status:Type_ID(Expires: TIMESTAMP; Effects: ...; Revert: ...)])
-  * Example of temporary weight/stat alteration: [Status:Lightweight_Boulder(Expires: 3:15:00 PM - Oct 12, 2026; TempWeight: 1 lb; BaseWeight: 500 lbs)] - Automatically reverts to BaseWeight upon expiration unless modified by another effect.
+- Effects: (List with duration/expiration timestamps, detailed effects, chaining, and temporary appearances: [Status:Type_ID(Duration: ...; Expires: TIMESTAMP; Began: TIMESTAMP; Description: ...; Modifiers: ...; Appearance: ...; ChainedEffect: ...; Revert: ...)])
+  * DETAILED & COMPREHENSIVE EFFECTS: Effects can and should be as long, rich, and granular as context demands. Document physical sensations, physiological shifts, magical auras, and numerical modifiers.
+  * CHAINED EFFECTS: If an effect naturally leads to another subsequent effect upon wearing off (e.g. adrenaline rush leading to exhaustion, overcharge leading to arcane burnout, intoxication leading to a severe hangover, spell trance leading to backlash), include "ChainedEffect: NextEffectName(Duration: ...; Description: ...; Modifiers: ...)". The engine will automatically transition the character into the chained effect when the primary duration expires.
+  * TRANSFORMATION EFFECTS & TEMPORARY APPEARANCE: If an effect alters or transforms physical form (e.g. lycanthropy/werewolf transformation, stone skin, angelic form, beast form, shadow cloak disguise, slime shapeshifting), specify "Appearance: [Detailed physical appearance description]" along with any "TempWeight: X lbs; BaseWeight: Y lbs" and "TempDimensions: HxWxD; BaseDimensions: ...". When active, this automatically adds "- Temporary Appearance: [description]" under [NAME & DESCRIPTION] in the character file, and automatically reverts to base appearance and dimensions upon expiration.
+  * STATUS EXPIRATION & ACCURATE TIMESTAMPS: Every status effect that has a time limit MUST include an exact duration and/or expiration timestamp (e.g. "Duration: 3s; Expires: 10:00:03 AM"). When characters take actions that cost time (e.g. a 3s weapon attack, a 5s spellcast, a 10s sprint, or a 1h rest), ALWAYS emit time updates or advance WorldTime.txt so the status effects engine updates and expires them accurately when 3 seconds or more elapse.
+  * Example of temporary weight alteration: [Status:Lightweight_Boulder(Duration: 10m; Expires: 3:15:00 PM - Oct 12, 2026; TempWeight: 1 lb; BaseWeight: 500 lbs)] - Automatically reverts to BaseWeight upon expiration unless modified by another effect.
+  * Example of transformation effect with chained aftermath: [Status:Dire_Wolf_Form(Duration: 5m; Appearance: Muscular 8-foot silver-furred dire wolf with glowing golden eyes and razor claws; TempWeight: 350 lbs; BaseWeight: 165 lbs; ChainedEffect: Post_Transform_Fatigue(Duration: 30s; Description: Panting heavily, movement speed reduced by 30%))]
   * Example of encumbrance penalty: [Status:Encumbered_Speed_Penalty(Expires: When weight < 21%; SpeedPenalty: -30%)]
 - Background/Biometrics: (Deep lore, unique physical traits)
 
@@ -488,10 +497,11 @@ CRITICAL FILE MANAGEMENT RULES:
 - CRITICAL: Even if a character's health reaches 0, negative values, or they die, NEVER delete their character file! Dead and unconscious characters remain in the filesystem with their negative health accurately recorded and tracked.
 - Create "WorldTime.txt" with ACTUAL date/time/year appropriate for the world setting.
 - Create files for EVERY entity that appears: NPCs, items, locations, vehicles, projectiles. MUST follow ENTITY FILE SCHEMA. NEVER forget to generate character files for individuals and group entity files for groups of NPCs..
-- Use hide[...] for secrets/traps/hidden info in file contents OR file names. This is hidden from player view.
-- Use target(PlayerName)[content] in file contents OR file names OR narrative to restrict visibility strictly to specific players.
+- KNOWLEDGE & VISIBILITY MANDATE: Do NOT wrap a character's own home, personal dwelling, familiar quarters, or personal belongings in hide[...] unless context dictates otherwise (e.g. amnesia, memory curse).
+- Use hide[...] only for genuinely unrevealed secrets/traps/hidden info in file contents OR file names.
+- Use target(PlayerName)[content] or hide:besides(PlayerName)[content] in file contents OR file names OR narrative to restrict visibility strictly to specific players while letting the owner see it.
 - Track unique instances: [ObjectType_ID(status)]
-- Status effects: [Status:Type_ID(Expires: TIME)]
+- Status effects: [Status:Type_ID(Duration: Xs; Expires: TIMESTAMP; ChainedEffect: ...; Appearance: ...)] (Always advance WorldTime when actions take time so effects update and expire accurately)
 
 CURRENT MAP JSON FORMATTING (CRITICAL):
 - When outputting "CurrentMap.json" inside "files", its "content" field MUST be a DIRECT raw JSON Object, NOT an escaped string.
@@ -4371,7 +4381,49 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         }
       }
       
-      for (const [filename, fileData] of Object.entries(data.files)) {
+      // ==================== ADVANCE & SYNCHRONIZE WORLD TIME FIRST ====================
+      let latestWorldTime = this.fs.read('WorldTime.txt') || undefined;
+
+      // 1. If AI provided updated WorldTime.txt in files, write it immediately so character sync has the current time
+      if (data.files['WorldTime.txt']) {
+        const wtObj = data.files['WorldTime.txt'];
+        const wtContent = typeof wtObj === 'string' ? wtObj : (wtObj as any)?.content;
+        if (typeof wtContent === 'string' && wtContent.trim()) {
+          latestWorldTime = wtContent;
+          this.fs.write('WorldTime.txt', wtContent, (wtObj as any)?.displayName || 'World Time');
+        }
+      } else if (data.updates && Array.isArray(data.updates)) {
+        // 2. If AI omitted WorldTime.txt but data.updates advanced time (e.g. type: 'time', "+3s", "Time passed: 3 seconds", etc.)
+        let elapsedSec = 0;
+        for (const u of data.updates) {
+          const uText = (u.text || '').toLowerCase();
+          if (u.type === 'time' || uText.includes('time pass') || uText.includes('elapsed') || uText.includes('time +')) {
+            const timeMatch = uText.match(/(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)/i);
+            if (timeMatch) {
+              const val = parseFloat(timeMatch[1]);
+              const unit = timeMatch[2].toLowerCase();
+              if (unit.startsWith('m')) elapsedSec += val * 60;
+              else if (unit.startsWith('h')) elapsedSec += val * 3600;
+              else if (unit.startsWith('d')) elapsedSec += val * 86400;
+              else elapsedSec += val;
+            }
+          }
+        }
+        if (elapsedSec > 0 && latestWorldTime) {
+          latestWorldTime = WeightInventoryEngine.advanceWorldTimestamp(latestWorldTime, elapsedSec);
+          this.fs.write('WorldTime.txt', latestWorldTime, 'World Time');
+          data.files['WorldTime.txt'] = latestWorldTime;
+        }
+      }
+
+      // Sort files so WorldTime.txt is processed first, followed by character sheets
+      const sortedFileEntries = Object.entries(data.files).sort(([a], [b]) => {
+        if (a === 'WorldTime.txt') return -1;
+        if (b === 'WorldTime.txt') return 1;
+        return 0;
+      });
+      
+      for (const [filename, fileData] of sortedFileEntries) {
         if (fileData === null || (typeof fileData === 'object' && fileData.content === null)) {
           this.fs.delete(filename);
         } else {
@@ -4391,8 +4443,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             }
           }
 
-          // Auto-synchronize weight, dimensions, containers, and encumbrance on character files
-          if (typeof contentStr === 'string' && filename.endsWith('.txt') && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CONTAINERS') || contentStr.includes('[INVENTORY'))) {
+          // Auto-synchronize weight, dimensions, containers, encumbrance, and status effects on character files
+          if (typeof contentStr === 'string' && filename.endsWith('.txt') && (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CONTAINERS') || contentStr.includes('[INVENTORY') || contentStr.includes('[STATUS EFFECTS'))) {
             try {
               const existingCharacterFile = existingFile;
               // If this is a newly created character file, enforce starting inventory carrying limit (<= 2x hand slots)
@@ -4410,11 +4462,26 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
                 }
               }
 
-              const activeTime = this.fs.read('WorldTime.txt') || undefined;
+              const activeTime = latestWorldTime || this.fs.read('WorldTime.txt') || undefined;
               const syncResult = WeightInventoryEngine.syncCharacterFileContent(contentStr, activeTime);
               contentStr = syncResult.updatedContent;
 
               if (data.updates && Array.isArray(data.updates)) {
+                // Report status effect expirations, transitions, and transformation appearances
+                for (const chg of syncResult.changes) {
+                  const chgLower = chg.toLowerCase();
+                  if (chgLower.includes('expired') || chgLower.includes('transitioned') || chgLower.includes('appearance') || chgLower.includes('reverted body weight')) {
+                    const alreadyPresent = data.updates.some(u => u.text && u.text.toLowerCase().includes(chgLower));
+                    if (!alreadyPresent) {
+                      data.updates.push({
+                        type: 'status',
+                        text: chg,
+                        value: 0
+                      });
+                    }
+                  }
+                }
+
                 const stats = syncResult.stats;
                 if (stats.isEncumbered) {
                   const hasEncumberedUpdate = data.updates.some(u => u.text && u.text.toLowerCase().includes('encumber'));

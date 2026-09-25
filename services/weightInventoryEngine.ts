@@ -134,6 +134,25 @@ export interface CharacterCurrencyData {
   hasCurrency: boolean;
 }
 
+export interface ActiveStatusEffect {
+  name: string;
+  rawText: string;
+  duration?: string;
+  expires?: string;
+  began?: string;
+  stage?: string;
+  description?: string;
+  appearance?: string; // temporary appearance alteration e.g. "Towering 7ft bipedal wolf with obsidian fur"
+  tempWeight?: number;
+  baseWeight?: number;
+  tempDimensions?: string;
+  baseDimensions?: string;
+  stats?: string;
+  revert?: string;
+  chainedEffect?: string; // effect that activates when this one expires e.g. "Overcharge_Burnout(Duration: 10s; ...)"
+  isExpired?: boolean;
+}
+
 export interface CharacterPhysicalStats {
   characterName: string;
   username?: string;
@@ -180,6 +199,9 @@ export interface CharacterPhysicalStats {
     tempVal: number;
     baseVal: number;
   }>;
+  activeStatusEffects?: ActiveStatusEffect[];
+  temporaryAppearance?: string; // Active temporary appearance from transformations or spells
+  baseAppearance?: string; // Original base appearance before transformation
   healthState?: {
     isUnconscious: boolean;
     isDead: boolean;
@@ -2410,6 +2432,187 @@ export class WeightInventoryEngine {
   }
 
   /**
+   * Extracts clean Timestamp string from WorldTime content or raw string
+   */
+  public static extractWorldTimestamp(contentOrTimeStr?: string): string | undefined {
+    if (!contentOrTimeStr) return undefined;
+    const match = contentOrTimeStr.match(/Timestamp\s*[:=]\s*([^\r\n]+)/i);
+    if (match) return match[1].trim();
+    const clean = contentOrTimeStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/^[-*•\s]*/, '').trim();
+    if (clean) return clean;
+    return undefined;
+  }
+
+  /**
+   * Universal parser for in-world timestamp representations.
+   * Accurately parses:
+   * - Full: "3:15:00 PM - Oct 12, 2026"
+   * - Time-only: "10:00:03 AM"
+   * - Multi-line WorldTime.txt files containing Timestamp line
+   */
+  public static parseWorldTimestamp(timeStr?: string): { date: Date; totalSeconds: number; hasDate: boolean } | null {
+    if (!timeStr) return null;
+    let str = timeStr.trim();
+    const tsLineMatch = str.match(/Timestamp\s*[:=]\s*([^\r\n]+)/i);
+    if (tsLineMatch) {
+      str = tsLineMatch[1].trim();
+    } else {
+      str = str.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/\[STATUS[^\]]*\]/i, '').replace(/^[-*•\s]*/, '').trim();
+    }
+
+    const fullMatch = str.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?(?:\s*-\s*([A-Za-z]+ \d{1,2},? \d{4}))?/i);
+    if (fullMatch) {
+      const hStr = fullMatch[1];
+      const mStr = fullMatch[2];
+      const sStr = fullMatch[3];
+      const ampm = fullMatch[4];
+      const datePart = fullMatch[5];
+      let h = parseInt(hStr, 10);
+      const m = parseInt(mStr, 10);
+      const s = sStr ? parseInt(sStr, 10) : 0;
+      if (ampm) {
+        if (ampm.toUpperCase() === 'PM' && h < 12) h += 12;
+        if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
+      }
+      const totalSeconds = h * 3600 + m * 60 + s;
+      if (datePart) {
+        const d = new Date(`${datePart} ${h}:${m}:${s}`);
+        if (!isNaN(d.getTime())) {
+          return { date: d, totalSeconds, hasDate: true };
+        }
+      }
+      const baseDate = new Date(2000, 0, 1, h, m, s);
+      return { date: baseDate, totalSeconds, hasDate: false };
+    }
+
+    try {
+      const directDate = new Date(str);
+      if (!isNaN(directDate.getTime())) {
+        const totalSec = directDate.getHours() * 3600 + directDate.getMinutes() * 60 + directDate.getSeconds();
+        return { date: directDate, totalSeconds: totalSec, hasDate: true };
+      }
+    } catch {}
+
+    return null;
+  }
+
+  /**
+   * Checks whether a status effect is expired based on its expiration timestamp, duration, and began timestamp.
+   * Supports relative durations (e.g. 3s, 5m) as well as absolute timestamps.
+   */
+  public static isStatusEffectExpired(
+    expiresStr?: string,
+    durationStr?: string,
+    beganStr?: string,
+    currentTimestampStr?: string
+  ): boolean {
+    if (!currentTimestampStr) return false;
+    const current = WeightInventoryEngine.parseWorldTimestamp(currentTimestampStr);
+    if (!current) return false;
+
+    // 1. Direct timestamp or relative expiration comparison if expiresStr is given
+    if (expiresStr) {
+      const cleanExp = expiresStr.trim().replace(/;+$/, '').trim();
+      // Relative expiration e.g. "+3s", "3s", "3 seconds", "in 3s", "after 3s", "5m"
+      const relMatch = cleanExp.match(/^[+]?\s*(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)$/i) ||
+                       cleanExp.match(/(?:in|after|[+])\s*(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)/i);
+      if (relMatch) {
+        const val = parseFloat(relMatch[1]);
+        const unit = relMatch[2].toLowerCase();
+        let durationSec = val;
+        if (unit.startsWith('m')) durationSec = val * 60;
+        else if (unit.startsWith('h')) durationSec = val * 3600;
+        else if (unit.startsWith('d')) durationSec = val * 86400;
+
+        if (beganStr) {
+          const began = WeightInventoryEngine.parseWorldTimestamp(beganStr);
+          if (began) {
+            const diffSec = current.hasDate && began.hasDate
+              ? (current.date.getTime() - began.date.getTime()) / 1000
+              : (current.totalSeconds - began.totalSeconds);
+            return diffSec >= durationSec;
+          }
+        }
+      }
+
+      const exp = WeightInventoryEngine.parseWorldTimestamp(cleanExp);
+      if (exp) {
+        if (current.hasDate && exp.hasDate) {
+          return current.date.getTime() >= exp.date.getTime();
+        }
+        if (beganStr) {
+          const began = WeightInventoryEngine.parseWorldTimestamp(beganStr);
+          if (began && current.hasDate && began.hasDate) {
+            // If current date has advanced past began date by 1+ days, it has expired
+            const daysDiff = (current.date.getTime() - began.date.getTime()) / (1000 * 86400);
+            if (daysDiff >= 1) return true;
+          }
+        }
+        return current.totalSeconds >= exp.totalSeconds;
+      }
+    }
+
+    // 2. Duration with Began timestamp
+    if (durationStr && beganStr) {
+      const durMatch = durationStr.match(/(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)/i);
+      if (durMatch) {
+        const val = parseFloat(durMatch[1]);
+        const unit = durMatch[2].toLowerCase();
+        let durationSec = val;
+        if (unit.startsWith('m')) durationSec = val * 60;
+        else if (unit.startsWith('h')) durationSec = val * 3600;
+        else if (unit.startsWith('d')) durationSec = val * 86400;
+
+        const began = WeightInventoryEngine.parseWorldTimestamp(beganStr);
+        if (began) {
+          const diffSec = current.hasDate && began.hasDate
+            ? (current.date.getTime() - began.date.getTime()) / 1000
+            : (current.totalSeconds - began.totalSeconds);
+          return diffSec >= durationSec;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Advances WorldTime timestamp by a given number of seconds and returns the updated file text
+   */
+  public static advanceWorldTimestamp(content: string, addSeconds: number): string {
+    if (!content || addSeconds <= 0) return content;
+    const match = content.match(/Timestamp\s*[:=]\s*([^\r\n]+)/i);
+    if (!match) return content;
+    const rawTs = match[1].trim();
+    const timeMatch = rawTs.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?(?:\s*-\s*([A-Za-z]+ \d{1,2},? \d{4}))?/i);
+    if (!timeMatch) return content;
+    const hStr = timeMatch[1];
+    const mStr = timeMatch[2];
+    const sStr = timeMatch[3];
+    const ampm = timeMatch[4];
+    const datePart = timeMatch[5];
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    const s = sStr ? parseInt(sStr, 10) : 0;
+    if (ampm) {
+      if (ampm.toUpperCase() === 'PM' && h < 12) h += 12;
+      if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
+    }
+    let dateObj = datePart ? new Date(`${datePart} ${h}:${m}:${s}`) : new Date(2000, 0, 1, h, m, s);
+    dateObj = new Date(dateObj.getTime() + addSeconds * 1000);
+    let newH = dateObj.getHours();
+    const newM = dateObj.getMinutes();
+    const newS = dateObj.getSeconds();
+    const newAmpm = newH >= 12 ? 'PM' : 'AM';
+    newH = newH % 12 || 12;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timeFormatted = `${newH}:${pad(newM)}:${pad(newS)} ${newAmpm}`;
+    const dateFormatted = datePart ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    const newTs = datePart ? `${timeFormatted} - ${dateFormatted}` : timeFormatted;
+    return content.replace(match[0], `Timestamp: ${newTs}`);
+  }
+
+  /**
    * Calculates corpse decomposition/rot stage based on elapsed WorldTime.
    * Rot stages (when biological decomposition applies in context):
    * - Stage 1: Fresh Corpse (< 2 hours)
@@ -2432,19 +2635,12 @@ export class WeightInventoryEngine {
 
     let elapsedHours = 0;
     try {
-      const cleanBegan = beganTimestampStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
-      const cleanCurrent = currentTimestampStr.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
-      
-      const parseD = (s: string) => {
-        const parts = s.split(' - ');
-        if (parts.length === 2) return new Date(`${parts[1]} ${parts[0]}`);
-        return new Date(s);
-      };
-
-      const dBegan = parseD(cleanBegan);
-      const dCurrent = parseD(cleanCurrent);
-      if (!isNaN(dBegan.getTime()) && !isNaN(dCurrent.getTime())) {
-        const diffMs = dCurrent.getTime() - dBegan.getTime();
+      const dBegan = WeightInventoryEngine.parseWorldTimestamp(beganTimestampStr);
+      const dCurrent = WeightInventoryEngine.parseWorldTimestamp(currentTimestampStr);
+      if (dBegan && dCurrent) {
+        const diffMs = dCurrent.hasDate && dBegan.hasDate
+          ? dCurrent.date.getTime() - dBegan.date.getTime()
+          : (dCurrent.totalSeconds - dBegan.totalSeconds) * 1000;
         elapsedHours = Math.max(0, diffMs / (1000 * 60 * 60));
       }
     } catch {
@@ -2968,6 +3164,14 @@ export class WeightInventoryEngine {
     let customHoldingMax: number | undefined;
     let customHoldingApplies: boolean | undefined;
     const activeWeightEffects: CharacterPhysicalStats['activeWeightEffects'] = [];
+    const activeStatusEffectsList: ActiveStatusEffect[] = [];
+    let temporaryAppearance: string | undefined;
+    let baseAppearance: string | undefined;
+
+    const tempAppMatchInit = fileContent.match(/[-*•]?\s*Temporary\s+Appearance\s*[:=]\s*([^\r\n]+)/i);
+    if (tempAppMatchInit) temporaryAppearance = tempAppMatchInit[1].trim();
+    const baseAppMatchInit = fileContent.match(/[-*•]?\s*(?:Base\s+Appearance|Original\s+Appearance)\s*[:=]\s*([^\r\n]+)/i);
+    if (baseAppMatchInit) baseAppearance = baseAppMatchInit[1].trim();
 
     // Currency & balance data
     let currencyType = 'Standard World Currency';
@@ -4169,13 +4373,17 @@ export class WeightInventoryEngine {
 
       // 5. [STATUS EFFECTS & LORE]
       if (currentSection.includes('STATUS') || currentSection.includes('EFFECT')) {
-        const effMatch = line.match(/\[Status:([^()]+)\(([^)]+)\)\]/i);
+        const effMatch = line.match(/\[(?:Status|Effect):([^()]+)\(([^)]+)\)\]/i);
         if (effMatch) {
-          const effName = effMatch[1];
+          const effName = effMatch[1].trim();
           const effBody = effMatch[2];
           const tempW = effBody.match(/tempweight[:=\s]*([0-9]+(?:\.[0-9]+)?)/i);
           const baseW = effBody.match(/baseweight[:=\s]*([0-9]+(?:\.[0-9]+)?)/i);
           const exp = effBody.match(/expires[:=\s]*([^;)]+)/i);
+          const dur = effBody.match(/duration[:=\s]*([^;)]+)/i);
+          const beg = effBody.match(/(?:began|started)[:=\s]*([^;)]+)/i);
+          const app = effBody.match(/(?:temporary\s*appearance|appearance)[:=\s]*([^;)]+)/i);
+          const chain = effBody.match(/(?:chainedeffect|nexteffect|leadsto|onexpire)[:=\s]*([^;)]+)/i);
 
           if (tempW && baseW) {
             activeWeightEffects.push({
@@ -4186,6 +4394,26 @@ export class WeightInventoryEngine {
               baseVal: parseFloat(baseW[1])
             });
           }
+
+          const isExp = WeightInventoryEngine.isStatusEffectExpired(
+            exp ? exp[1].trim() : undefined,
+            dur ? dur[1].trim() : undefined,
+            beg ? beg[1].trim() : undefined,
+            currentTimestamp
+          );
+
+          activeStatusEffectsList.push({
+            name: effName,
+            rawText: line.trim(),
+            duration: dur ? dur[1].trim() : undefined,
+            expires: exp ? exp[1].trim() : undefined,
+            began: beg ? beg[1].trim() : undefined,
+            appearance: app ? app[1].trim() : undefined,
+            tempWeight: tempW ? parseFloat(tempW[1]) : undefined,
+            baseWeight: baseW ? parseFloat(baseW[1]) : undefined,
+            chainedEffect: chain ? chain[1].trim() : undefined,
+            isExpired: isExp
+          });
         }
       }
     }
@@ -4632,6 +4860,9 @@ export class WeightInventoryEngine {
       carriedItems,
       storedItems,
       activeWeightEffects,
+      activeStatusEffects: activeStatusEffectsList,
+      temporaryAppearance,
+      baseAppearance,
       healthState: (() => {
         let isUnconscious = false;
         let isDead = false;
@@ -5238,16 +5469,13 @@ export class WeightInventoryEngine {
         const expMatch = updated.match(/Status:\s*Unconscious\s*\([^)]*Expires:\s*([^;)]+)/i);
         if (expMatch) {
           const expTimeStr = expMatch[1].trim();
-          try {
-            const parseD = (s: string) => {
-              const clean = s.replace(/\[CURRENT ACTIVE TIME\]/i, '').replace(/Timestamp:\s*/i, '').trim();
-              const parts = clean.split(' - ');
-              if (parts.length === 2) return new Date(`${parts[1]} ${parts[0]}`);
-              return new Date(clean);
-            };
-            const dExp = parseD(expTimeStr);
-            const dCur = parseD(currentTimestamp);
-            if (!isNaN(dExp.getTime()) && !isNaN(dCur.getTime()) && dCur.getTime() >= dExp.getTime()) {
+          const dExp = WeightInventoryEngine.parseWorldTimestamp(expTimeStr);
+          const dCur = WeightInventoryEngine.parseWorldTimestamp(currentTimestamp);
+          if (dExp && dCur) {
+            const isUnconsciousExpired = dCur.hasDate && dExp.hasDate
+              ? dCur.date.getTime() >= dExp.date.getTime()
+              : dCur.totalSeconds >= dExp.totalSeconds;
+            if (isUnconsciousExpired) {
               // Expired! Character succumbs to 0 HP and becomes Dead
               updated = updated.replace(/Status:\s*Unconscious[^\n\r]*/i, `Status: Dead (Succumbed to 0 HP wounds after unconscious survival window elapsed; Slain)`);
               if (healthMatch) {
@@ -5262,7 +5490,7 @@ export class WeightInventoryEngine {
               }
               changes.push('Unconscious duration elapsed at 0 HP: character has succumbed and died');
             }
-          } catch {}
+          }
         }
       }
 
@@ -5291,6 +5519,200 @@ export class WeightInventoryEngine {
             updated += `\n[STATUS EFFECTS & LORE]\n${newRotLine}`;
           }
           changes.push(`Added Decomposition/Rot: ${stageInfo.stageName}`);
+        }
+      }
+
+      // 8. Universal Status Effects & Expiration & Chaining & Transformation Appearance Management
+      const effectRegex = /\[(?:Status|Effect):([a-zA-Z0-9_\-\s]+)\(([^)]*)\)\]/gi;
+      let effMatch: RegExpExecArray | null;
+      const statusEffectsFound: Array<{
+        fullMatch: string;
+        name: string;
+        body: string;
+        expires?: string;
+        duration?: string;
+        began?: string;
+        description?: string;
+        modifiers?: string;
+        appearance?: string;
+        tempWeight?: number;
+        baseWeight?: number;
+        tempDimensions?: string;
+        baseDimensions?: string;
+        chainedEffect?: string;
+        revert?: string;
+      }> = [];
+
+      while ((effMatch = effectRegex.exec(updated)) !== null) {
+        const fullMatch = effMatch[0];
+        const name = effMatch[1].trim();
+        const body = effMatch[2];
+
+        // Skip Unconscious and Dead which are managed separately above
+        if (/^(?:unconscious|dead|healthy|normal|slain)$/i.test(name)) continue;
+
+        const expM = body.match(/expires\s*[:=]\s*([^;)]+)/i);
+        const durM = body.match(/duration\s*[:=]\s*([^;)]+)/i);
+        const begM = body.match(/(?:began|started)\s*[:=]\s*([^;)]+)/i);
+        const descM = body.match(/(?:description|details?|effect)\s*[:=]\s*([^;)]+)/i);
+        const modM = body.match(/(?:modifiers?|stats?)\s*[:=]\s*([^;)]+)/i);
+        const appM = body.match(/(?:temporary\s*appearance|appearance)\s*[:=]\s*([^;)]+)/i);
+        const twM = body.match(/tempweight\s*[:=]\s*([0-9.]+(?:\s*lbs?)?)/i);
+        const bwM = body.match(/baseweight\s*[:=]\s*([0-9.]+(?:\s*lbs?)?)/i);
+        const tdM = body.match(/tempdimensions?\s*[:=]\s*([^;)]+)/i);
+        const bdM = body.match(/basedimensions?\s*[:=]\s*([^;)]+)/i);
+        const chainM = body.match(/(?:chainedeffect|nexteffect|leadsto|onexpire)\s*[:=]\s*([a-zA-Z0-9_\-\s]+(?:\([^)]*\))?)/i);
+        const revM = body.match(/revert\s*[:=]\s*([^;)]+)/i);
+
+        statusEffectsFound.push({
+          fullMatch,
+          name,
+          body,
+          expires: expM ? expM[1].trim() : undefined,
+          duration: durM ? durM[1].trim() : undefined,
+          began: begM ? begM[1].trim() : undefined,
+          description: descM ? descM[1].trim() : undefined,
+          modifiers: modM ? modM[1].trim() : undefined,
+          appearance: appM ? appM[1].trim() : undefined,
+          tempWeight: twM ? parseFloat(twM[1]) : undefined,
+          baseWeight: bwM ? parseFloat(bwM[1]) : undefined,
+          tempDimensions: tdM ? tdM[1].trim() : undefined,
+          baseDimensions: bdM ? bdM[1].trim() : undefined,
+          chainedEffect: chainM ? chainM[1].trim() : undefined,
+          revert: revM ? revM[1].trim() : undefined
+        });
+      }
+
+      let activeTransformationAppearance: string | undefined;
+
+      for (const eff of statusEffectsFound) {
+        const isExpired = WeightInventoryEngine.isStatusEffectExpired(
+          eff.expires,
+          eff.duration,
+          eff.began,
+          currentTimestamp
+        );
+
+        if (isExpired) {
+          if (eff.chainedEffect) {
+            let chainInner = eff.chainedEffect;
+            const durMatch = chainInner.match(/duration\s*[:=]\s*(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)/i);
+            let chainedExpTime: string | undefined;
+            if (durMatch) {
+              const val = parseFloat(durMatch[1]);
+              const unit = durMatch[2].toLowerCase();
+              let durSec = val;
+              if (unit.startsWith('m')) durSec = val * 60;
+              else if (unit.startsWith('h')) durSec = val * 3600;
+              else if (unit.startsWith('d')) durSec = val * 86400;
+              const advanced = WeightInventoryEngine.advanceWorldTimestamp(`Timestamp: ${currentTimestamp}`, durSec);
+              chainedExpTime = WeightInventoryEngine.extractWorldTimestamp(advanced) || `+${durSec}s`;
+            }
+
+            if (!chainInner.toLowerCase().includes('began:') && currentTimestamp) {
+              chainInner = chainInner.endsWith(')') ? chainInner.replace(/\)$/, `; Began: ${currentTimestamp})`) : `${chainInner}(Began: ${currentTimestamp})`;
+            }
+            if (chainedExpTime && !chainInner.toLowerCase().includes('expires:')) {
+              chainInner = chainInner.endsWith(')') ? chainInner.replace(/\)$/, `; Expires: ${chainedExpTime})`) : `${chainInner}; Expires: ${chainedExpTime})`;
+            }
+
+            const chainAppM = chainInner.match(/(?:temporary\s*appearance|appearance)\s*[:=]\s*([^;)]+)/i);
+            if (chainAppM) {
+              activeTransformationAppearance = chainAppM[1].trim();
+            }
+
+            const chainedTag = chainInner.startsWith('[') ? chainInner : `[Status:${chainInner}]`;
+            updated = updated.replace(eff.fullMatch, chainedTag);
+            changes.push(`Effect "${eff.name}" expired and transitioned to chained effect "${eff.chainedEffect}"`);
+          } else {
+            updated = updated.replace(eff.fullMatch, '');
+            updated = updated.replace(/\n\s*[-*•]?\s*\n/g, '\n');
+            changes.push(`Status effect "${eff.name}" duration elapsed and expired`);
+
+            if (eff.baseWeight !== undefined && eff.tempWeight !== undefined) {
+              const bodyWMatch = updated.match(/[-*•]?\s*(?:Body\s+Weight|Weight)\s*[:=]\s*([0-9.]+)\s*lbs?/i);
+              if (bodyWMatch) {
+                updated = updated.replace(bodyWMatch[0], `- Body Weight: ${eff.baseWeight} lbs`);
+                changes.push(`Reverted Body Weight to base ${eff.baseWeight} lbs after "${eff.name}" expired`);
+              }
+            }
+
+            if (eff.baseDimensions) {
+              const dimMatch = updated.match(/[-*•]?\s*(?:Physical\s+Dimensions|Dimensions)\s*[:=]\s*([^\r\n]+)/i);
+              if (dimMatch) {
+                updated = updated.replace(dimMatch[0], `- Physical Dimensions: ${eff.baseDimensions}`);
+                changes.push(`Reverted Physical Dimensions to base "${eff.baseDimensions}" after "${eff.name}" expired`);
+              }
+            }
+          }
+        } else {
+          // If active effect has a relative duration (e.g. 3s, +3s) but missing Began/absolute expiration:
+          // Stamp Began and an absolute Expires timestamp into the tag so future turns can reliably calculate expiration!
+          if (!eff.began && currentTimestamp && (eff.duration || (eff.expires && /^[+]?\s*\d+\s*(?:s|sec|m|min|h|hr|d)\b/i.test(eff.expires)))) {
+            const rawDur = eff.duration || eff.expires;
+            const durMatch = rawDur?.match(/(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)/i);
+            if (durMatch) {
+              const val = parseFloat(durMatch[1]);
+              const unit = durMatch[2].toLowerCase();
+              let durSec = val;
+              if (unit.startsWith('m')) durSec = val * 60;
+              else if (unit.startsWith('h')) durSec = val * 3600;
+              else if (unit.startsWith('d')) durSec = val * 86400;
+              const advanced = WeightInventoryEngine.advanceWorldTimestamp(`Timestamp: ${currentTimestamp}`, durSec);
+              const cleanExp = WeightInventoryEngine.extractWorldTimestamp(advanced) || `+${durSec}s`;
+
+              let newBody = eff.body;
+              if (!newBody.toLowerCase().includes('began:')) {
+                newBody += `; Began: ${currentTimestamp}`;
+              }
+              if (newBody.toLowerCase().includes('expires:')) {
+                newBody = newBody.replace(/expires\s*[:=]\s*[^;)]+/i, `Expires: ${cleanExp}`);
+              } else {
+                newBody += `; Expires: ${cleanExp}`;
+              }
+              const newTag = `[Status:${eff.name}(${newBody})]`;
+              updated = updated.replace(eff.fullMatch, newTag);
+            }
+          }
+
+          if (eff.appearance) {
+            activeTransformationAppearance = eff.appearance;
+          }
+        }
+      }
+
+      // Handle transformation appearance under [NAME & DESCRIPTION]
+      const nameDescIdx = updated.indexOf('[NAME & DESCRIPTION]');
+      if (nameDescIdx >= 0) {
+        const nextSecIdx = WeightInventoryEngine.findNextSectionHeaderIndex(updated, nameDescIdx + 20);
+        const nameDescEnd = nextSecIdx > 0 ? nextSecIdx : updated.length;
+        let nameDescContent = updated.substring(nameDescIdx, nameDescEnd);
+        const tempAppMatch = nameDescContent.match(/[-*•]?\s*Temporary\s+Appearance[^\r\n]*/i);
+
+        if (activeTransformationAppearance) {
+          const newLine = `- Temporary Appearance: ${activeTransformationAppearance}`;
+          if (tempAppMatch) {
+            if (tempAppMatch[0] !== newLine) {
+              nameDescContent = nameDescContent.replace(tempAppMatch[0], newLine);
+              updated = updated.substring(0, nameDescIdx) + nameDescContent + updated.substring(nameDescEnd);
+              changes.push('Updated Temporary Appearance for active transformation');
+            }
+          } else {
+            const descMatch = nameDescContent.match(/[-*•]?\s*Description\s*[:=][^\r\n]*/i);
+            if (descMatch && descMatch.index !== undefined) {
+              const insertAt = nameDescContent.indexOf('\n', descMatch.index + descMatch[0].length);
+              const pos = insertAt >= 0 ? insertAt + 1 : nameDescContent.length;
+              nameDescContent = nameDescContent.substring(0, pos) + `${newLine}\n` + nameDescContent.substring(pos);
+            } else {
+              nameDescContent = nameDescContent + `\n${newLine}`;
+            }
+            updated = updated.substring(0, nameDescIdx) + nameDescContent + updated.substring(nameDescEnd);
+            changes.push('Added Temporary Appearance for active transformation');
+          }
+        } else if (tempAppMatch) {
+          nameDescContent = nameDescContent.replace(/[-*•]?\s*Temporary\s+Appearance[^\r\n]*\r?\n?/i, '');
+          updated = updated.substring(0, nameDescIdx) + nameDescContent + updated.substring(nameDescEnd);
+          changes.push('Removed expired Temporary Appearance (reverted to base appearance)');
         }
       }
     }
