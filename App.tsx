@@ -1370,6 +1370,7 @@ CHARACTER IDENTITY RULE (CRITICAL):
   username: "${newUsername}",
   characterName: "[Fictional In-World Character Name]"
 - PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!
+- ZERO UNINTENDED NPC CLONING: Existing NPCs in context must retain their established canonical names. Never create duplicate or cloned NPC files or map tokens with slight name variations (e.g. 'Garrick-npc' vs 'BlacksmithGarrick-npc') unless genuine cloning context (spells/illusions/clones) explicitly applies.
 
 CRITICAL ANTI-LAZINESS MANDATE:
 - Do NOT be lazy, rushed, or cut corners. Never use placeholders (like "...", "// etc", "[same as before]"), abbreviations, or incomplete summaries.
@@ -2204,7 +2205,7 @@ NEW CHARACTER CONCEPT:
 
 CRITICAL NATURAL STORY INTRODUCTION & PERSISTENCE MANDATES:
 1. NEW CHARACTER MUST HAVE A DISTINCT NEW NAME: The character's name is "${suggestedCharName}". Do NOT name this character "${deadCharName || 'the dead character'}" and do NOT name them the account username "${activeUser}".
-2. SAME ADVENTURE CONTINUES: Do NOT reset the world, erase existing lore, or wipe previous landmarks, locations, or NPCs. The timeline, environment, and world events remain strictly in place.
+2. SAME ADVENTURE CONTINUES: Do NOT reset the world, erase existing lore, or wipe previous landmarks, locations, or NPCs. The timeline, environment, and world events remain strictly in place. Do NOT duplicate or clone established NPCs with slight name variations.
 3. NATURAL STORY INTRODUCTION: Introduce ${suggestedCharName} into the narrative naturally based on the immediate surroundings, recent events, and current context (e.g. an arriving traveler, a hired mercenary investigating the area, an ally drawn by recent commotion, or a wandering explorer stepping into the scene).
 4. PREDECESSOR AWARENESS: Acknowledge the aftermath or fallen predecessor if contextually fitting to the immediate location. Do NOT delete or overwrite "${deadCharName || 'Predecessor'}-dead.txt".
 5. CHARACTER FILE: Create a full, rich character file named EXACTLY "[CharacterName]-${activeUser}.txt" ("${suggestedCharName.replace(/[^a-zA-Z0-9]/g, '')}-${activeUser}.txt"). Fill out [NAME & DESCRIPTION], [STATS & MODIFIERS], [ATTACKS & COMBAT ACTIONS], [ABILITIES & MAGIC], [CONTAINERS & CARRIED GEAR], [CURRENCY & FINANCIAL BALANCE], and [STATUS EFFECTS & LORE]. Starting carried items must be <= 2x hand slots.

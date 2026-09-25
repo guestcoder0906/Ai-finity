@@ -11,6 +11,8 @@ import {
   purgePlayerDuplicatesFromNpcs,
   cleanAndRepairPlayerFiles,
   isPlayerCharacterFile,
+  deduplicateNpcsOnMap,
+  reconcileNpcFiles,
   RegisteredPlayer
 } from "./mapPlayerEngine";
 import {
@@ -609,10 +611,15 @@ CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
 - Do NOT hardcode require NPCs in every scenario. When the context of the setting naturally calls for solitude (e.g. waking up alone in a deep cave, stranded on an isolated island, adrift in deep space, or exploring an empty ancient ruin), it is completely valid and appropriate to start with zero NPCs or creatures.
 - However, when the context of the initialized world or location naturally makes sense to have inhabitants (such as a town, tavern, city, market, camp, settlement, active road, outpost, or wilderness with fauna/mounts), the AI is strongly encouraged to populate the scene with fitting NPCs, companions, travelers, shopkeepers, creatures, or mounts:
   * Give any present NPCs or creatures a distinct name, personality, role, motivations, and gear.
-  * NPC FILE NAMING CONVENTION: All NPC character files MUST have "-npc.txt" appended (e.g., "Maeve_TavernKeep-npc.txt", "Garrick_Blacksmith-npc.txt", "TownGuard-npc.txt"). Never omit the "-npc" suffix from NPC filenames!
+  * NPC FILE NAMING CONVENTION: All NPC character files MUST have "-npc.txt" appended (e.g., "Maeve-npc.txt", "Garrick-npc.txt", "TownGuard-npc.txt"). Never omit the "-npc" suffix from NPC filenames!
+  * ZERO UNINTENDED NPC CLONING & CANONICAL PERSISTENCE RULE (CRITICAL):
+    - Established NPCs (from existing -npc.txt files and CurrentMap.json) MUST preserve their exact canonical name across turns.
+    - NEVER clone or duplicate an existing NPC with slight name variations (e.g. creating 'BlacksmithGarrick-npc' or 'Garrick_Blacksmith-npc' when 'Garrick-npc' already exists, or creating duplicate map tokens like 'TownGuard-npc' alongside 'Town Guard-npc'). Always reuse their established canonical name consistently across both their filename and CurrentMap.json.
+    - Unless authentic narrative or game mechanics explicitly apply that clone an entity (such as a Mirror Image spell, Simulacrum, Clone spell/vat, Doppelganger, or illusionary decoys), an NPC is a single unique individual and MUST NEVER exist as multiple cloned tokens or duplicate files.
+    - Generic minions or group members intended to be multiple distinct individuals must be clearly distinguished by distinct numbering (e.g. 'Bandit 1', 'Bandit 2', 'Goblin Archer A', 'Goblin Archer B').
   * HUMAN PLAYER CHARACTER FILES (NEVER NPCS): Human player character files MUST be named "CharacterName-USERNAME.txt" (e.g. "LyraWhisperwind-Mep.txt", "MiraRavencrest-Chloe.txt") and MUST NEVER have "-npc" appended or be placed under "npcs" on CurrentMap.json!
   * Create their individual character/entity files with complete stats, physical dimensions, body weight, speed, and inventory.
-  * PERSISTENCE & MAP NAMING: Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" under "npcs" (or on the appropriate page) with coordinates, distinct icon/type, and facing. Their name in CurrentMap.json MUST have "-npc" appended (e.g., "Maeve-npc", "Garrick-npc"). NEVER forget or drop previously established NPCs from CurrentMap.json across turns!
+  * PERSISTENCE & MAP NAMING: Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" under "npcs" (or on the appropriate page) with coordinates, distinct icon/type, and facing. Their name in CurrentMap.json MUST match their canonical name with "-npc" appended (e.g., "Maeve-npc", "Garrick-npc"). NEVER forget, drop, or clone previously established NPCs from CurrentMap.json across turns!
   * Integrate them into the narrative with exact clickable references (e.g. [Maeve-npc] or [Maeve], [Garrick-npc] or [Garrick]).
   * HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Steel Broadsword", "Iron Shield", "Oak Staff", "Torch") with their weight and dimensions. Never list limbs, grips, anatomy labels, or duplicate lines as item names (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name!). Limbs belong in brackets: e.g. "• [Both Hands (Two-Handed)] Steel Greatsword - 8.5 lbs".
 
@@ -4262,6 +4269,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // Dynamically repair any accidentally corrupted player files
     cleanAndRepairPlayerFiles(this.fs);
 
+    // Dynamically reconcile and deduplicate NPC files to prevent accidental cloning
+    reconcileNpcFiles(this.fs, data.files);
+
     if (data.files && typeof data.files === 'object' && !Array.isArray(data.files)) {
       // 0. Enforce strict Player vs NPC file segregation
       const fileNames = Object.keys(data.files);
@@ -4312,6 +4322,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           }
         }
       }
+
+      // Reconcile NPC files against existing established filenames to prevent accidental cloning
+      reconcileNpcFiles(this.fs, data.files);
 
       // 1. Check for player file duplicates/naming changes if we have a username
       if (username) {
@@ -4665,6 +4678,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       deduplicatePlayersOnMap(normalized.pages, playerRegistry, {
         activeUsername: username
       });
+
+      // Clean and deduplicate cloned or duplicate NPCs across map pages
+      deduplicateNpcsOnMap(normalized.pages, allFileNames);
     } catch (e) {
       console.error("Player reconciliation on map failed", e);
     }

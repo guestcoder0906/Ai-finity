@@ -607,3 +607,249 @@ export function reconcileRegisteredPlayersOnMap(
     }
   }
 }
+
+const NPC_TITLES_OCCUPATIONS = new Set([
+  'the', 'a', 'an', 'old', 'young', 'elder', 'little', 'big', 'great',
+  'man', 'woman', 'lady', 'sir', 'madam', 'mister', 'mr', 'mrs', 'ms',
+  'father', 'mother', 'brother', 'sister', 'doctor', 'dr', 'captain', 'commander',
+  'officer', 'sergeant', 'lieutenant', 'chief', 'sheriff', 'mayor', 'master',
+  'lord', 'king', 'queen', 'prince', 'princess', 'baron', 'count', 'duke',
+  'blacksmith', 'smith', 'shopkeeper', 'merchant', 'vendor', 'trader',
+  'innkeeper', 'bartender', 'barkeep', 'tavernkeeper', 'herbalist', 'alchemist',
+  'apothecary', 'cleric', 'priest', 'priestess', 'ranger', 'hunter', 'farmer',
+  'fisherman', 'sailor', 'pirate', 'thief', 'rogue', 'wizard', 'mage', 'sorcerer',
+  'knight', 'paladin', 'warrior', 'guard', 'town guard', 'city guard', 'watchman', 'sentry', 'patrol'
+]);
+
+/**
+ * Normalizes an NPC name to identify its core entity identity, detect distinct numbering,
+ * and determine if genuine cloning or illusion context applies.
+ */
+export function normalizeNpcName(raw: string): {
+  normalized: string;
+  cleanName: string;
+  coreTokens: string[];
+  numberIndex?: number;
+  letterIndex?: string;
+  isExplicitClone: boolean;
+} {
+  let name = String(raw || '').trim();
+  name = name.replace(/[-_]npc$/i, '').trim();
+
+  // Genuine cloning context: Mirror Image spell, simulacrum, clone vat, doppelganger, etc.
+  const isExplicitClone = /\b(?:clone|illusion|duplicate|mirror\s*image|simulacrum|doppelganger|copy|replica|decoy|shadow\s*clone|split|mitosis|hologram|projection)\b/i.test(name);
+
+  let numberIndex: number | undefined;
+  let letterIndex: string | undefined;
+
+  const numMatch = name.match(/(?:^|[\s_-])#?(\d+)\b/);
+  if (numMatch) {
+    numberIndex = parseInt(numMatch[1], 10);
+  }
+
+  const letterMatch = name.match(/(?:^|[\s_-])([A-Z])\b/);
+  if (!numberIndex && letterMatch && !['A', 'I'].includes(letterMatch[1])) {
+    letterIndex = letterMatch[1];
+  }
+
+  const decamel = name.replace(/([a-z])([A-Z])/g, '$1 $2');
+  const clean = decamel.replace(/[-_]+/g, ' ').replace(/[()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  const lower = clean.toLowerCase();
+
+  const tokens = lower.split(/\s+/).filter(t => t.length > 0 && !/^\d+$/.test(t));
+  const coreTokens = tokens.filter(t => !NPC_TITLES_OCCUPATIONS.has(t));
+
+  return {
+    normalized: lower,
+    cleanName: clean,
+    coreTokens: coreTokens.length > 0 ? coreTokens : tokens,
+    numberIndex,
+    letterIndex,
+    isExplicitClone
+  };
+}
+
+/**
+ * Determines whether two NPC names refer to the exact same NPC entity
+ * (preventing accidental cloning with slight name variations),
+ * while preserving distinct numbered minions and genuine magical/sci-fi clones.
+ */
+export function areNpcsSameEntity(rawA: string, rawB: string): boolean {
+  if (!rawA || !rawB) return false;
+  if (rawA === rawB) return true;
+
+  const a = normalizeNpcName(rawA);
+  const b = normalizeNpcName(rawB);
+
+  // If either entity has an explicit cloning/illusion tag, do NOT merge them unless identical clone tag
+  if (a.isExplicitClone || b.isExplicitClone) {
+    return a.normalized === b.normalized;
+  }
+
+  // If one has index 1 and another has index 2 (e.g. Bandit 1 vs Bandit 2), they are DIFFERENT entities
+  if (a.numberIndex !== undefined && b.numberIndex !== undefined && a.numberIndex !== b.numberIndex) {
+    return false;
+  }
+  if (a.letterIndex !== undefined && b.letterIndex !== undefined && a.letterIndex !== b.letterIndex) {
+    return false;
+  }
+
+  // Exact normalized match e.g. "maeve" === "maeve"
+  if (a.normalized === b.normalized) return true;
+
+  // Normalized without spaces e.g. "townguard" === "townguard"
+  const aNoSpace = a.normalized.replace(/\s+/g, '');
+  const bNoSpace = b.normalized.replace(/\s+/g, '');
+  if (aNoSpace === bNoSpace) return true;
+
+  // Check core tokens (e.g. "Garrick" vs "Blacksmith Garrick" vs "Garrick the Blacksmith")
+  if (a.coreTokens.length > 0 && b.coreTokens.length > 0) {
+    const aCore = a.coreTokens.join(' ');
+    const bCore = b.coreTokens.join(' ');
+    if (aCore === bCore) {
+      if (a.numberIndex === b.numberIndex && a.letterIndex === b.letterIndex) {
+        return true;
+      }
+    }
+    // Subset match: e.g. "Jenkins" in "Old Man Jenkins" or "Garrick" in "Garrick Ironfoot"
+    if (a.coreTokens.length === 1 && b.coreTokens.includes(a.coreTokens[0])) {
+      if (a.numberIndex === b.numberIndex && a.letterIndex === b.letterIndex) {
+        return true;
+      }
+    }
+    if (b.coreTokens.length === 1 && a.coreTokens.includes(b.coreTokens[0])) {
+      if (a.numberIndex === b.numberIndex && a.letterIndex === b.letterIndex) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Deduplicates NPCs on map pages.
+ * Prevents accidental duplicate / cloned NPCs with slight name variations from cluttering the map,
+ * while preserving genuine distinct numbered entities and explicit clone mechanics.
+ */
+export function deduplicateNpcsOnMap(pages: any[], fileList: string[] = []): void {
+  if (!pages || !Array.isArray(pages)) return;
+
+  // Build a lookup of established canonical NPC names from existing -npc.txt files
+  const canonicalNpcNames = fileList
+    .filter(f => f.endsWith('-npc.txt'))
+    .map(f => f.replace(/\.txt$/, ''));
+
+  for (const page of pages) {
+    if (!Array.isArray(page.npcs) || page.npcs.length <= 1) continue;
+
+    const uniqueNpcs: any[] = [];
+    for (const npc of page.npcs) {
+      if (!npc || typeof npc !== 'object') continue;
+      const rawName = String(npc.name || npc.charName || npc.characterName || '').trim();
+      if (!rawName) continue;
+
+      // Ensure -npc suffix
+      let normalizedName = rawName.endsWith('-npc') ? rawName : `${rawName}-npc`;
+
+      // Check if there is an established canonical file name that matches this entity
+      const canonicalMatch = canonicalNpcNames.find(c => areNpcsSameEntity(c, normalizedName));
+      if (canonicalMatch) {
+        normalizedName = canonicalMatch;
+      }
+
+      const existingIdx = uniqueNpcs.findIndex(existing => areNpcsSameEntity(existing.name, normalizedName));
+      if (existingIdx >= 0) {
+        // Duplicate / cloned NPC detected! Merge into a single canonical entity
+        const existing = uniqueNpcs[existingIdx];
+        // Prefer canonical name from file or cleaner title
+        if (canonicalMatch && existing.name !== canonicalMatch) {
+          existing.name = canonicalMatch;
+        }
+        // Preserve richer metadata
+        if (!existing.vision && npc.vision) existing.vision = npc.vision;
+        if ((existing.facing === undefined || existing.facing === 0) && npc.facing !== undefined && npc.facing !== 0) {
+          existing.facing = npc.facing;
+        }
+        if (npc.description && !existing.description) {
+          existing.description = npc.description;
+        }
+      } else {
+        uniqueNpcs.push({
+          ...npc,
+          name: normalizedName
+        });
+      }
+    }
+
+    page.npcs = uniqueNpcs;
+  }
+}
+
+/**
+ * Reconciles incoming and existing NPC files to prevent duplicate / cloned NPC files
+ * with slight name variations (e.g. "Garrick-npc.txt" and "BlacksmithGarrick-npc.txt").
+ */
+export function reconcileNpcFiles(fs: any, incomingFiles?: Record<string, any>): { reconciled: boolean; mergedCount: number } {
+  if (!fs) return { reconciled: false, mergedCount: 0 };
+  let mergedCount = 0;
+
+  const existingFiles = (typeof fs.list === 'function' ? fs.list() : Object.keys(fs.getAll?.() || {})) as string[];
+  const existingNpcFiles = existingFiles.filter(f => f.endsWith('-npc.txt'));
+
+  // 1. Reconcile incoming files against established existing NPC files
+  if (incomingFiles && typeof incomingFiles === 'object') {
+    const incomingNames = Object.keys(incomingFiles).filter(f => f.endsWith('-npc.txt'));
+    for (const inName of incomingNames) {
+      const matchExisting = existingNpcFiles.find(ex => ex !== inName && areNpcsSameEntity(ex.replace(/\.txt$/, ''), inName.replace(/\.txt$/, '')));
+      if (matchExisting) {
+        // Incoming file is a variation of an already established NPC file!
+        // Preserve content in the canonical established filename and remove the duplicate variation
+        const incomingData = incomingFiles[inName];
+        incomingFiles[matchExisting] = incomingData;
+        delete incomingFiles[inName];
+        if (fs.exists(inName)) {
+          fs.delete(inName);
+        }
+        mergedCount++;
+      }
+    }
+  }
+
+  // 2. Reconcile any existing duplicate NPC files already in the filesystem
+  const currentNpcFiles = (typeof fs.list === 'function' ? fs.list() : Object.keys(fs.getAll?.() || {})) as string[];
+  const npcFiles = currentNpcFiles.filter(f => f.endsWith('-npc.txt'));
+  const visited = new Set<string>();
+
+  for (let i = 0; i < npcFiles.length; i++) {
+    const fileA = npcFiles[i];
+    if (visited.has(fileA)) continue;
+
+    for (let j = i + 1; j < npcFiles.length; j++) {
+      const fileB = npcFiles[j];
+      if (visited.has(fileB)) continue;
+
+      if (areNpcsSameEntity(fileA.replace(/\.txt$/, ''), fileB.replace(/\.txt$/, ''))) {
+        // Duplicate files found! Keep the cleaner/canonical one (shorter or without underscores)
+        const nameA = fileA.replace(/\.txt$/, '');
+        const nameB = fileB.replace(/\.txt$/, '');
+        const keepA = nameA.length <= nameB.length && !nameA.includes('_');
+        const canonicalFile = keepA ? fileA : fileB;
+        const duplicateFile = keepA ? fileB : fileA;
+
+        // If duplicate has content and canonical is shorter, preserve the richer content
+        const contCanon = fs.read(canonicalFile) || '';
+        const contDupe = fs.read(duplicateFile) || '';
+        if (contDupe.length > contCanon.length) {
+          fs.write(canonicalFile, contDupe);
+        }
+
+        fs.delete(duplicateFile);
+        visited.add(duplicateFile);
+        mergedCount++;
+      }
+    }
+  }
+
+  return { reconciled: mergedCount > 0, mergedCount };
+}
