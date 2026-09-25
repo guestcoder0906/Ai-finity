@@ -4082,12 +4082,25 @@ export class WeightInventoryEngine {
 
     // Auto-populate held items from equipped weapons/shields if currentlyHolding is empty
     if (currentlyHolding.length === 0 && holdingCapacityApplies && maxStandardHoldCount > 0 && equippedGear.length > 0) {
-      const weaponShieldWords = ['sword', 'dagger', 'blade', 'spear', 'staff', 'bow', 'axe', 'mace', 'wand', 'shield', 'lantern', 'torch', 'hammer', 'scythe'];
+      const weaponShieldWords = [
+        'sword', 'dagger', 'blade', 'spear', 'staff', 'bow', 'axe', 'mace', 'wand',
+        'shield', 'lantern', 'torch', 'hammer', 'scythe', 'rifle', 'crossbow', 'gun',
+        'blaster', 'musket', 'shotgun', 'carbine', 'pistol', 'revolver', 'sling'
+      ];
       for (const eq of equippedGear) {
         const eqLower = eq.name.toLowerCase();
         if (weaponShieldWords.some(w => eqLower.includes(w))) {
-          // Bows are held in 1 hand when equipped/carried; they only require 2 hands dynamically when nocking/drawing an arrow to shoot
-          const isTwoHanded = eqLower.includes('greatsword') || eqLower.includes('greataxe') || eqLower.includes('maul') || eqLower.includes('greatclub') || eqLower.includes('two-handed') || eqLower.includes('staff') || eqLower.includes('spear') || eqLower.includes('halberd') || eqLower.includes('pike') || eqLower.includes('bow and arrow') || eqLower.includes('nocked arrow');
+          // Ranged weapons (bows, crossbows, rifles, muskets, etc.) are usually held in 1 hand when equipped or carried.
+          // They only require 2 hands when actively nocking/drawing, aiming down sights, or when contextual narrative dictates two-handed use.
+          const isRanged = eqLower.includes('bow') || eqLower.includes('crossbow') || eqLower.includes('rifle') ||
+                           eqLower.includes('musket') || eqLower.includes('shotgun') || eqLower.includes('blaster') ||
+                           eqLower.includes('carbine') || eqLower.includes('gun') || eqLower.includes('sling');
+          const isActivelyTwoHandedRanged = eqLower.includes('bow and arrow') || eqLower.includes('nocked arrow') ||
+                                           eqLower.includes('aiming') || eqLower.includes('drawn string') || eqLower.includes('braced');
+          const isTwoHandedMelee = eqLower.includes('greatsword') || eqLower.includes('greataxe') || eqLower.includes('maul') ||
+                                  eqLower.includes('greatclub') || eqLower.includes('halberd') || eqLower.includes('pike') ||
+                                  (!isRanged && (eqLower.includes('staff') || eqLower.includes('spear') || eqLower.includes('two-handed')));
+          const isTwoHanded = isActivelyTwoHandedRanged || isTwoHandedMelee;
           const limb = isTwoHanded ? 'Both Hands (Two-Handed)' : (currentlyHolding.length === 0 ? 'Main Hand' : 'Off Hand');
           const isOverflow = currentlyHolding.length >= maxStandardHoldCount;
           currentlyHolding.push({
