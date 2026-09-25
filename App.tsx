@@ -407,6 +407,7 @@ function App() {
   }, [currentUser, guestId]);
 
   const isSyncingPurchasesRef = useRef(false);
+  const lastSyncTimestampByUid = useRef<Record<string, number>>({});
   const notifiedPurchaseIdsRef = useRef<Set<string>>(new Set());
   const lastPurchaseToastTimeRef = useRef<number>(0);
 
@@ -419,6 +420,11 @@ function App() {
   ) => {
     const user = targetUser || currentUser;
     if (!user || !user.uid || isSyncingPurchasesRef.current) return;
+    const now = Date.now();
+    if (lastSyncTimestampByUid.current[user.uid] && now - lastSyncTimestampByUid.current[user.uid] < 4000) {
+      return; // Debounce rapid back-to-back syncs during auth initialization
+    }
+    lastSyncTimestampByUid.current[user.uid] = now;
     isSyncingPurchasesRef.current = true;
 
     try {
@@ -454,10 +460,16 @@ function App() {
           // Collect known transactions from localStorage and UserProfile
           const localTx = getLocalTransactions(user.uid);
           const knownIds = new Set<string>();
+          const creditedTxSet = new Set<string>();
+
           localTx.forEach((t) => {
             if (t?.id) {
               knownIds.add(t.id);
               knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              if (t.actionDelta || t.itemType === 'pack') {
+                creditedTxSet.add(t.id);
+                creditedTxSet.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              }
             }
           });
 
@@ -466,14 +478,34 @@ function App() {
             user.appliedTransactionIds.forEach((id) => {
               knownIds.add(id);
               knownIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              creditedTxSet.add(id);
+              creditedTxSet.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
             });
           }
           if (Array.isArray(user.creditedActionTxIds)) {
             user.creditedActionTxIds.forEach((id) => {
               knownIds.add(id);
               knownIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              creditedTxSet.add(id);
+              creditedTxSet.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
             });
           }
+
+          // Also load credited tx IDs from localStorage
+          try {
+            const rawCred = localStorage.getItem(`aifinity_credited_txs_${user.uid}`);
+            if (rawCred) {
+              const parsedCred = JSON.parse(rawCred);
+              if (Array.isArray(parsedCred)) {
+                parsedCred.forEach((id: string) => {
+                  knownIds.add(id);
+                  knownIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+                  creditedTxSet.add(id);
+                  creditedTxSet.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+                });
+              }
+            }
+          } catch (e) {}
 
           // Also load persistently notified IDs from localStorage to avoid spamming after page reload
           try {
@@ -496,6 +528,10 @@ function App() {
               if (t?.id) {
                 knownIds.add(t.id);
                 knownIds.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+                if (t.actionDelta || t.itemType === 'pack') {
+                  creditedTxSet.add(t.id);
+                  creditedTxSet.add(String(t.id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+                }
               }
             });
           } catch (e) {
@@ -505,7 +541,6 @@ function App() {
           // Include in-memory notified IDs to prevent any duplicate toast notifications
           notifiedPurchaseIdsRef.current.forEach((id) => knownIds.add(id));
 
-          const creditedTxSet = new Set<string>(user.creditedActionTxIds || []);
           const newTxIdsToCredit: string[] = [];
           let totalNewCredits = 0;
           let newlyFoundPurchases = false;
@@ -530,28 +565,28 @@ function App() {
             }
 
             const safeId = String(p.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const isAlreadyCredited = creditedTxSet.has(p.id) || creditedTxSet.has(safeId);
             const isAlreadyKnown =
+              isAlreadyCredited ||
               knownIds.has(p.id) ||
               knownIds.has(safeId) ||
               notifiedPurchaseIdsRef.current.has(p.id) ||
               notifiedPurchaseIdsRef.current.has(safeId);
 
-            const isAlreadyCredited = creditedTxSet.has(p.id) || creditedTxSet.has(safeId);
-
-            if (!isAlreadyKnown) {
+            if (!isAlreadyKnown && !isAlreadyCredited) {
               newlyFoundPurchases = true;
               knownIds.add(p.id);
               knownIds.add(safeId);
+              creditedTxSet.add(p.id);
+              creditedTxSet.add(safeId);
               notifiedPurchaseIdsRef.current.add(p.id);
               notifiedPurchaseIdsRef.current.add(safeId);
 
               // ONLY credit actions if this exact transaction ID was NEVER credited to this account
-              if (!isAlreadyCredited && p.itemType === 'pack' && p.actionDelta > 0) {
+              if (p.itemType === 'pack' && p.actionDelta > 0) {
                 totalNewCredits += p.actionDelta;
                 newTxIdsToCredit.push(p.id);
                 newTxIdsToCredit.push(safeId);
-                creditedTxSet.add(p.id);
-                creditedTxSet.add(safeId);
               }
 
               const tx: PaymentTransactionRecord = {
@@ -577,10 +612,11 @@ function App() {
             }
           }
 
-          // Persist all known IDs to localStorage so notifications never spam
+          // Persist all known IDs and credited IDs to localStorage so notifications and duplicate restores never happen
           try {
             const allKnown = Array.from(knownIds);
             localStorage.setItem(`aifinity_notified_purchases_${user.uid}`, JSON.stringify(allKnown.slice(-100)));
+            localStorage.setItem(`aifinity_credited_txs_${user.uid}`, JSON.stringify(Array.from(creditedTxSet).slice(-200)));
           } catch (e) {}
 
           const currentTierRank = tierRank[user.tier || 'free'] || 0;

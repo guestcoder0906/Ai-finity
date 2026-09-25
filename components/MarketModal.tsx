@@ -240,6 +240,24 @@ export const MarketModal: React.FC<MarketModalProps> = ({
             existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
           });
         }
+        if (Array.isArray(currentUser.appliedTransactionIds)) {
+          currentUser.appliedTransactionIds.forEach((id) => {
+            existingIds.add(id);
+            existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+        }
+        try {
+          const rawCred = localStorage.getItem(`aifinity_credited_txs_${currentUser.uid}`);
+          if (rawCred) {
+            const parsedCred = JSON.parse(rawCred);
+            if (Array.isArray(parsedCred)) {
+              parsedCred.forEach((id: string) => {
+                existingIds.add(id);
+                existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              });
+            }
+          }
+        } catch (e) {}
 
         let totalNewCredits = 0;
         let newlyRestoredCount = 0;
@@ -899,6 +917,17 @@ export const MarketModal: React.FC<MarketModalProps> = ({
                 </span>
                 <span className="text-[10px] text-neutral-400 ml-1">
                   {isGuest ? "(5 trial actions)" : "(+10 beta bonus)"}
+                </span>
+              </div>
+            )}
+            {!effectiveStatus.isAlphaPhase && !isGuest && (
+              <div>
+                <span className="text-neutral-400">Free Total Actions: </span>
+                <span className="font-bold text-emerald-400">
+                  {effectiveStatus.freeStackedActions ?? effectiveStatus.dailyFreeRemaining ?? 0}
+                </span>
+                <span className="text-[10px] text-neutral-400 ml-1">
+                  (max {effectiveStatus.maxFreeStack || 200})
                 </span>
               </div>
             )}

@@ -841,24 +841,47 @@ export class ActionLimitService {
     }
 
     const existingCredited = new Set<string>(user.creditedActionTxIds || []);
+    if (Array.isArray(user.appliedTransactionIds)) {
+      user.appliedTransactionIds.forEach((id) => {
+        existingCredited.add(id);
+        existingCredited.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+      });
+    }
+    try {
+      const rawCred = safeStorage.getItem(`aifinity_credited_txs_${user.uid}`);
+      if (rawCred) {
+        const parsed = JSON.parse(rawCred);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((id: string) => {
+            existingCredited.add(id);
+            existingCredited.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+        }
+      }
+    } catch (e) {}
+
     let filteredAddedCredits = addedCredits;
 
     // Deduplicate against already credited transaction IDs
-    if (newTxIdsToCredit && newTxIdsToCredit.length > 0) {
-      const trulyNewTxIds: string[] = [];
-      for (const id of newTxIdsToCredit) {
-        const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        if (!existingCredited.has(id) && !existingCredited.has(safeId)) {
-          trulyNewTxIds.push(id);
-          trulyNewTxIds.push(safeId);
-          existingCredited.add(id);
-          existingCredited.add(safeId);
-        }
-      }
-
-      // If all passed transaction IDs have already been credited to this account, do not add more actions
-      if (trulyNewTxIds.length === 0 && addedCredits > 0) {
+    if (newTxIdsToCredit !== undefined) {
+      if (newTxIdsToCredit.length === 0) {
         filteredAddedCredits = 0;
+      } else {
+        const trulyNewTxIds: string[] = [];
+        for (const id of newTxIdsToCredit) {
+          const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+          if (!existingCredited.has(id) && !existingCredited.has(safeId)) {
+            trulyNewTxIds.push(id);
+            trulyNewTxIds.push(safeId);
+            existingCredited.add(id);
+            existingCredited.add(safeId);
+          }
+        }
+
+        // If none of the passed transaction IDs are genuinely new, do not add more actions
+        if (trulyNewTxIds.length === 0) {
+          filteredAddedCredits = 0;
+        }
       }
     }
 
@@ -878,27 +901,16 @@ export class ActionLimitService {
     }
 
     let expiresStr = user.subscriptionExpiresAt;
-
-    // If subscription is being restored/activated
-    let tierBonusActions = 0;
-    if (newTier && resolvedTier === newTier) {
-      if (!expiresStr || new Date(expiresStr).getTime() < Date.now()) {
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 30);
-        expiresStr = expiresAt.toISOString();
-      }
-      if (newTier === 'adventurer') {
-        tierBonusActions = 300;
-      } else if (newTier === 'legendary') {
-        tierBonusActions = 600;
-      } else if (newTier === 'celestial') {
-        tierBonusActions = 1000;
-      }
+    if (newTier && (!expiresStr || new Date(expiresStr).getTime() < Date.now())) {
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 30);
+      expiresStr = expiresAt.toISOString();
     }
 
     const currentCredits = typeof user.actionCredits === 'number' ? user.actionCredits : status.purchasedCredits;
-    // Total credits = existing + packs + subscription bonuses
-    let finalCredits = currentCredits + filteredAddedCredits + (newTier && user.tier !== newTier ? tierBonusActions : 0);
+    // Total credits = existing credits + truly new verified action pack credits
+    // Subscription bonus actions are granted once on initial checkout purchase, NEVER re-added repeatedly on login/restore!
+    let finalCredits = currentCredits + filteredAddedCredits;
 
     // If a minimum floor of total purchased credits was provided, ensure credits never drop below it
     if (typeof minActionCreditsFloor === 'number' && finalCredits < minActionCreditsFloor) {
@@ -914,6 +926,10 @@ export class ActionLimitService {
     if (resolvedTier === 'legendary' || resolvedTier === 'celestial' || isDefaultAdmin(user.email, user.username)) {
       user.showGlowingName = true;
     }
+
+    try {
+      safeStorage.setItem(`aifinity_credited_txs_${user.uid}`, JSON.stringify(Array.from(existingCredited).slice(-200)));
+    } catch (e) {}
 
     this.saveLocalState(user, guestId, {
       tier: resolvedTier,

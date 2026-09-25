@@ -84,6 +84,24 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
               existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
             });
           }
+          if (Array.isArray(currentUser.appliedTransactionIds)) {
+            currentUser.appliedTransactionIds.forEach((id) => {
+              existingIds.add(id);
+              existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+            });
+          }
+          try {
+            const rawCred = localStorage.getItem(`aifinity_credited_txs_${currentUser.uid}`);
+            if (rawCred) {
+              const parsedCred = JSON.parse(rawCred);
+              if (Array.isArray(parsedCred)) {
+                parsedCred.forEach((id: string) => {
+                  existingIds.add(id);
+                  existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+                });
+              }
+            }
+          } catch (e) {}
 
           let newCredits = 0;
           let highestTier: string | null = null;
@@ -127,7 +145,7 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
             }
           }
 
-          if (newCredits > 0 || highestTier) {
+          if (newCredits > 0 || (highestTier && highestTier !== currentUser.tier)) {
             const updated = await ActionLimitService.applyRestoredPurchases(
               currentUser,
               newCredits,
@@ -188,6 +206,24 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
             existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
           });
         }
+        if (Array.isArray(currentUser.appliedTransactionIds)) {
+          currentUser.appliedTransactionIds.forEach((id) => {
+            existingIds.add(id);
+            existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+          });
+        }
+        try {
+          const rawCred = localStorage.getItem(`aifinity_credited_txs_${currentUser.uid}`);
+          if (rawCred) {
+            const parsedCred = JSON.parse(rawCred);
+            if (Array.isArray(parsedCred)) {
+              parsedCred.forEach((id: string) => {
+                existingIds.add(id);
+                existingIds.add(String(id).replace(/[^a-zA-Z0-9_-]/g, '_'));
+              });
+            }
+          }
+        } catch (e) {}
 
         let newCredits = 0;
         let highestTier: string | null = null;
@@ -232,7 +268,7 @@ export const ReceiptsList: React.FC<ReceiptsListProps> = ({
         }
 
         let updated = currentUser;
-        if (newCredits > 0 || highestTier) {
+        if (newCredits > 0 || (highestTier && highestTier !== currentUser.tier)) {
           updated = await ActionLimitService.applyRestoredPurchases(
             currentUser,
             newCredits,
