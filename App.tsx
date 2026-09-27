@@ -1154,10 +1154,10 @@ function App() {
     }
 
     if (active) {
-      // Safety watchdog: Automatically release lock if stuck for 30s
+      // Safety watchdog: Automatically release lock if stuck for 2 minutes (145s buffer to allow full 120s AI call to complete)
       watchdogTimerRef.current = setTimeout(() => {
         if (processingCountRef.current > 0) {
-          console.warn("[Watchdog] Processing lock automatically released after 30s timeout.");
+          console.warn("[Watchdog] Processing lock automatically released after 2 minute timeout.");
           processingCountRef.current = 0;
           setIsProcessing(false);
           aiEngine.cancelAndReset();
@@ -1165,12 +1165,12 @@ function App() {
             ...prev,
             {
               id: 'timeout-' + Date.now(),
-              text: 'The action took longer than expected and timed out. Action lock released.',
+              text: 'The action took longer than expected (2 minutes) and timed out. Action lock released.',
               type: 'system'
             }
           ]);
         }
-      }, 65000);
+      }, 145000);
     }
   };
 

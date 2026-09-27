@@ -990,11 +990,28 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
               }
             }
 
-            const areaTypeLower = area.type?.toLowerCase();
-            const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure';
+            const areaTypeLower = String(area.type || '').toLowerCase();
+            const areaNameLower = String(area.name || '').toLowerCase();
+            const isItemOrWeaponType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure' || areaTypeLower === 'equipment' || areaTypeLower === 'range' || areaTypeLower === 'weapon_range';
 
-            // If item/weapon area is held or attached to an entity, it is attached to the character, not loose on ground
-            if (isItemType && (area.isHeld || area.attachedTo)) return null;
+            // If area is marked held or attached to an entity, or belongs to a character's held/equipped gear, do not draw it loose on ground
+            if (area.isHeld || area.attachedTo || (area.holder && area.holder !== 'ground')) return null;
+
+            // If area represents an item or weapon range that is currently held by any player or NPC, suppress loose rendering
+            if (isItemOrWeaponType || areaNameLower.includes('range') || areaNameLower.includes('reach')) {
+              const matchesHeld = (currentPage.players || []).some((pl: any) =>
+                (pl.heldItems || []).some((hi: any) => {
+                  const hiClean = (hi.cleanName || hi.name || '').toLowerCase();
+                  return hiClean && (areaNameLower.includes(hiClean) || hiClean.includes(areaNameLower));
+                })
+              ) || (currentPage.npcs || []).some((npc: any) =>
+                (npc.heldItems || []).some((hi: any) => {
+                  const hiClean = (hi.cleanName || hi.name || '').toLowerCase();
+                  return hiClean && (areaNameLower.includes(hiClean) || hiClean.includes(areaNameLower));
+                })
+              );
+              if (matchesHeld) return null;
+            }
 
             return (
               <g key={area.id || i} className="group">
@@ -1119,7 +1136,20 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {currentPage.items?.map((item: any, i: number) => {
             if (isEntityHidden(item.name)) return null;
             // If item is held by a player or NPC, it is attached to them, not loose on ground!
-            if (item.isHeld || item.attachedTo) return null;
+            if (item.isHeld || item.attachedTo || (item.holder && item.holder !== 'ground')) return null;
+            const itemNameLower = String(item.name || '').toLowerCase();
+            const matchesHeldItem = (currentPage.players || []).some((pl: any) =>
+              (pl.heldItems || []).some((hi: any) => {
+                const hiClean = (hi.cleanName || hi.name || '').toLowerCase();
+                return hiClean && (itemNameLower.includes(hiClean) || hiClean.includes(itemNameLower));
+              })
+            ) || (currentPage.npcs || []).some((npc: any) =>
+              (npc.heldItems || []).some((hi: any) => {
+                const hiClean = (hi.cleanName || hi.name || '').toLowerCase();
+                return hiClean && (itemNameLower.includes(hiClean) || hiClean.includes(itemNameLower));
+              })
+            );
+            if (matchesHeldItem) return null;
             const ix = Number(item.x) || 0;
             const iy = Number(item.y) || 0;
             const iName = parseName(item.name || 'Item');

@@ -932,7 +932,8 @@ export class AIEngine {
           const res = await Promise.race([
             task(),
             new Promise<T>((_, reject) => {
-              timer = setTimeout(() => reject(new Error("AI Action processing timed out")), 65000);
+              // 2-minute processing timeout with safety buffer for task queue completion (140s)
+              timer = setTimeout(() => reject(new Error("AI Action processing timed out")), 140000);
             })
           ]);
           if (timer) clearTimeout(timer);
@@ -1365,9 +1366,14 @@ CRITICAL REMINDERS:
           }
 
           return finalResponse;
-        } catch (e) {
+        } catch (e: any) {
           console.error("Processing failed", e);
-          return { narrative: "Error processing action." };
+          const isTimeout = e?.message?.includes('timed out') || e?.message?.includes('timeout') || e?.name === 'AbortError';
+          return {
+            narrative: isTimeout
+              ? "The AI action processing timed out (exceeded 2 minutes). Please try your action again or break it down into smaller steps."
+              : "Error processing action."
+          };
         }
     });
   }
@@ -5322,13 +5328,14 @@ INSTRUCTIONS:
   private async callAI(prompt: string, mapScreenshot?: string, modelName?: string): Promise<string> {
     const controller = new AbortController();
     this.currentAbortController = controller;
+    // 2-minute request timeout (120,000ms)
     const timeoutId = setTimeout(() => {
       try {
         controller.abort();
       } catch (e) {
         // ignore
       }
-    }, 60000);
+    }, 120000);
 
     try {
       let contents: any;
@@ -5427,7 +5434,7 @@ INSTRUCTIONS:
         this.currentAbortController = null;
       }
       if (e?.name === 'AbortError' || controller.signal.aborted) {
-        throw new Error('AI request timed out or was cancelled.');
+        throw new Error('AI request timed out (exceeded 2 minutes) or was cancelled.');
       }
       console.error("Gemini API Call Failed", e);
       throw e;

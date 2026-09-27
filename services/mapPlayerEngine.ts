@@ -1226,31 +1226,45 @@ export function reconcileHeldItemsOnMap(
       }
     }
 
-    // 4. Reconcile page.areas of type 'item', 'weapon', 'loot', 'equipment'
+    // 4. Reconcile page.areas: catch held items, weapons, and range areas
     if (Array.isArray(page.areas)) {
       for (const area of page.areas) {
         if (!area || typeof area !== 'object') continue;
         const aType = String(area.type || '').toLowerCase();
         const aName = String(area.name || '').toLowerCase();
 
-        if (
+        // Check if area is an item, weapon, equipment, range indicator, or explicitly attached/held
+        const shouldCheck =
           aType === 'item' ||
           aType === 'weapon' ||
           aType === 'equipment' ||
           aType === 'loot' ||
+          aType === 'range' ||
+          aType === 'weapon_range' ||
           aName.includes('range') ||
+          aName.includes('reach') ||
           area.attachedTo ||
-          area.isHeld
-        ) {
-          const match = findHolderForItem(area.name, area);
+          area.isHeld ||
+          area.range !== undefined ||
+          activeHolders.some(h => h.heldItems.some(hi => aName.includes(hi.cleanName.toLowerCase())));
+
+        if (shouldCheck) {
+          const match = findHolderForItem(area.name, area) || (
+            // If area is a generic weapon/attack range and there is an active holder with a ranged weapon
+            (aName.includes('range') || aType === 'range' || aType === 'weapon_range') && activeHolders.length > 0
+              ? { holder: activeHolders[0], heldItem: activeHolders[0].heldItems.find(h => h.range) || activeHolders[0].heldItems[0] || { name: area.name, cleanName: area.name, range: area.radius || area.range } }
+              : null
+          );
+
           if (match) {
             const { holder, heldItem } = match;
             const ax = Number(area.x ?? area.cx) || 0;
             const ay = Number(area.y ?? area.cy) || 0;
             const dist = Math.sqrt((ax - holder.x) ** 2 + (ay - holder.y) ** 2);
 
-            if (dist > 1.5) {
+            if (dist > 1.0) {
               fixedFarAwayCount++;
+              console.log(`[Map Item Engine] Corrected held area "${area.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
             }
 
             if (area.cx !== undefined) area.cx = holder.x;
