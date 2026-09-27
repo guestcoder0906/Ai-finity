@@ -992,7 +992,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
             const areaTypeLower = String(area.type || '').toLowerCase();
             const areaNameLower = String(area.name || '').toLowerCase();
-            const isItemOrWeaponType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure' || areaTypeLower === 'equipment' || areaTypeLower === 'range' || areaTypeLower === 'weapon_range';
+            const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure' || areaTypeLower === 'equipment';
+            const isItemOrWeaponType = isItemType || areaTypeLower === 'range' || areaTypeLower === 'weapon_range';
 
             // If area is marked held or attached to an entity, or belongs to a character's held/equipped gear, do not draw it loose on ground
             if (area.isHeld || area.attachedTo || (area.holder && area.holder !== 'ground')) return null;

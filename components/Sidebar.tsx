@@ -1052,14 +1052,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                                     </span>
                                   </div>
 
-                                  {Boolean(pStats.holdingCapacity.hasOverflowHold || (pStats.totalOverflowCount && pStats.totalOverflowCount > 0)) && (
+                                  {Boolean(pStats.holdingCapacity.hasOverflowHold) && (
                                     <div className="text-[8px] bg-red-950/60 border border-red-800/70 text-red-300 rounded px-1.5 py-0.5 flex items-center justify-between">
                                       <span className="flex items-center gap-1 truncate">
                                         <AlertTriangle size={9} className="text-red-400 shrink-0" />
-                                        <span>Accidental Drop Risk ({pStats.totalOverflowCount || 1} overflow):</span>
+                                        <span>Accidental Drop Risk ({pStats.currentlyHolding.filter(h => h.isOverflowHold).length} held overflow):</span>
                                       </span>
                                       <span className="font-mono font-bold text-red-200 shrink-0">
-                                        {pStats.overallOverflowDropChancePercent || pStats.holdingCapacity.overflowDropChancePercent || 25}% chance
+                                        {pStats.holdingCapacity.overflowDropChancePercent || 25}% chance
                                       </span>
                                     </div>
                                   )}

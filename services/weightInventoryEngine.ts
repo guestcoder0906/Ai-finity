@@ -1400,7 +1400,7 @@ export class WeightInventoryEngine {
         detectedLimb = 'Claws';
       } else if (matchLower.includes('trunk')) {
         detectedLimb = 'Trunk';
-      } else if (matchLower.includes('overflow') || matchLower.includes('under arm')) {
+      } else if ((matchLower.includes('overflow hold') || matchLower.includes('under arm')) && !/\b(no\s*overflow|0\s*overflow|overflow:\s*no)\b/i.test(text)) {
         detectedLimb = 'Overflow Hold';
         explicitOverflow = true;
       } else if (matchLower.includes('hand')) {
@@ -3644,15 +3644,26 @@ export class WeightInventoryEngine {
           if (cLower.includes('none') || cLower.includes('limbless') || cLower.includes('amorphous') || cLower.includes('spectral')) {
             customHoldingApplies = false;
             customHoldingMax = 0;
-          } else if (cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('1 item') || cLower.includes('1 hand')) {
-            customHoldingApplies = true;
-            customHoldingMax = 1;
-          } else if (cLower.includes('4') || cLower.includes('four')) {
+          } else if (/\b(4|four)\b/i.test(cLower) || cLower.includes('4 arms') || cLower.includes('4 hands') || cLower.includes('4 items')) {
             customHoldingApplies = true;
             customHoldingMax = 4;
-          } else if (cLower.includes('3') || cLower.includes('three')) {
+          } else if (/\b(3|three)\b/i.test(cLower) || cLower.includes('3 arms') || cLower.includes('3 hands') || cLower.includes('3 items')) {
             customHoldingApplies = true;
             customHoldingMax = 3;
+          } else if (
+            cLower.includes('2 hands') || cLower.includes('two hands') ||
+            cLower.includes('2 arms') || cLower.includes('two arms') ||
+            cLower.includes('humanoid') || cLower.includes('2 items') || cLower.includes('two items')
+          ) {
+            customHoldingApplies = true;
+            customHoldingMax = 2;
+          } else if (
+            cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('teeth') || cLower.includes('beak') ||
+            cLower.includes('1 hand') || cLower.includes('one hand') || cLower.includes('1 arm') || cLower.includes('one arm') ||
+            (/\b1\s*item\s*(?:hold|max)\b/i.test(cLower) && !cLower.includes('per hand') && !cLower.includes('each hand'))
+          ) {
+            customHoldingApplies = true;
+            customHoldingMax = 1;
           } else {
             customHoldingApplies = true;
             customHoldingMax = 2;
@@ -4095,15 +4106,26 @@ export class WeightInventoryEngine {
           if (cLower.includes('none') || cLower.includes('incorporeal') || cLower.includes('formless') || cLower.includes('cannot hold')) {
             customHoldingApplies = false;
             customHoldingMax = 0;
-          } else if (cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('1 item') || cLower.includes('1 hand')) {
-            customHoldingApplies = true;
-            customHoldingMax = 1;
-          } else if (cLower.includes('4') || cLower.includes('four')) {
+          } else if (/\b(4|four)\b/i.test(cLower) || cLower.includes('4 arms') || cLower.includes('4 hands') || cLower.includes('4 items')) {
             customHoldingApplies = true;
             customHoldingMax = 4;
-          } else if (cLower.includes('3') || cLower.includes('three')) {
+          } else if (/\b(3|three)\b/i.test(cLower) || cLower.includes('3 arms') || cLower.includes('3 hands') || cLower.includes('3 items')) {
             customHoldingApplies = true;
             customHoldingMax = 3;
+          } else if (
+            cLower.includes('2 hands') || cLower.includes('two hands') ||
+            cLower.includes('2 arms') || cLower.includes('two arms') ||
+            cLower.includes('humanoid') || cLower.includes('2 items') || cLower.includes('two items')
+          ) {
+            customHoldingApplies = true;
+            customHoldingMax = 2;
+          } else if (
+            cLower.includes('mouth') || cLower.includes('jaw') || cLower.includes('teeth') || cLower.includes('beak') ||
+            cLower.includes('1 hand') || cLower.includes('one hand') || cLower.includes('1 arm') || cLower.includes('one arm') ||
+            (/\b1\s*item\s*(?:hold|max)\b/i.test(cLower) && !cLower.includes('per hand') && !cLower.includes('each hand'))
+          ) {
+            customHoldingApplies = true;
+            customHoldingMax = 1;
           } else {
             customHoldingApplies = true;
             customHoldingMax = 2;
@@ -4211,10 +4233,13 @@ export class WeightInventoryEngine {
             }
           }
           const maxAllowed = customHoldingMax !== undefined ? customHoldingMax : 2;
-          const isOverflow = unwrapped.isOverflow || (occupiedSlots >= maxAllowed);
+          const isOverflow = occupiedSlots >= maxAllowed || (maxAllowed === 0 && (customHoldingApplies ?? true));
+          const effectiveLimb = (!isOverflow && (unwrapped.holdingLimb.toLowerCase().includes('overflow') || unwrapped.holdingLimb.toLowerCase().includes('under arm')))
+            ? (occupiedSlots === 0 ? 'Main Hand' : 'Off Hand')
+            : unwrapped.holdingLimb;
           const heldItem: HeldItemInfo = {
             ...item,
-            holdingLimb: unwrapped.holdingLimb,
+            holdingLimb: effectiveLimb,
             isOverflowHold: isOverflow,
             overflowWarning: isOverflow ? 'Held with overflow; risks dropping or getting knocked down depending on narrative context.' : undefined
           };
@@ -4505,17 +4530,61 @@ export class WeightInventoryEngine {
                                   (!isRanged && (eqLower.includes('staff') || eqLower.includes('spear') || eqLower.includes('two-handed')));
           const isTwoHanded = isActivelyTwoHandedRanged || isTwoHandedMelee;
           const limb = isTwoHanded ? 'Both Hands (Two-Handed)' : (currentlyHolding.length === 0 ? 'Main Hand' : 'Off Hand');
-          const isOverflow = currentlyHolding.length >= maxStandardHoldCount;
+          if (currentlyHolding.length >= maxStandardHoldCount) {
+            break;
+          }
           currentlyHolding.push({
             ...eq,
             holdingLimb: limb,
-            isOverflowHold: isOverflow,
-            overflowWarning: isOverflow ? 'Held with overflow; risks dropping or getting knocked down depending on narrative context.' : undefined
+            isOverflowHold: false,
+            overflowWarning: undefined
           });
           if (isTwoHanded && maxStandardHoldCount <= 2) {
             break;
           }
         }
+      }
+    }
+
+    // Authoritative slot assignment and overflow resolution for held items:
+    // If character's held items fit within maxStandardHoldCount, NONE of them can be in overflow!
+    let remainingStandardSlots = maxStandardHoldCount;
+    for (const h of currentlyHolding) {
+      const isTwoHanded = h.holdingLimb?.toLowerCase().includes('two-handed') ||
+                          h.holdingLimb?.toLowerCase().includes('both hands') ||
+                          h.name.toLowerCase().includes('two-handed') ||
+                          h.name.toLowerCase().includes('greatsword') ||
+                          h.name.toLowerCase().includes('greataxe') ||
+                          h.name.toLowerCase().includes('halberd') ||
+                          h.name.toLowerCase().includes('pike') ||
+                          h.name.toLowerCase().includes('maul');
+      const requiredSlots = isTwoHanded ? Math.min(2, maxStandardHoldCount || 2) : 1;
+
+      if (holdingCapacityApplies && remainingStandardSlots >= requiredSlots) {
+        h.isOverflowHold = false;
+        h.overflowWarning = undefined;
+        h.dropChancePercent = undefined;
+        remainingStandardSlots -= requiredSlots;
+
+        // If limb was tagged 'Overflow Hold' or 'under arm' from prior state, restore to legitimate limb
+        if (h.holdingLimb?.toLowerCase().includes('overflow') || h.holdingLimb?.toLowerCase().includes('under arm')) {
+          if (isTwoHanded && maxStandardHoldCount >= 2) {
+            h.holdingLimb = 'Both Hands (Two-Handed)';
+          } else if (remainingStandardSlots === maxStandardHoldCount - requiredSlots) {
+            h.holdingLimb = 'Main Hand';
+          } else {
+            h.holdingLimb = 'Off Hand';
+          }
+        }
+      } else if (holdingCapacityApplies) {
+        h.isOverflowHold = true;
+        if (!h.holdingLimb || (!h.holdingLimb.toLowerCase().includes('overflow') && !h.holdingLimb.toLowerCase().includes('under arm'))) {
+          h.holdingLimb = 'Overflow Hold';
+        }
+      } else {
+        h.isOverflowHold = false;
+        h.overflowWarning = undefined;
+        h.dropChancePercent = undefined;
       }
     }
 

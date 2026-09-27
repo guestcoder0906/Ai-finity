@@ -996,7 +996,7 @@ export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInf
       raw: rawLine,
       limb,
       range,
-      isOverflow: rawLine.toLowerCase().includes('overflow')
+      isOverflow: /\b(overflow:\s*yes|overflow\s*hold|under\s*arm)\b/i.test(rawLine) && !/\b(overflow:\s*no|no\s*overflow|0\s*overflow)\b/i.test(rawLine)
     });
   }
 
