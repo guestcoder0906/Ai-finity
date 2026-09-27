@@ -5286,6 +5286,27 @@ export class WeightInventoryEngine {
         newInvLines.push(invLine);
       }
 
+      // Ensure any active carried currencies are represented in container lines
+      if (stats.currency.carriedCurrencies && stats.currency.carriedCurrencies.length > 0) {
+        for (const cc of stats.currency.carriedCurrencies) {
+          if (!cc.name || cc.amount <= 0) continue;
+          const ccClean = WeightInventoryEngine.sanitizeCurrencyName(cc.name);
+          const alreadyInInv = newInvLines.some(l => {
+            const parsed = WeightInventoryEngine.parseCurrencyEntries(l);
+            return parsed.some(p => p.name.toLowerCase() === ccClean.toLowerCase() || p.name.toLowerCase().includes(ccClean.toLowerCase()));
+          });
+          if (!alreadyInInv) {
+            const targetCont = cc.container ||
+              stats.containers.find(ct => /pouch|wallet|purse|pocket|money\s*belt/i.test(ct.name))?.name ||
+              (stats.containers.length > 0 ? stats.containers[0].name : 'Coin Pouch');
+            const wPart = cc.weight !== undefined ? `: ${cc.weight} lbs` : '';
+            newInvLines.push(`  * ${cc.amount} ${ccClean}${wPart}. Container: [${targetCont}]`);
+            invModified = true;
+            changes.push(`Added carried currency ${cc.amount} ${ccClean} to container [${targetCont}]`);
+          }
+        }
+      }
+
       if (invModified) {
         const nonBlank = newInvLines.filter(l => l.trim() && !l.trim().startsWith('#'));
         if (nonBlank.length === 0) {

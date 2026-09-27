@@ -1097,36 +1097,11 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             ? `TEMPORAL DISPLACEMENT DETECTED: Jump to ${audit.temporalShift.destinationEpoch} (${audit.temporalShift.destinationTimestamp}). Anchor origin time: ${audit.temporalShift.storeAnchorTime}. Update WorldTime.txt according to schema!` 
             : "None";
 
-          // Auto-include player character file in filesToUpdate if health, energy, stats, inventory/containers, currency, or mounting/riding are affected (dynamic AI reasoning)
+          // Auto-include player character file in filesToUpdate whenever playerFile is identified
           if (playerFile) {
-            const isHealthAffected = Boolean(
-              audit.healthAudit?.isHealthAffected ||
-              (audit.healthAudit?.damageAndHealing && audit.healthAudit.damageAndHealing.length > 0)
-            );
-            const isEnergyAffected = Boolean(
-              !audit.energyAudit?.isMenialOrNonExertive &&
-              (audit.energyAudit?.isEnergyAffected ||
-              (audit.energyAudit && typeof audit.energyAudit.expectedChange === 'number' && audit.energyAudit.expectedChange !== 0))
-            );
-            const isInventoryAffected = Boolean(
-              audit.inventoryAudit?.isInventoryAffected ||
-              (audit.inventoryAudit?.items && audit.inventoryAudit.items.length > 0)
-            );
-            const isMountingAffected = Boolean(
-              audit.mountingAudit?.isMountingAction ||
-              (audit.mountingAudit?.actionType && audit.mountingAudit.actionType !== 'none')
-            );
-            const isCurrencyAffected = Boolean(
-              audit.currencyAudit?.isCurrencyAffected ||
-              (audit.currencyAudit?.transactions && audit.currencyAudit.transactions.length > 0) ||
-              (audit.commerceAudit && audit.commerceAudit.isCommerceAction)
-            );
-
-            if (isHealthAffected || isEnergyAffected || isInventoryAffected || isMountingAffected || isCurrencyAffected) {
-              if (!audit.filesToUpdate) audit.filesToUpdate = [];
-              if (!audit.filesToUpdate.includes(playerFile)) {
-                audit.filesToUpdate.push(playerFile);
-              }
+            if (!audit.filesToUpdate) audit.filesToUpdate = [];
+            if (!audit.filesToUpdate.includes(playerFile)) {
+              audit.filesToUpdate.push(playerFile);
             }
           }
 
@@ -1159,6 +1134,11 @@ TECHNICAL PLAN (Follow strictly):
 4. Temporal Shift: ${timeShiftNotice}
 5. Map Update Required: ${mapReq}
 6. Energy & Stamina: ${audit.energyAudit ? (audit.energyAudit.isEnergyAffected ? `Energy affected (${audit.energyAudit.expectedChange} for ${audit.energyAudit.character || 'character'} - ${audit.energyAudit.reason || ''})` : `No energy change (0 cost) - ${audit.energyAudit.reason || 'Menial task uses no noticeable energy'}`) : "No energy change"}
+7. Currency & Wealth: Dynamically evaluate if this action or its consequences result in ANY currency (e.g. Gold Coins, Silver Coins, Copper, Platinum, Credits, Dollars, Scrip, etc.) being acquired, found, looted, earned, rewarded, gifted, received, paid, spent, donated, or traded. If ANY currency is affected:
+   - You MUST update ${playerFile || 'the character file'} under [CURRENCY & FINANCIAL BALANCE] and [CONTAINERS & CARRIED GEAR] (- Carried Inventory (Inside Containers)).
+   - You MUST return structured "currencyTransactions": [ { "name": "...", "amount": positive number, "operation": "add"|"deduct"|"transfer", "container": "...", "recipient": "...", "giver": "..." } ].
+   - You MUST include the currency change in "updates": { "type": "currency", "text": "+X Currency", "value": X }.
+   - NEVER forget currency! Dynamically and accurately track and add all currency to balance and inventory.
 
 Process this action based on the technical plan. Ensure every new item, weapon, or entity is created with full technical details.
 
@@ -1986,7 +1966,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     // Phase 2: Only execute secondary follow-up call if the primary response did not already generate a narrative
     if (data.checks && Array.isArray(data.checks) && data.checks.length > 0 && (!data.narrative || data.narrative.length < 30 || data.narrative.toLowerCase().includes('roll required'))) {
       // 0. Also process any file updates from Phase 1 so they aren't lost
-      this.processResponseData(data, username, auditContext);
+      await this.processResponseData(data, username, auditContext, userPrompt);
 
       const worldState = this.getWorldContextForAI(username, userPrompt);
 
@@ -2083,7 +2063,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    this.processResponseData(data, username, auditContext);
+    await this.processResponseData(data, username, auditContext, userPrompt);
     if (this.lastActionUsage) {
       data.usage = { ...this.lastActionUsage };
     }
@@ -2446,18 +2426,55 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       const cleanUser = username.replace(/\s*\(guest\)$/i, '').trim().toLowerCase();
       const rawUser = username.trim().toLowerCase();
       
+      // 1. Direct filename prefix or suffix matches
       const match = candidateFiles.find(f => {
         if (!f.endsWith('.txt')) return false;
+        if (f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt' || f.endsWith('-npc.txt')) return false;
         const lower = f.toLowerCase();
-        return lower.endsWith(`-${rawUser}.txt`) ||
+        const base = lower.replace(/\.txt$/, '').trim();
+        return base === rawUser ||
+               base === cleanUser ||
+               base.startsWith(`${rawUser}-`) ||
+               base.startsWith(`${rawUser}_`) ||
+               base.startsWith(`${cleanUser}-`) ||
+               base.startsWith(`${cleanUser}_`) ||
+               lower.endsWith(`-${rawUser}.txt`) ||
                lower.endsWith(`_${rawUser}.txt`) ||
                lower.endsWith(` ${rawUser}.txt`) ||
                lower.endsWith(`-${cleanUser}.txt`) ||
                lower.endsWith(`_${cleanUser}.txt`) ||
                lower.endsWith(` ${cleanUser}.txt`) ||
-               lower.replace(/\.txt$/, '').trim().endsWith(cleanUser);
+               base.endsWith(cleanUser);
       });
       if (match) return match;
+
+      // 2. Substring match
+      const subMatch = candidateFiles.find(f => {
+        if (!f.endsWith('.txt')) return false;
+        if (f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt' || f.endsWith('-npc.txt')) return false;
+        const base = f.replace(/\.txt$/, '').toLowerCase();
+        return base.includes(cleanUser) || cleanUser.includes(base);
+      });
+      if (subMatch) return subMatch;
+
+      // 3. Search file contents for character name or Player: username
+      for (const f of candidateFiles) {
+        if (!f.endsWith('.txt') || f === 'WorldRules.txt' || f === 'Guide.txt' || f === 'WorldTime.txt' || f.endsWith('-npc.txt')) continue;
+        const content = filesObj && filesObj[f]
+          ? (typeof filesObj[f] === 'string' ? filesObj[f] : filesObj[f].content)
+          : this.fs.read(f);
+        if (typeof content === 'string') {
+          const lowerContent = content.toLowerCase();
+          if (
+            lowerContent.includes(`player: ${cleanUser}`) ||
+            lowerContent.includes(`player: "${cleanUser}"`) ||
+            lowerContent.includes(`full name: ${cleanUser}`) ||
+            (lowerContent.includes(cleanUser) && (content.includes('[STATS & MODIFIERS]') || content.includes('[NAME & DESCRIPTION]')))
+          ) {
+            return f;
+          }
+        }
+      }
     }
 
     // Fallback: search for character files (has [NAME & DESCRIPTION] or [STATS & MODIFIERS] with Energy/Mana/Stamina)
@@ -3594,7 +3611,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
-  private syncPlayerCurrency(data: AIResponse, username?: string, auditContext?: any) {
+  private async syncPlayerCurrency(data: AIResponse, username?: string, auditContext?: any, playerAction?: string) {
     if (!data) return;
 
     // 1. Collect all structured currency transactions dynamically determined by AI
@@ -3612,10 +3629,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           // Check all update texts for currency entries
           const parsed = WeightInventoryEngine.parseCurrencyEntries(u.text || '');
           if (parsed.length > 0) {
-            const textLower = (u.text || '').toLowerCase();
             const isDeduction = (u.value !== undefined && u.value < 0) ||
-              textLower.trim().startsWith('-') ||
-              /\b(?:spent|paid|lost|give|gave|giving|deduct|purchase|bought|donat|tip|tipped|handed over)\b/i.test(textLower);
+              (u.text || '').trim().startsWith('-');
             for (const p of parsed) {
               const alreadyExists = transactions.some(t =>
                 t.name.toLowerCase() === p.name.toLowerCase() &&
@@ -3649,39 +3664,147 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       }
     }
 
-    // 2. Dynamic Narrative Fallback: If no structured transactions were returned by the AI, dynamically check narrative context
+    // 2. Game Engine State Detection: Detect direct currency differences in incoming files vs disk
+    if (data.files && typeof data.files === 'object') {
+      for (const [fname, fdata] of Object.entries(data.files)) {
+        if (!fname.endsWith('.txt')) continue;
+        const incomingContent = typeof fdata === 'string' ? fdata : (fdata as any)?.content;
+        const diskContent = this.fs.read(fname);
+        if (!incomingContent || !diskContent) continue;
+        try {
+          const inStats = WeightInventoryEngine.parseCharacterStatsAndInventory(incomingContent);
+          const dStats = WeightInventoryEngine.parseCharacterStatsAndInventory(diskContent);
+          for (const inc of inStats.currency.carriedCurrencies) {
+            const diskMatch = dStats.currency.carriedCurrencies.find(dc =>
+              dc.name.toLowerCase() === inc.name.toLowerCase() ||
+              dc.name.toLowerCase().includes(inc.name.toLowerCase()) ||
+              inc.name.toLowerCase().includes(dc.name.toLowerCase())
+            );
+            const prevAmt = diskMatch ? diskMatch.amount : 0;
+            if (inc.amount > prevAmt) {
+              const diff = inc.amount - prevAmt;
+              const exists = transactions.some(t =>
+                t.name.toLowerCase() === inc.name.toLowerCase() && t.amount === diff
+              );
+              if (!exists) {
+                transactions.push({
+                  name: inc.name,
+                  amount: diff,
+                  operation: 'add',
+                  container: inc.container,
+                  recipient: inStats.characterName || username,
+                  rawText: `+${diff} ${inc.name}`
+                });
+              }
+            } else if (inc.amount < prevAmt) {
+              const diff = prevAmt - inc.amount;
+              const exists = transactions.some(t =>
+                t.name.toLowerCase() === inc.name.toLowerCase() && t.amount === diff
+              );
+              if (!exists) {
+                transactions.push({
+                  name: inc.name,
+                  amount: diff,
+                  operation: 'deduct',
+                  container: inc.container,
+                  giver: inStats.characterName || username,
+                  rawText: `-${diff} ${inc.name}`
+                });
+              }
+            }
+          }
+        } catch (e) {
+          // ignore parsing error
+        }
+      }
+    }
+
+    // 3. Dynamic AI Narrative Extraction: If no structured transactions were returned and incoming files did not alter currency,
+    // dynamically extract currency transactions from narrative context using the AI engine (no rigid keywords).
     if (transactions.length === 0 && typeof data.narrative === 'string' && data.narrative.trim()) {
-      const narrative = data.narrative;
-      const sentences = narrative.split(/[.!?\n]+/);
-      for (const sent of sentences) {
-        const trimmedSent = sent.trim();
-        if (!trimmedSent) continue;
-        const parsed = WeightInventoryEngine.parseCurrencyEntries(trimmedSent);
-        if (parsed.length === 0) continue;
+      const narrativeEntries = WeightInventoryEngine.parseCurrencyEntries(data.narrative);
+      if (narrativeEntries.length > 0) {
+        // Find player character name
+        const playerFile = this.findPlayerCharacterFile(username, data.files);
+        const charContent = playerFile ? (data.files && data.files[playerFile] ? (typeof data.files[playerFile] === 'string' ? data.files[playerFile] : (data.files[playerFile] as any).content) : this.fs.read(playerFile)) : null;
+        const charStats = charContent ? WeightInventoryEngine.parseCharacterStatsAndInventory(charContent) : null;
+        const charName = charStats?.characterName || username || 'Player';
 
-        const sentLower = trimmedSent.toLowerCase();
-        // Dynamically determine whether the player is receiving/acquiring or paying/spending
-        const isPlayerRecipient =
-          /\b(?:to\s+(?:you|the\s+player)|gives?\s+(?:you|the\s+player)|paying\s+(?:you|the\s+player)|pays?\s+(?:you|the\s+player)|hands?\s+(?:you|the\s+player)|reward(?:s|ed)?\s+(?:you|the\s+player)|awards?\s+(?:you|the\s+player)|offers?\s+(?:you|the\s+player))\b/i.test(sentLower) ||
-          /\b(?:you|player|hero)\s+(?:receive|received|find|found|loot|looted|earn|earned|collect|collected|pocket|pocketed|gain|gained|sold\s+[^.!?\n]+?\s+for|obtain|obtained|acquire|acquired|take|took|gather|gathered|retrieve|retrieved|recover|recovered)\b/i.test(sentLower);
+        try {
+          const aiExtractPrompt = `TASK: Dynamic Currency Transaction Extraction.
+You are the Game Engine Currency Auditor.
+Analyze the player's action and the game master's narrative to dynamically extract any currency or monetary transactions involving the active player character "${charName}" or party.
 
-        const isPlayerPayer =
-          /\b(?:you|player|hero)\s+(?:pay|paid|spend|spent|give|gave|hand\s+over|handed\s+over|donate|donated|tip|tipped|purchase|bought\s+[^.!?\n]+?\s+for|drop|dropped|lose|lost)\b/i.test(sentLower);
+Player Action: ${playerAction || data.intent || 'None'}
+Game Narrative:
+"""
+${data.narrative.slice(0, 3000)}
+"""
 
-        const operation = (isPlayerPayer && !isPlayerRecipient) ? 'deduct' : 'add';
+Active Character: "${charName}" (Username: "${username || 'player'}")
 
-        for (const p of parsed) {
-          const exists = transactions.some(t =>
-            t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
-          );
-          if (!exists) {
-            transactions.push({
-              name: p.name,
-              amount: Math.abs(p.amount),
-              operation,
-              container: p.container,
-              rawText: trimmedSent
-            });
+INSTRUCTIONS:
+1. Comprehend the full narrative context dynamically (e.g. receiving quest pay, finding or looting gold coins/silver/credits, gifts, wages, trading, tipping, paying for goods or services).
+2. DO NOT rely on rigid keywords. Understand dialogue, passive voice, character third-person actions, and loot discovery.
+3. For each transaction, return a JSON object:
+   - "name": Currency denomination name (e.g. "Gold Coins", "Silver Coins", "Credits", "Dollars")
+   - "amount": positive numeric amount (e.g. 50, 10, 1)
+   - "operation": "add" (if acquired, looted, earned, rewarded, found, received) | "deduct" (if paid, spent, given away, donated, lost)
+   - "container": container name if mentioned (e.g. "Coin Pouch", "Leather Wallet", "Backpack") or null
+   - "recipient": character receiving or null
+   - "giver": character giving or null
+
+Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, return [].`;
+
+          const aiResp = await this.callAI(aiExtractPrompt);
+          const cleaned = aiResp.replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleaned);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            for (const item of parsed) {
+              if (item.name && typeof item.amount === 'number' && item.amount > 0) {
+                transactions.push({
+                  name: item.name,
+                  amount: item.amount,
+                  operation: item.operation === 'deduct' ? 'deduct' : 'add',
+                  container: item.container || undefined,
+                  recipient: item.recipient || charName,
+                  giver: item.giver || undefined,
+                  rawText: `${item.operation === 'deduct' ? '-' : '+'}${item.amount} ${item.name}`
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[Dynamic Currency AI Extraction Error]", err);
+        }
+
+        // If AI call produced nothing or failed, use Game Engine dynamic fallback (no rigid keywords)
+        if (transactions.length === 0) {
+          const sentences = data.narrative.split(/[.!?\n]+/);
+          for (const sent of sentences) {
+            const trimmedSent = sent.trim();
+            if (!trimmedSent) continue;
+            const parsedEntries = WeightInventoryEngine.parseCurrencyEntries(trimmedSent);
+            if (parsedEntries.length === 0) continue;
+
+            const isNegative = p.amount < 0 || trimmedSent.trim().startsWith('-');
+            const operation = isNegative ? 'deduct' : 'add';
+
+            for (const p of parsedEntries) {
+              const exists = transactions.some(t =>
+                t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
+              );
+              if (!exists) {
+                transactions.push({
+                  name: p.name,
+                  amount: Math.abs(p.amount),
+                  operation,
+                  container: p.container,
+                  recipient: charName,
+                  rawText: trimmedSent
+                });
+              }
+            }
           }
         }
       }
@@ -3719,7 +3842,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       const diskStats = diskContent ? WeightInventoryEngine.parseCharacterStatsAndInventory(diskContent) : null;
       let alreadyAppliedInIncomingFile = false;
 
-      if (diskStats) {
+      if (diskStats && data.files && data.files[targetFile]) {
         const diskEntry = diskStats.currency.carriedCurrencies.find(c =>
           c.name.toLowerCase() === tx.name.toLowerCase() ||
           c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
@@ -3792,7 +3915,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           (c.name.toLowerCase() === tx.name.toLowerCase() ||
            c.name.toLowerCase().includes(tx.name.toLowerCase()) ||
            tx.name.toLowerCase().includes(c.name.toLowerCase())) &&
-          (!tx.container || (c.container && c.container.toLowerCase().includes(tx.container.toLowerCase())))
+          (!tx.container || !c.container || c.container.toLowerCase().includes(tx.container.toLowerCase()) || tx.container.toLowerCase().includes(c.container.toLowerCase()))
         );
         if (matchIdx >= 0) {
           if (!alreadyAppliedInIncomingFile) {
@@ -3802,7 +3925,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
           // Prefer pouch, wallet, purse, pocket, money belt, or first container
           const targetCont = tx.container ||
             pStats.containers.find(ct => /pouch|wallet|purse|pocket|money\s*belt/i.test(ct.name))?.name ||
-            (pStats.containers.length > 0 ? pStats.containers[0].name : undefined);
+            (pStats.containers.length > 0 ? pStats.containers[0].name : 'Coin Pouch');
           pStats.currency.carriedCurrencies.push({
             name: tx.name,
             amount: tx.amount,
@@ -3814,17 +3937,29 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
       if (changed) {
         // Ensure data.updates reflects the transaction if not already present
-        if (data.updates && Array.isArray(data.updates)) {
-          const hasUpdate = data.updates.some(u =>
-            u.text && u.text.toLowerCase().includes(tx.name.toLowerCase()) && u.text.includes(tx.amount.toString())
-          );
-          if (!hasUpdate) {
-            data.updates.push({
-              type: 'currency',
-              text: `${isDeduction ? 'Spent/Gave' : 'Acquired'} ${tx.amount.toLocaleString()} ${tx.name}${tx.container ? ` (${tx.container})` : ''}`,
-              value: isDeduction ? -tx.amount : tx.amount
-            });
-          }
+        if (!data.updates || !Array.isArray(data.updates)) {
+          data.updates = [];
+        }
+        const hasUpdate = data.updates.some(u =>
+          u.text && u.text.toLowerCase().includes(tx.name.toLowerCase()) && u.text.includes(tx.amount.toString())
+        );
+        if (!hasUpdate) {
+          data.updates.push({
+            type: 'currency',
+            text: `${isDeduction ? '-' : '+'}${tx.amount.toLocaleString()} ${tx.name}${tx.container ? ` (${tx.container})` : ''}`,
+            value: isDeduction ? -tx.amount : tx.amount
+          });
+        }
+
+        // Ensure data.currencyTransactions contains tx
+        if (!data.currencyTransactions || !Array.isArray(data.currencyTransactions)) {
+          data.currencyTransactions = [];
+        }
+        const hasTx = data.currencyTransactions.some(t =>
+          t.name.toLowerCase() === tx.name.toLowerCase() && t.amount === tx.amount && t.operation === tx.operation
+        );
+        if (!hasTx) {
+          data.currencyTransactions.push(tx);
         }
 
         try {
@@ -3841,6 +3976,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         } else {
           data.files[targetFile] = updatedContent;
         }
+        this.fs.write(targetFile, updatedContent);
       }
 
       // If currency was transferred or given to a recipient, update the recipient character file as well
@@ -3877,6 +4013,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
             } else {
               data.files[recipFile] = recipContent;
             }
+            this.fs.write(recipFile, recipContent);
           }
         }
       }
@@ -4180,7 +4317,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
   }
 
-  private processResponseData(data: AIResponse, username?: string, auditContext?: any) {
+  private async processResponseData(data: AIResponse, username?: string, auditContext?: any, playerAction?: string) {
     if (!data) return;
 
     // Normalize narrative to string if provided as object
@@ -4271,7 +4408,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     this.syncPlayerInventory(data, username, auditContext);
 
     // Ensure currency transactions and balance changes are synchronized
-    this.syncPlayerCurrency(data, username, auditContext);
+    await this.syncPlayerCurrency(data, username, auditContext, playerAction);
 
     // Reconcile dead characters (charactername-username -> charactername-dead) and resurrected characters (dead -> NPC)
     this.reconcileDeadAndResurrectedCharacters(data, username);
