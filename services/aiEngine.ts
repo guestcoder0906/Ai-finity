@@ -402,6 +402,8 @@ GROUP ENTITY RULE:
 PROBABILITY ENGINE RULE (CRITICAL):
 - You MUST use the "checks" array for ANY action that has a chance of failure, involves a character's stats, or has an uncertain outcome.
 - NEVER decide the outcome of an uncertain action yourself in the narrative. ALWAYS request a check from the probability engine (0-1000).
+- RANDOM FIRST INTEGRITY (CRITICAL): NEVER guess, invent, choose, or output a roll number yourself! All probability rolls are generated FIRST by unbiased backend code randomness (0-1000) before any outcome is determined, completely eliminating any AI model bias. The AI only provides the check definition, difficulty, and modifiers.
+- The backend evaluates the random roll against the dynamic modifiers and thresholds to determine the fair, objective outcome (Success, Failure, Critical Success, etc.), and provides the result to you to faithfully narrate.
 - Actions that REQUIRE a check:
   * Combat (Attacking, defending, dodging, using abilities)
   * Stealth and Detection
@@ -687,6 +689,7 @@ Your ONLY goal is to analyze the player's action against the "World Context" and
 
 INSTRUCTIONS:
 1. AUDIT FOR CHECKS: Identify if the action requires a probability check (Combat, Stealth, Magic Focus, Physical feats, etc.).
+   - RANDOM FIRST INTEGRITY: Do NOT generate, invent, choose, or output a roll number in "checks"! All rolls are rolled first via unbiased backend code randomness before outcome determination to prevent AI bias. You only detect the check name, reason, difficulty, stat, and modifiers.
 2. AUDIT FOR ENTITIES: List every individual NPC, group of NPCs, Weapon, Item, or Location mentioned that does NOT have a file in context.
 3. AUDIT FOR MAP: Determine if the player moved, environment changed, or new entities/landmarks/items appeared. Maps must have NOTHING missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain features, etc. Always keep all observable and known elements updated correctly. Support advanced flexible shapes (oblong areas like forests via ellipse, irregular multi-point polygons, detailed architectural buildings such as market stalls and shops, paths/roads, circles, rects).
 4. DETECT MODIFIERS: For any check identified, scan the context for mathematical modifiers (stats, items, rules, effects).
@@ -961,6 +964,9 @@ export class AIEngine {
 
         const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items; when containers stretch, only multiply/expand their physical size and dimensions instead of their weight—never multiply the container's own empty weight with it), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. (Wallets, chit wallets, cardholders, and coin pouches are EQUIPPED CONTAINERS, NEVER currency items! Do NOT list wallets as money, and never generate placeholder tags like "(Worth: Credits)" or compliance/accounting header lines in inventory lists). If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY & RANGED WEAPONS HANDEDNESS (CRITICAL): Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Oak Shortbow", "Hunting Rifle", "Heavy Crossbow", "Iron Broadsword", "Wooden Shield", "Torch"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Main Hand] or [Both Hands (Two-Handed)]. RANGED WEAPONS HANDEDNESS RULE (DYNAMIC CONTEXTUAL REASONING): Ranged weapons (bows, crossbows, rifles, muskets, shotguns, carbines, blasters, slings, etc.) are NOT always two-handed! Yes, they CAN be used with two hands, but if a ranged weapon is not currently being actively fired, aimed, or braced, it is usually held in ONE HAND (1 hand slot under [CURRENTLY HOLDING], e.g. "[Main Hand] Oak Shortbow: Weight: 2 lbs. Dimensions: 48x4x1.5 inches" or "[Main Hand] Hunting Rifle: Weight: 7 lbs. Dimensions: 40x6x2 inches") because the character is just holding or carrying it by the grip, stock, or riser. This leaves their other hand completely free to draw an arrow or magazine, hold a torch, carry a shield or secondary weapon, cast spells, or interact with objects. It ONLY requires or occupies [Both Hands (Two-Handed)] dynamically when actively nocking/drawing, aiming down sights, shouldering to fire, bracing against recoil, or cocking/reloading, UNLESS other genuine situational context is detected by the AI (evaluated through realistic physical context and narrative intent, NOT simplistic keyword matching—such as holding in a braced high-ready tactical stance, sweeping corners, or tense standoff) that dictates both hands are currently gripping the weapon. CONTAINERS & GEAR INTEGRITY: Wallets, chit wallets, cardholders, coin pouches, money belts, quivers, and backpacks are EQUIPPED CONTAINERS, NEVER unequipped loose items or currency pieces! Consolidate all carried coins/funds inside their primary equipped container (never split across phantom unequipped pouches). Never output compliance/accounting header lines or meta entries like "Initialized Starting Gear" inside inventory lists or quivers. Ensure all secret locations use clean balanced hide[...] tags (e.g. "[Location: hide[Buried inside hollow oak tree]]").\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
         const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
+        if (res && this.lastActionUsage) {
+          res.usage = { ...this.lastActionUsage };
+        }
         return res;
       } catch (e) {
         console.error("Initialization failed", e);
@@ -1050,20 +1056,57 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
             }).join('\n') + `\n* MANDATE: You MUST provide unique, tailored "playerRecommendations" for EACH active player above! Never give duplicate recommendations across different characters.\n`;
           }
 
-          // Fast Single-Pass Execution: Combine audit directives directly into single execution prompt
+          // STAGE 1: AUDIT (AI DYNAMIC CONTEXTUAL REASONING)
+          // The AI dynamically analyzes the player's action against the World Context, Guide, and rules
+          // to determine if a probability check is required (Combat, Stealth, Magic Focus, Physical feats, etc.),
+          // detect modifiers, and audit for state/file requirements without using rigid keywords.
+          const auditPrompt = `${ACTION_AUDIT_PROMPT}
+
+Current Files Context:
+${worldContext}
+
+${spatialContext}
+${playerCharacterContext}
+${partyOverviewContext}
+${userHeader}Player action to audit: ${action}`;
+
           let audit: any = { action, checks: [], filesToCreate: [], filesToUpdate: [] };
+          try {
+            const auditResponseText = await this.callAI(auditPrompt, undefined, 'gemini-3.8-flash');
+            const parsedAudit = this.extractJSON(auditResponseText);
+            if (parsedAudit && typeof parsedAudit === 'object') {
+              audit = { ...parsedAudit, action };
+            }
+          } catch (auditErr) {
+            console.warn("Audit call error, continuing with fallback audit:", auditErr);
+          }
 
           // STAGE 2: RESOLUTION (BACKEND CALCULATION)
           let resolvedCheckReport = "";
           let resolvedCheckDetails = "";
           
-          if (audit.checks && audit.checks.length > 0) {
+          if (audit.checks && Array.isArray(audit.checks) && audit.checks.length > 0) {
             const results = audit.checks.map((check: any) => {
+              const safeName = check.name || check.check || check.stat || 'Action Check';
+              const difficulty = check.difficulty || 'moderate';
               const bonusResult = this.calculateBonusFromAI(check.modifiers || [], username);
               const totalBonus = bonusResult.total;
-              const difficulty = check.difficulty || 'moderate';
               
-              let safeThresholds = this.getDefaultThresholds(difficulty);
+              let safeThresholds: { [key: string]: number };
+              if (check.thresholds && typeof check.thresholds === 'object') {
+                safeThresholds = { ...check.thresholds };
+              } else if (typeof check.threshold === 'number') {
+                const base = check.threshold;
+                const adjusted = Math.max(0, Math.min(1000, base));
+                safeThresholds = {
+                  "Critical Success": Math.min(1000, adjusted + 200),
+                  "Success": adjusted,
+                  "Partial Success": Math.max(0, adjusted - 200)
+                };
+              } else {
+                safeThresholds = this.getDefaultThresholds(difficulty);
+              }
+
               if (totalBonus !== 0) {
                 const shifted: { [key: string]: number } = {};
                 for (const [key, val] of Object.entries(safeThresholds)) {
@@ -1073,11 +1116,12 @@ ${descMatch ? `- Description: ${descMatch[1].trim()}\n` : ''}${hpMatch ? `- Heal
               }
               safeThresholds = this.enforceRealisticThresholds(safeThresholds, difficulty);
 
-              const roll = Math.floor(Math.random() * 1001);
+              // True random roll generated first on backend to eliminate AI model bias or guessing
+              const roll = this.generateRandomRoll();
               const outcome = this.determineOutcome(roll, safeThresholds, difficulty);
 
               return {
-                name: check.name,
+                name: safeName,
                 outcome,
                 roll,
                 thresholds: safeThresholds,
@@ -1129,6 +1173,7 @@ ${userHeader}Player action: ${action}
 
 TECHNICAL PLAN (Follow strictly):
 1. Resolve these checks: ${resolvedCheckReport || "None"}
+   (NOTE: Each check above was rolled first using unbiased backend random generation (0-1000) and evaluated objectively against thresholds. Faithfully narrate the outcome without altering rolls or results).
 2. Create these files immediately: ${audit.filesToCreate?.join(', ') || "None"}
 3. Update these files: ${audit.filesToUpdate?.join(', ') || "None"}
 4. Temporal Shift: ${timeShiftNotice}
@@ -1272,6 +1317,16 @@ CRITICAL REMINDERS:
 
           const finalResponse = await this.handleRequest(executionPrompt, mapScreenshot, username, 'gemini-3.8-flash', audit);
           
+          // Ensure resolved probability check is included in narrative for interactive dice/math tooltip
+          if (finalResponse && resolvedCheckDetails) {
+            if (!finalResponse.narrative || !finalResponse.narrative.includes('[Probability Check:')) {
+              finalResponse.narrative = `${resolvedCheckDetails}\n\n${finalResponse.narrative || ''}`.trim();
+            }
+          }
+          if (finalResponse && (!finalResponse.checks || finalResponse.checks.length === 0) && audit.checks && audit.checks.length > 0) {
+            finalResponse.checks = audit.checks;
+          }
+
           // Post-process spatial consistency (Old map state already captured via fs.read in handleRequest/enforceSpatialConsistency)
           const latestMapRaw = this.fs.read('CurrentMap.json');
           if (finalResponse && latestMapRaw) {
@@ -1293,6 +1348,11 @@ CRITICAL REMINDERS:
             if (username && (!finalResponse.playerRecommendations[username] || finalResponse.playerRecommendations[username].length === 0)) {
               finalResponse.playerRecommendations[username] = finalResponse.recommendations || [];
             }
+          }
+
+          // Guarantee accumulated action usage across all passes is attached to final response
+          if (finalResponse && this.lastActionUsage) {
+            finalResponse.usage = { ...this.lastActionUsage };
           }
 
           return finalResponse;
@@ -1963,8 +2023,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       return { narrative: "System Error: AI returned invalid JSON format." };
     }
 
-    // Phase 2: Only execute secondary follow-up call if the primary response did not already generate a narrative
-    if (data.checks && Array.isArray(data.checks) && data.checks.length > 0 && (!data.narrative || data.narrative.length < 30 || data.narrative.toLowerCase().includes('roll required'))) {
+    // Phase 2: Resolve probability checks if returned by the AI and not already resolved in narrative
+    if (data.checks && Array.isArray(data.checks) && data.checks.length > 0 && (!data.narrative || data.narrative.length < 30 || data.narrative.toLowerCase().includes('roll required') || !data.narrative.includes('[Probability Check:'))) {
       // 0. Also process any file updates from Phase 1 so they aren't lost
       await this.processResponseData(data, username, auditContext, userPrompt);
 
@@ -2025,7 +2085,8 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
         // Enforce realistic failure ranges based on difficulty
         safeThresholds = this.enforceRealisticThresholds(safeThresholds, difficulty);
 
-        const roll = Math.floor(Math.random() * 1001);
+        // True random roll generated first on backend to eliminate AI model bias or guessing
+        const roll = this.generateRandomRoll();
         const outcome = this.determineOutcome(roll, safeThresholds, difficulty);
         return {
           name: safeName,
@@ -2057,6 +2118,9 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
       responseText = await this.callAI(followUpPrompt, undefined, modelName);
       try {
         data = this.extractJSON(responseText);
+        if (data && fullDetailsHtml && (!data.narrative || !data.narrative.includes('[Probability Check:'))) {
+          data.narrative = `${fullDetailsHtml}\n\n${data.narrative || ''}`.trim();
+        }
       } catch (e) {
         console.error("JSON Parse Error Phase 2", e);
         return { narrative: "Error processing check results." };
@@ -2281,6 +2345,21 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
     }
 
     throw new Error("Failed to extract valid JSON");
+  }
+
+  /**
+   * Generates a truly unbiased, cryptographically random integer in [0, 1000] inclusive.
+   * Runs directly on the backend/client engine runtime FIRST before any AI evaluation or outcome calculation.
+   * Completely eliminates AI model bias, number hallucination, or guessing.
+   */
+  public generateRandomRoll(): number {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const buf = new Uint32Array(1);
+      crypto.getRandomValues(buf);
+      // Uniform 32-bit float in [0, 1) scaled to 0-1000 inclusive (1001 possible integer outcomes)
+      return Math.floor((buf[0] / 4294967296) * 1001);
+    }
+    return Math.floor(Math.random() * 1001);
   }
 
   private determineOutcome(roll: number, thresholds: { [outcome: string]: number }, difficulty: string = 'moderate'): string {
@@ -3787,12 +3866,11 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
             const parsedEntries = WeightInventoryEngine.parseCurrencyEntries(trimmedSent);
             if (parsedEntries.length === 0) continue;
 
-            const isNegative = p.amount < 0 || trimmedSent.trim().startsWith('-');
-            const operation = isNegative ? 'deduct' : 'add';
-
             for (const p of parsedEntries) {
+              const isNegative = p.amount < 0 || trimmedSent.trim().startsWith('-');
+              const operation = isNegative ? 'deduct' : 'add';
               const exists = transactions.some(t =>
-                t.name.toLowerCase() === p.name.toLowerCase() && t.amount === p.amount
+                t.name.toLowerCase() === p.name.toLowerCase() && t.amount === Math.abs(p.amount)
               );
               if (!exists) {
                 transactions.push({
@@ -5205,14 +5283,26 @@ INSTRUCTIONS:
   }
 
   private lastActionUsage: ActionUsageCost | null = null;
-  private currentTurnAccumulatedUsage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
+  private currentTurnAccumulatedUsage = {
+    promptTokens: 0,
+    candidatesTokens: 0,
+    totalTokens: 0,
+    calls: 0,
+    model: 'gemini-3.8-flash'
+  };
 
   public getLastActionUsage(): ActionUsageCost | null {
     return this.lastActionUsage;
   }
 
   public resetTurnUsage(): void {
-    this.currentTurnAccumulatedUsage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
+    this.currentTurnAccumulatedUsage = {
+      promptTokens: 0,
+      candidatesTokens: 0,
+      totalTokens: 0,
+      calls: 0,
+      model: 'gemini-3.8-flash'
+    };
     this.lastActionUsage = null;
   }
 
@@ -5253,9 +5343,10 @@ INSTRUCTIONS:
         ];
       }
 
+      const activeModel = modelName || (typeof process !== 'undefined' && process.env?.VITE_GEMINI_MODEL) || 'gemini-3.8-flash';
       const ai = this.getAI();
       const response = await ai.models.generateContent({
-        model: modelName || (typeof process !== 'undefined' && process.env?.VITE_GEMINI_MODEL) || 'gemini-3.8-flash',
+        model: activeModel,
         contents: contents,
         config: {
           systemInstruction: SYSTEM_PROMPT,
@@ -5271,20 +5362,38 @@ INSTRUCTIONS:
         this.currentAbortController = null;
       }
 
-      // Track token usage & calculate accurate cost based on gemini-3.8-flash-lite rates:
+      // Track token usage & calculate accurate cost based on model rates:
+      // gemini-3.8-flash rates:
+      // Input tokens: $0.15 per 1,000,000 tokens ($0.00000015 per token)
+      // Output tokens: $0.60 per 1,000,000 tokens ($0.00000060 per token)
+      // gemini-3.1-flash-lite rates:
       // Input tokens: $0.10 per 1,000,000 tokens ($0.00000010 per token)
       // Output tokens: $0.40 per 1,000,000 tokens ($0.00000040 per token)
-      const pTokens = (response as any).usageMetadata?.promptTokenCount || 0;
-      const cTokens = (response as any).usageMetadata?.candidatesTokenCount || 0;
-      const tTokens = (response as any).usageMetadata?.totalTokenCount || (pTokens + cTokens);
+      const isFlashLite = activeModel.includes('flash-lite');
+      const inputPricePerM = isFlashLite ? 0.10 : 0.15;
+      const outputPricePerM = isFlashLite ? 0.40 : 0.60;
+
+      const meta = (response as any).usageMetadata;
+      const respText = response.text || "{}";
+      const pTokens = (meta?.promptTokenCount && meta.promptTokenCount > 0)
+        ? meta.promptTokenCount
+        : Math.max(1, Math.ceil(prompt.length / 3.8));
+      const cTokens = (meta?.candidatesTokenCount && meta.candidatesTokenCount > 0)
+        ? meta.candidatesTokenCount
+        : Math.max(1, Math.ceil(respText.length / 3.8));
+      const tTokens = meta?.totalTokenCount || (pTokens + cTokens);
 
       this.currentTurnAccumulatedUsage.promptTokens += pTokens;
       this.currentTurnAccumulatedUsage.candidatesTokens += cTokens;
       this.currentTurnAccumulatedUsage.totalTokens += tTokens;
+      this.currentTurnAccumulatedUsage.calls = (this.currentTurnAccumulatedUsage.calls || 0) + 1;
+      this.currentTurnAccumulatedUsage.model = activeModel;
 
-      const inputCost = (this.currentTurnAccumulatedUsage.promptTokens * 0.10) / 1_000_000;
-      const outputCost = (this.currentTurnAccumulatedUsage.candidatesTokens * 0.40) / 1_000_000;
+      const inputCost = (this.currentTurnAccumulatedUsage.promptTokens * inputPricePerM) / 1_000_000;
+      const outputCost = (this.currentTurnAccumulatedUsage.candidatesTokens * outputPricePerM) / 1_000_000;
       const totalCost = inputCost + outputCost;
+      const totalCalls = this.currentTurnAccumulatedUsage.calls;
+      const passesLabel = totalCalls > 1 ? ` (${totalCalls} passes)` : '';
 
       this.lastActionUsage = {
         promptTokens: this.currentTurnAccumulatedUsage.promptTokens,
@@ -5293,10 +5402,12 @@ INSTRUCTIONS:
         inputCost,
         outputCost,
         totalCost,
-        costFormatted: `$${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output | ${this.currentTurnAccumulatedUsage.promptTokens} in, ${this.currentTurnAccumulatedUsage.candidatesTokens} out · gemini-3.8-flash-lite)`
+        calls: totalCalls,
+        model: activeModel,
+        costFormatted: `Total Action Cost: $${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output | ${this.currentTurnAccumulatedUsage.promptTokens.toLocaleString()} in, ${this.currentTurnAccumulatedUsage.candidatesTokens.toLocaleString()} out · ${activeModel}${passesLabel})`
       };
 
-      return response.text || "{}";
+      return respText;
     } catch (e: any) {
       clearTimeout(timeoutId);
       if (this.currentAbortController === controller) {

@@ -793,13 +793,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               <input type="checkbox" checked={autoRecommendationsEnabled} onChange={onToggleAutoRecommendations} className="hidden" />
               <span className={autoRecommendationsEnabled ? "text-blue-400" : ""}>AUTO</span>
             </label>
-            {gameMode === 'singleplayer' && (
-              <label className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors">
-                <input type="checkbox" checked={debugMode} onChange={onToggleDebug} className="hidden" />
-                <Settings size={12} className={debugMode ? "text-yellow-400" : ""} />
-                <span className={debugMode ? "text-yellow-400" : ""}>DEBUG</span>
-              </label>
-            )}
+            <label className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors" title="Toggle Debug Mode & Action Costs">
+              <input type="checkbox" checked={debugMode} onChange={onToggleDebug} className="hidden" />
+              <Settings size={12} className={debugMode ? "text-yellow-400" : ""} />
+              <span className={debugMode ? "text-yellow-400" : ""}>DEBUG</span>
+            </label>
             {onUndo && (
               <button
                 id="sidebar-undo-turn-btn"

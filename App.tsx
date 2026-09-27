@@ -1952,7 +1952,7 @@ CRITICAL: Check your context. If a character file for player "${newUsername}" (e
               : (typeof result.narrative === 'object' && result.narrative !== null)
                 ? ((result.narrative as any).text || (result.narrative as any).content || JSON.stringify(result.narrative))
                 : String(result.narrative || '');
-            const finalNarrative = [...newNarrative, { id: Date.now().toString() + 'ai', text: safeNarrative, type: 'ai' as const }];
+            const finalNarrative = [...newNarrative, { id: Date.now().toString() + 'ai', text: safeNarrative, type: 'ai' as const, usage: result.usage }];
             if (result.recommendations && Array.isArray(result.recommendations)) {
               setRecommendations(sanitizeRecommendations(result.recommendations));
             } else {

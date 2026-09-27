@@ -38,8 +38,9 @@ function parseText(text: any, username: string, debugMode: boolean): string {
       <span class="absolute bottom-full left-0 mb-2 hidden group-hover:block w-64 md:w-80 p-2 bg-neutral-900 border border-neutral-700 rounded shadow-xl text-xs text-gray-300 z-50 pointer-events-none format-pre text-left max-w-[85vw] md:max-w-sm">
         <div class="font-bold text-blue-400 border-b border-neutral-800 pb-1 mb-1 truncate">${name}</div>
         <div class="grid grid-cols-2 gap-x-2 gap-y-1 mb-1">
-          <span class="text-gray-500">Roll:</span> <span class="text-white">${roll}</span>
+          <span class="text-gray-500">Roll (0-1000):</span> <span class="text-white font-mono font-bold">${roll}</span>
           <span class="text-gray-500">Result:</span> <span class="${baseColor} font-bold">${result}</span>
+          <span class="text-gray-500">RNG Source:</span> <span class="text-emerald-400 font-mono text-[10px]">Unbiased Backend Random First</span>
         </div>
         <div class="text-gray-500 mt-1 border-t border-neutral-800 pt-1 text-[10px] uppercase tracking-wider">Calculation</div>
         <div class="text-xs text-white mb-1 font-mono">${math}</div>
@@ -72,20 +73,22 @@ const NarrativeEntryRow = React.memo(({ entry, username, debugMode }: { entry: N
     return res;
   }, [entry.id, entry.type, entry.text, username, debugMode]);
 
-  // Cost text appended as small text in debug mode for each action
+  // Cost text appended as small text in debug mode for each action showing total costs of that full action
   const costDisplay = React.useMemo(() => {
     if (!debugMode || entry.type !== 'ai') return null;
     if (entry.usage) {
-      const { inputCost, outputCost, totalCost, promptTokens, candidatesTokens } = entry.usage;
-      return `Cost: $${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output | ${promptTokens} in, ${candidatesTokens} out · gemini-3.8-flash-lite)`;
+      const { inputCost, outputCost, totalCost, promptTokens, candidatesTokens, calls, model } = entry.usage as any;
+      const modelName = model || 'gemini-3.8-flash';
+      const passesLabel = calls && calls > 1 ? ` (${calls} passes)` : '';
+      return `Total Action Cost: $${totalCost.toFixed(6)} total ($${inputCost.toFixed(6)} in + $${outputCost.toFixed(6)} out | ${promptTokens.toLocaleString()} in, ${candidatesTokens.toLocaleString()} out · ${modelName}${passesLabel})`;
     }
     // Fallback estimation for entries generated prior to tracking
     const estOut = Math.max(1, Math.ceil((entry.text || '').length / 4));
     const estIn = 1400;
-    const inCost = (estIn * 0.10) / 1_000_000;
-    const outCost = (estOut * 0.40) / 1_000_000;
+    const inCost = (estIn * 0.15) / 1_000_000;
+    const outCost = (estOut * 0.60) / 1_000_000;
     const totCost = inCost + outCost;
-    return `Cost: ~$${totCost.toFixed(6)} total (~$${inCost.toFixed(6)} input + ~$${outCost.toFixed(6)} output | ~${estIn} in, ~${estOut} out · gemini-3.8-flash-lite)`;
+    return `Total Action Cost: ~$${totCost.toFixed(6)} total (~$${inCost.toFixed(6)} in + ~$${outCost.toFixed(6)} out | ~${estIn.toLocaleString()} in, ~${estOut.toLocaleString()} out · gemini-3.8-flash)`;
   }, [debugMode, entry.type, entry.usage, entry.text]);
 
   // If the entire entry is hidden (e.g., only contained a target() not meant for us), don't render an empty div
@@ -99,7 +102,7 @@ const NarrativeEntryRow = React.memo(({ entry, username, debugMode }: { entry: N
       {entry.type === 'user' && <span className="mr-1.5">&gt;</span>}
       <span dangerouslySetInnerHTML={{ __html: parsedHtml }} />
       {costDisplay && (
-        <span className="text-[10px] text-neutral-500 font-mono select-none ml-2 opacity-85 block sm:inline-block">
+        <span className="text-[10px] text-neutral-400 font-mono select-none ml-2 opacity-90 block sm:inline-block bg-neutral-900/60 px-1.5 py-0.5 rounded border border-neutral-800">
           [{costDisplay}]
         </span>
       )}

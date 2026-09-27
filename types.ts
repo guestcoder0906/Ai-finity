@@ -102,6 +102,8 @@ export interface ActionUsageCost {
   outputCost: number;
   totalCost: number;
   costFormatted: string;
+  calls?: number;
+  model?: string;
 }
 
 export interface AIResponse {
