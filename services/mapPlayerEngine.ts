@@ -853,3 +853,422 @@ export function reconcileNpcFiles(fs: any, incomingFiles?: Record<string, any>):
 
   return { reconciled: mergedCount > 0, mergedCount };
 }
+
+export interface HeldItemInfo {
+  name: string;
+  cleanName: string;
+  raw?: string;
+  limb?: string;
+  range?: number;
+  isOverflow?: boolean;
+}
+
+/**
+ * Extracts held and equipped items (along with their ranges/reach) from a character sheet.
+ */
+export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInfo[] {
+  if (!content) return [];
+  const heldItems: HeldItemInfo[] = [];
+  const linesToParse: string[] = [];
+
+  // 1. Look for [CURRENTLY HOLDING], [ITEMS CURRENTLY HELD], [HELD ITEMS]
+  const holdingSectionMatch = content.match(
+    /\[(?:CURRENTLY HOLDING|ITEMS CURRENTLY HELD|HELD ITEMS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
+  );
+
+  if (holdingSectionMatch && holdingSectionMatch[1]) {
+    const sectionText = holdingSectionMatch[1];
+    const lines = sectionText.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      // Skip headers / metadata lines
+      if (
+        lower.startsWith('holding anatomy') ||
+        lower.startsWith('- holding anatomy') ||
+        lower.startsWith('holding limbs') ||
+        lower.startsWith('hand slots') ||
+        lower.startsWith('- hand slots') ||
+        lower.startsWith('slots &') ||
+        lower.startsWith('- slots') ||
+        lower.startsWith('starting capacity') ||
+        lower.startsWith('holding capacity') ||
+        lower.startsWith('holding status') ||
+        lower.includes('overflow rule') ||
+        lower.includes('hands/appendages free') ||
+        lower.includes('(none') ||
+        lower.startsWith('• items currently held') ||
+        lower.startsWith('- items currently held')
+      ) {
+        continue;
+      }
+      linesToParse.push(trimmed);
+    }
+  }
+
+  // 2. Also look for equipped weapons in [Equipped Gear & Armor] or [INVENTORY & EQUIPMENT]
+  const equippedMatch = content.match(
+    /\[(?:Equipped Gear & Armor|EQUIPPED GEAR|WORN GEAR|INVENTORY & EQUIPMENT)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
+  );
+  if (equippedMatch && equippedMatch[1]) {
+    const lines = equippedMatch[1].split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const lower = trimmed.toLowerCase();
+      // Check if this equipped line is a weapon, shield, or tool with range/reach/handedness
+      if (
+        lower.includes('hand') ||
+        lower.includes('range:') ||
+        lower.includes('reach:') ||
+        lower.includes('rifle') ||
+        lower.includes('bow') ||
+        lower.includes('sword') ||
+        lower.includes('dagger') ||
+        lower.includes('spear') ||
+        lower.includes('crossbow') ||
+        lower.includes('gun') ||
+        lower.includes('wand') ||
+        lower.includes('staff') ||
+        lower.includes('pistol') ||
+        lower.includes('shield')
+      ) {
+        if (!linesToParse.includes(trimmed)) {
+          linesToParse.push(trimmed);
+        }
+      }
+    }
+  }
+
+  for (const rawLine of linesToParse) {
+    let clean = rawLine.replace(/^[-*•>\s\d.]+/, '').trim();
+    if (!clean) continue;
+
+    // Detect limb
+    let limb = 'Hands';
+    const limbMatch = clean.match(/^\[([^\]]+)\]/);
+    if (limbMatch) {
+      limb = limbMatch[1].trim();
+      clean = clean.slice(limbMatch[0].length).trim();
+    } else {
+      const prefixLimb = clean.match(/^(?:Main Hand|Off Hand|Both Hands|Right Hand|Left Hand|Held in Jaws|Mouth|Talons|Beak|Tentacles)[:\s-]*/i);
+      if (prefixLimb) {
+        limb = prefixLimb[0].replace(/[:\s-]+$/, '').trim();
+        clean = clean.slice(prefixLimb[0].length).trim();
+      }
+    }
+
+    // Extract item name before first colon or parenthesis with weight/range
+    const namePart = clean.split(/[:|;]|\s*\(/)[0].trim();
+    if (!namePart || namePart.toLowerCase() === 'none') continue;
+
+    // Extract range if present in line
+    let range: number | undefined;
+    const rangeMatch = rawLine.match(/(?:range|reach|distance|radius)[:=\s]*(\d+(?:\.\d+)?)\s*(m|meters?|ft|feet|yards?)?/i);
+    if (rangeMatch) {
+      let val = parseFloat(rangeMatch[1]);
+      const unit = (rangeMatch[2] || 'm').toLowerCase();
+      if (unit.startsWith('ft') || unit.startsWith('feet')) {
+        val = +(val * 0.3048).toFixed(1);
+      } else if (unit.startsWith('yard')) {
+        val = +(val * 0.9144).toFixed(1);
+      }
+      if (val > 0) range = val;
+    } else {
+      // Default heuristic range based on weapon type
+      const lName = namePart.toLowerCase();
+      if (/sniper|hunting rifle|rifle|carbine|musket/i.test(lName)) range = 80;
+      else if (/longbow/i.test(lName)) range = 70;
+      else if (/shortbow|bow/i.test(lName)) range = 50;
+      else if (/crossbow/i.test(lName)) range = 40;
+      else if (/blaster|pistol|revolver/i.test(lName)) range = 30;
+      else if (/shotgun/i.test(lName)) range = 20;
+      else if (/sling/i.test(lName)) range = 25;
+      else if (/wand|magic staff|spell focus/i.test(lName)) range = 35;
+      else if (/spear|halberd|pike|javelin/i.test(lName)) range = 4;
+      else if (/greatsword|two-handed sword|polearm/i.test(lName)) range = 2.5;
+      else if (/sword|dagger|knife|axe|mace|club/i.test(lName)) range = 2;
+    }
+
+    heldItems.push({
+      name: namePart,
+      cleanName: namePart.replace(/^\[|\]$/g, '').trim(),
+      raw: rawLine,
+      limb,
+      range,
+      isOverflow: rawLine.toLowerCase().includes('overflow')
+    });
+  }
+
+  return heldItems;
+}
+
+/**
+ * Checks if two item names refer to the same item/weapon (e.g. "Hunting Rifle" vs "Rifle").
+ */
+export function areItemNamesEquivalent(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const normA = a.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+  const normB = b.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+
+  if (normA === normB) return true;
+  if (normA.includes(normB) || normB.includes(normA)) return true;
+
+  // Compare core weapon tokens (e.g. "rifle" in "hunting rifle", "shortbow" in "oak shortbow")
+  const tokensA = normA.split(/[\s_-]+/).filter(t => t.length > 2);
+  const tokensB = normB.split(/[\s_-]+/).filter(t => t.length > 2);
+
+  const weaponTypes = ['rifle', 'bow', 'shortbow', 'longbow', 'crossbow', 'gun', 'pistol', 'musket', 'shotgun', 'spear', 'sword', 'dagger', 'wand', 'staff', 'blade', 'shield', 'lantern', 'torch'];
+  for (const wt of weaponTypes) {
+    if (normA.includes(wt) && normB.includes(wt)) {
+      return true;
+    }
+  }
+
+  // Common token match
+  const common = tokensA.filter(t => tokensB.includes(t));
+  return common.length >= 1 && (tokensA.length === 1 || tokensB.length === 1 || common.length >= 2);
+}
+
+/**
+ * Reconciles held items on map pages.
+ * Ensures items/weapons held or equipped by players and NPCs are attached to their holder
+ * rather than erroneously placed far away on the map at their weapon range or random coordinates.
+ */
+export function reconcileHeldItemsOnMap(
+  pages: any[],
+  fileSystem: {
+    list: () => string[];
+    read: (f: string) => string | null;
+  },
+  playerRegistry?: any[]
+): { attachedCount: number; fixedFarAwayCount: number } {
+  if (!pages || !Array.isArray(pages) || !fileSystem) {
+    return { attachedCount: 0, fixedFarAwayCount: 0 };
+  }
+
+  let attachedCount = 0;
+  let fixedFarAwayCount = 0;
+
+  const allFiles = typeof fileSystem.list === 'function' ? fileSystem.list() : [];
+
+  for (const page of pages) {
+    if (!page || typeof page !== 'object') continue;
+
+    interface ActiveHolder {
+      id: string;
+      charName: string;
+      username: string;
+      x: number;
+      y: number;
+      heldItems: HeldItemInfo[];
+      isPlayer: boolean;
+    }
+    const activeHolders: ActiveHolder[] = [];
+
+    // 1. Gather all players with their held items and coordinates
+    if (Array.isArray(page.players)) {
+      for (const pl of page.players) {
+        if (!pl || typeof pl !== 'object') continue;
+        const px = Number(pl.x) || 0;
+        const py = Number(pl.y) || 0;
+
+        let charName = String(pl.characterName || pl.charName || '').trim();
+        const username = String(pl.username || '').trim();
+
+        // Resolve file
+        let content: string | null = null;
+        if (charName && username) {
+          content = fileSystem.read(`${charName}-${username}.txt`);
+        }
+        if (!content && username) {
+          content = fileSystem.read(`${username}.txt`);
+        }
+        if (!content && charName) {
+          content = fileSystem.read(`${charName}.txt`);
+        }
+        if (!content) {
+          const matchF = allFiles.find(f => {
+            const fLow = f.toLowerCase();
+            return (username && fLow.includes(username.toLowerCase())) ||
+                   (charName && fLow.includes(charName.toLowerCase()));
+          });
+          if (matchF) content = fileSystem.read(matchF);
+        }
+
+        const held = content ? extractHeldItemsFromCharacterSheet(content) : [];
+        if (held.length > 0) {
+          pl.heldItems = held;
+          pl.weaponRange = Math.max(...held.map(h => h.range || 0), 0);
+        } else if (Array.isArray(pl.heldItems) && pl.heldItems.length > 0) {
+          // pl already has heldItems attached
+        }
+
+        activeHolders.push({
+          id: username.toLowerCase() || charName.toLowerCase(),
+          charName: charName || username,
+          username,
+          x: px,
+          y: py,
+          heldItems: pl.heldItems || held,
+          isPlayer: true
+        });
+      }
+    }
+
+    // 2. Gather all NPCs with their held items and coordinates
+    if (Array.isArray(page.npcs)) {
+      for (const npc of page.npcs) {
+        if (!npc || typeof npc !== 'object') continue;
+        const nx = Number(npc.x) || 0;
+        const ny = Number(npc.y) || 0;
+        const nName = String(npc.name || npc.charName || '').trim();
+
+        let content: string | null = null;
+        if (nName) {
+          content = fileSystem.read(`${nName}.txt`) ||
+                    fileSystem.read(`${nName}-npc.txt`) ||
+                    fileSystem.read(`${nName.replace(/-npc$/i, '')}.txt`);
+        }
+        if (!content && nName) {
+          const cleanN = nName.replace(/[-_]npc$/i, '').toLowerCase();
+          const matchF = allFiles.find(f => f.toLowerCase().includes(cleanN));
+          if (matchF) content = fileSystem.read(matchF);
+        }
+
+        const held = content ? extractHeldItemsFromCharacterSheet(content) : [];
+        if (held.length > 0) {
+          npc.heldItems = held;
+          npc.weaponRange = Math.max(...held.map(h => h.range || 0), 0);
+        }
+
+        activeHolders.push({
+          id: nName.toLowerCase(),
+          charName: nName.replace(/[-_]npc$/i, ''),
+          username: nName,
+          x: nx,
+          y: ny,
+          heldItems: npc.heldItems || held,
+          isPlayer: false
+        });
+      }
+    }
+
+    // Helper to match an item against active holders
+    const findHolderForItem = (itemName: string, itemObj?: any): { holder: ActiveHolder; heldItem: HeldItemInfo } | null => {
+      const cleanItem = String(itemName || '').trim().toLowerCase();
+      if (!cleanItem) return null;
+
+      // Direct explicit attachment
+      const explicitAttach = String(itemObj?.attachedTo || itemObj?.holder || '').trim().toLowerCase();
+      if (explicitAttach) {
+        const found = activeHolders.find(h =>
+          h.id === explicitAttach ||
+          h.username.toLowerCase() === explicitAttach ||
+          h.charName.toLowerCase() === explicitAttach ||
+          explicitAttach.includes(h.charName.toLowerCase()) ||
+          explicitAttach.includes(h.username.toLowerCase())
+        );
+        if (found) {
+          const matchedHeld = found.heldItems.find(hi =>
+            cleanItem.includes(hi.cleanName.toLowerCase()) ||
+            hi.cleanName.toLowerCase().includes(cleanItem)
+          ) || found.heldItems[0] || { name: itemName, cleanName: itemName };
+          return { holder: found, heldItem: matchedHeld };
+        }
+      }
+
+      // Check each holder's held items
+      for (const holder of activeHolders) {
+        for (const hi of holder.heldItems) {
+          const hiNorm = hi.cleanName.toLowerCase();
+          if (
+            cleanItem === hiNorm ||
+            cleanItem.includes(hiNorm) ||
+            hiNorm.includes(cleanItem) ||
+            areItemNamesEquivalent(cleanItem, hiNorm)
+          ) {
+            return { holder, heldItem: hi };
+          }
+        }
+      }
+
+      return null;
+    };
+
+    // 3. Reconcile page.items
+    if (Array.isArray(page.items)) {
+      for (const item of page.items) {
+        if (!item || typeof item !== 'object') continue;
+        const match = findHolderForItem(item.name, item);
+        if (match) {
+          const { holder, heldItem } = match;
+          const oldX = Number(item.x) || 0;
+          const oldY = Number(item.y) || 0;
+          const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
+
+          // If item was placed far away (> 1.5m), snap it to holder!
+          if (dist > 1.5) {
+            fixedFarAwayCount++;
+            console.log(`[Map Item Engine] Corrected held item "${item.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
+          }
+
+          item.x = holder.x;
+          item.y = holder.y;
+          item.attachedTo = holder.charName || holder.username;
+          item.holder = holder.username || holder.charName;
+          item.isHeld = true;
+          if (heldItem.range && !item.range) {
+            item.range = heldItem.range;
+          }
+          attachedCount++;
+        }
+      }
+    }
+
+    // 4. Reconcile page.areas of type 'item', 'weapon', 'loot', 'equipment'
+    if (Array.isArray(page.areas)) {
+      for (const area of page.areas) {
+        if (!area || typeof area !== 'object') continue;
+        const aType = String(area.type || '').toLowerCase();
+        const aName = String(area.name || '').toLowerCase();
+
+        if (
+          aType === 'item' ||
+          aType === 'weapon' ||
+          aType === 'equipment' ||
+          aType === 'loot' ||
+          aName.includes('range') ||
+          area.attachedTo ||
+          area.isHeld
+        ) {
+          const match = findHolderForItem(area.name, area);
+          if (match) {
+            const { holder, heldItem } = match;
+            const ax = Number(area.x ?? area.cx) || 0;
+            const ay = Number(area.y ?? area.cy) || 0;
+            const dist = Math.sqrt((ax - holder.x) ** 2 + (ay - holder.y) ** 2);
+
+            if (dist > 1.5) {
+              fixedFarAwayCount++;
+            }
+
+            if (area.cx !== undefined) area.cx = holder.x;
+            if (area.cy !== undefined) area.cy = holder.y;
+            area.x = holder.x;
+            area.y = holder.y;
+            area.attachedTo = holder.charName || holder.username;
+            area.holder = holder.username || holder.charName;
+            area.isHeld = true;
+            if (heldItem.range && !area.range) {
+              area.range = heldItem.range;
+            }
+            attachedCount++;
+          }
+        }
+      }
+    }
+  }
+
+  return { attachedCount, fixedFarAwayCount };
+}

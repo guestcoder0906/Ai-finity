@@ -1383,6 +1383,7 @@ DYNAMIC SETTING-APPROPRIATE STARTING CURRENCY & WEALTH (CRITICAL):
 - CARRIED VS STORED / REMOTE MANDATE: If the character carries a wallet, chit wallet, coin pouch, or cardholder, all money, cash, coins, or digital credits meant to be on them MUST be listed under Carried Balance (On Person) referencing that container. NEVER mark Carried Balance as 0 and put funds in Stored / Remote Balance when they carry a wallet or pouch!
 - CONTAINER CONTENTS INTEGRITY: Never output container names or subheaders (e.g. "• (Inside Leather Bifold Wallet: ...)") as item entries inside a container!
 - RANGED WEAPONS HANDEDNESS: Ranged weapons are NOT always two-handed; when carried or not actively in use, they are held in 1 hand slot under [CURRENTLY HOLDING].
+- HELD ITEMS & MAP ATTACHMENT: Weapons, tools, or items held in hands ([CURRENTLY HOLDING]) or equipped ([Equipped Gear & Armor]) are attached to the character at their exact coordinates. A weapon's range (e.g. 50m) is its attack reach, NEVER its physical map coordinates! DO NOT place a held weapon far away as a loose item on CurrentMap.json.
 - In the 'updates' array, include an update acknowledging their starting currency.
 
 STARTING INVENTORY LIMIT RULE (CRITICAL):

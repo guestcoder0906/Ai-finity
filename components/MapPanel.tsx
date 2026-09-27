@@ -8,7 +8,10 @@ import {
   deduplicatePlayersOnMap,
   reconcileRegisteredPlayersOnMap,
   purgePlayerDuplicatesFromNpcs,
-  cleanAndRepairPlayerFiles
+  cleanAndRepairPlayerFiles,
+  reconcileHeldItemsOnMap,
+  extractHeldItemsFromCharacterSheet,
+  HeldItemInfo
 } from '../services/mapPlayerEngine';
 import {
   resolveEntityFacing,
@@ -283,6 +286,9 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     });
 
     purgePlayerDuplicatesFromNpcs(pList, playerRegistry);
+
+    // Reconcile and snap any held items with range that were placed far away back to their holder
+    reconcileHeldItemsOnMap(pList, fileSystem, playerRegistry);
 
     // Synchronize and validate vision ranges and facing across all entities
     syncMapEntitiesVision({ pages: pList }, fileSystem);
@@ -987,6 +993,9 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const areaTypeLower = area.type?.toLowerCase();
             const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure';
 
+            // If item/weapon area is held or attached to an entity, it is attached to the character, not loose on ground
+            if (isItemType && (area.isHeld || area.attachedTo)) return null;
+
             return (
               <g key={area.id || i} className="group">
                 {area.shape === 'circle' ? (
@@ -1109,6 +1118,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {/* Draw Top-Level Items (if separately registered on page) */}
           {currentPage.items?.map((item: any, i: number) => {
             if (isEntityHidden(item.name)) return null;
+            // If item is held by a player or NPC, it is attached to them, not loose on ground!
+            if (item.isHeld || item.attachedTo) return null;
             const ix = Number(item.x) || 0;
             const iy = Number(item.y) || 0;
             const iName = parseName(item.name || 'Item');
@@ -1231,8 +1242,27 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const nVision = resolveEntityVision(npc, npcFileContent, false);
             const isBlind = nVision.isBlind || nVision.maxRange <= 0;
 
+            const npcHeldItems: HeldItemInfo[] = Array.isArray(npc.heldItems) && npc.heldItems.length > 0
+              ? npc.heldItems
+              : extractHeldItemsFromCharacterSheet(npcFileContent || '');
+            const primaryNpcWeapon = npcHeldItems.find(h => (h.range && h.range > 3) || /rifle|bow|gun|crossbow|wand|staff|spear|sword|dagger/i.test(h.cleanName)) || npcHeldItems[0];
+            const npcWeaponRange = primaryNpcWeapon?.range || npc.weaponRange || 0;
+            const npcHeldSummary = npcHeldItems.map(h => `${h.cleanName}${h.range ? ` (${h.range}m)` : ''}`).join(', ');
+
             return (
               <g key={`page-npc-${i}`} className="group cursor-crosshair">
+                {/* Attached NPC Weapon Range Circle (Centered on NPC, moves with them) */}
+                {npcWeaponRange > 0 && (
+                  <circle
+                    cx={nx}
+                    cy={ny}
+                    r={npcWeaponRange}
+                    className="fill-red-500/5 stroke-red-400/20 group-hover:stroke-red-400/50 pointer-events-none transition-all duration-300"
+                    strokeWidth={0.75}
+                    strokeDasharray="2.5 2"
+                  />
+                )}
+
                 {/* NPC Vision Cones: only drawn if NOT blind and maxRange > 0 */}
                 {!isBlind && (
                   <>
@@ -1296,7 +1326,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   />
                 </g>
 
-                <title>{`${nName} (${nType}${isBlind ? ': Blind (No view range)' : ''}${npc.description ? `: ${npc.description}` : ''})`}</title>
+                <title>{`${nName} (${nType}${isBlind ? ': Blind (No view range)' : ''}${npcHeldSummary ? ` | Holding: ${npcHeldSummary}` : ''}${npc.description ? `: ${npc.description}` : ''})`}</title>
                 <g
                   transform={`translate(${nx}, ${ny}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -1305,7 +1335,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 >
                   <text
                     x={0}
-                    y={-7}
+                    y={primaryNpcWeapon ? -9.5 : -7}
                     textAnchor="middle"
                     dominantBaseline="central"
                     className={`${isHostile ? 'fill-red-300' : isAlly ? 'fill-emerald-300' : isBeast ? 'fill-amber-300' : 'fill-purple-300'} text-[5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]`}
@@ -1313,6 +1343,18 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   >
                     {nName}{isBlind ? ' [Blind]' : ''}
                   </text>
+                  {primaryNpcWeapon && (
+                    <text
+                      x={0}
+                      y={-4.5}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className="fill-amber-300 text-[3.8px] font-mono font-medium select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
+                      style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '1.5px', strokeLinejoin: 'round' }}
+                    >
+                      {`[${primaryNpcWeapon.cleanName}${primaryNpcWeapon.range ? ` • ${primaryNpcWeapon.range}m` : ''}]`}
+                    </text>
+                  )}
                 </g>
               </g>
             );
@@ -1337,8 +1379,27 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const pVision = resolveEntityVision(player, pFileContent, true);
             const isBlind = pVision.isBlind || pVision.maxRange <= 0;
 
+            const heldItems: HeldItemInfo[] = Array.isArray(player.heldItems) && player.heldItems.length > 0
+              ? player.heldItems
+              : extractHeldItemsFromCharacterSheet(pFileContent || '');
+            const primaryWeapon = heldItems.find(h => (h.range && h.range > 3) || /rifle|bow|gun|crossbow|wand|staff|spear|sword|dagger/i.test(h.cleanName)) || heldItems[0];
+            const weaponRange = primaryWeapon?.range || player.weaponRange || 0;
+            const heldSummary = heldItems.map(h => `${h.cleanName}${h.range ? ` (${h.range}m)` : ''}`).join(', ');
+
             return (
               <g key={res.canonicalKey || player.username || i} className="group cursor-pointer">
+                {/* Attached Weapon Range Circle (Centered on Player, moves with them) */}
+                {weaponRange > 0 && (
+                  <circle
+                    cx={px}
+                    cy={py}
+                    r={weaponRange}
+                    className="fill-blue-500/5 stroke-blue-400/25 group-hover:stroke-blue-400/60 pointer-events-none transition-all duration-300"
+                    strokeWidth={0.75}
+                    strokeDasharray="2.5 2"
+                  />
+                )}
+
                 {/* Vision Cones: only drawn if NOT blind and maxRange > 0 */}
                 {!isBlind && (
                   <>
@@ -1363,7 +1424,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   strokeWidth={0.8}
                   transform={`translate(${px}, ${py}) rotate(${pfacing})`}
                 />
-                <title>{`${displayName}${isBlind ? ' (Blind - No view range)' : ''}`}</title>
+                <title>{`${displayName}${isBlind ? ' (Blind - No view range)' : ''}${heldSummary ? ` | Holding: ${heldSummary}` : ''}`}</title>
                 <g
                   transform={`translate(${px}, ${py}) scale(${textScale})`}
                   className={`pointer-events-auto transition-opacity duration-150 ${
@@ -1372,7 +1433,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                 >
                   <text
                     x={0}
-                    y={-8}
+                    y={primaryWeapon ? -10 : -8}
                     textAnchor="middle"
                     dominantBaseline="central"
                     className="fill-white text-[5.5px] font-mono font-bold select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
@@ -1380,6 +1441,18 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
                   >
                     {displayName}{isBlind ? ' [Blind]' : ''}
                   </text>
+                  {primaryWeapon && (
+                    <text
+                      x={0}
+                      y={-4.5}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className="fill-amber-300 text-[4px] font-mono font-medium select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
+                      style={{ paintOrder: 'stroke fill', stroke: '#000000', strokeWidth: '1.5px', strokeLinejoin: 'round' }}
+                    >
+                      {`[${primaryWeapon.cleanName}${primaryWeapon.range ? ` • ${primaryWeapon.range}m` : ''}]`}
+                    </text>
+                  )}
                 </g>
               </g>
             );

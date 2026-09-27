@@ -13,6 +13,7 @@ import {
   isPlayerCharacterFile,
   deduplicateNpcsOnMap,
   reconcileNpcFiles,
+  reconcileHeldItemsOnMap,
   RegisteredPlayer
 } from "./mapPlayerEngine";
 import {
@@ -472,7 +473,13 @@ CRITICAL FILE MANAGEMENT RULES:
 - Create "CurrentMap.json" to track the live map of the player's current location (50-200 meter scale). MUST be valid JSON.
   * Update this file accurately in real-time based on context, location, dimensions, and speed.
   * Structure: \`{ "pages": [{ "name": "Region/Area Name", "scale": "50m", "areas": [{ "id": "a1", "name": "Room Name", "type": "room|hallway|field|forest|water|building|furniture|npc|obstacle|vehicle|fire|lava|poison|treasure|tech|magic|nature|portal|terminal|hazard|shop|stall|item|landmark", "shape": "rect|circle|ellipse|oblong|polygon|path", "x": 0, "y": 0, "width": 10, "height": 10, "radius": 5, "rx": 15, "ry": 8, "rotation": 0, "points": "0,0 10,10 0,10", "visible": true}], "players": [{ "username": "PlayerName", "x": 5, "y": 5, "facing": 0, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 20, "maxRange": 50} }], "npcs": [{ "name": "TownGuard-npc", "type": "npc", "x": 12, "y": 15, "facing": 270, "vision": { "mainAngle": 66, "peripheralAngle": 90, "detailedRange": 15, "maxRange": 35} }], "items": [{ "x": 8, "y": 12, "name": "Iron Dagger", "description": "Lying on table" }], "landmarks": [{ "x": 25, "y": 25, "name": "Town Square Fountain", "description": "Ornate stone fountain" }], "notes": [{ "x": 10, "y": 10, "text": "Fire", "type": "danger|info|warning|discovery"}] }] }\`
-  * NOTHING MISSING (CRITICAL): There MUST BE NOTHING MISSING within all players' observable and known areas. Every single landmark, loose item, weapon, treasure, NPC, creature, building, stall, obstacle, and environmental hazard MUST be plotted on the map. It should be EVERYTHING observable or known, with everything on the map updated correctly always.
+  * NOTHING MISSING (CRITICAL): There MUST BE NOTHING MISSING within all players' observable and known areas. Every single landmark, loose unheld item on the ground, dropped weapon, treasure, NPC, creature, building, stall, obstacle, and environmental hazard MUST be plotted on the map. It should be EVERYTHING observable or known, with everything on the map updated correctly always.
+  * HELD ITEMS & WEAPON RANGE MAP ATTACHMENT MANDATE (CRITICAL - NO DISCONNECTED/ROGUE HELD ITEMS):
+    - Items, weapons, shields, tools, and lights currently held in hands ([CURRENTLY HOLDING]) or equipped on person ([Equipped Gear & Armor]) by a player or NPC are ATTACHED TO THAT CHARACTER!
+    - A weapon's firing range or reach (e.g. 'Range: 50m', 'Reach: 2m', 'Range: 100m') defines how far its projectile or attack can reach when used. It is NEVER the item's physical coordinates or distance on the map!
+    - NEVER place a character's held or equipped weapon/item far away on the map (e.g. placing a 50m rifle at x=50, y=50 or 50 meters away from the player). The weapon is physically in the character's hands at their exact coordinates!
+    - In "CurrentMap.json", the "items" array and "areas" (with type "item" or "weapon") are STRICTLY for unheld, loose objects lying on the ground, on tables, in chests, or dropped in the environment.
+    - If you include an attached/held item on the map, its coordinates MUST match the holder's coordinates (x = holder.x, y = holder.y) with "attachedTo": "HolderName" and "isHeld": true.
   * ADVANCED, ACCURATE & FLEXIBLE SHAPES: Do NOT limit maps to just simple circles or squares. Use advanced, flexible, and accurate shapes:
     - Oblong / Elliptical shapes: for oblong forest groves, elongated clearings, oval glades, stretched ponds, or curved plazas, use shape: "ellipse" or shape: "oblong" with center (cx, cy or x, y), radii (rx, ry), and optional rotation in degrees.
     - Polygons: for irregular caverns, winding riverbanks, jagged rocky outcrops, angled street corners, or natural terrain, use shape: "polygon" with points: "x1,y1 x2,y2 x3,y3 ...".
@@ -525,6 +532,7 @@ SPATIAL CONSISTENCY RULE (CRITICAL):
 - Range Enforcement (MANDATORY): No physical action (melee, ranged, gear usage) can succeed if the distance to the target exceeds the range defined in the object's file.
   * Melee: 1–3m range.
   * Ranged/Projectiles: Range must be defined in meters (e.g., Bow: 60m).
+- WEAPON RANGE VS MAP POSITION INTEGRITY (CRITICAL): A weapon with 'Range: 50m' remains physically held at the player's position (x, y). Its 50m range is the radius around the player within which they can target enemies or objects, NOT a separate object placed 50m away! Never place a held weapon far away on the map.
 - PROJECTILE LOGIC:
   * When firing a projectile (bullet, arrow, spell bolt), you MUST calculate travel time: time = distance / velocity.
   * If travel time is > 1.0s, the projectile must be created as an entry in CurrentMap.json 'areas' with type='projectile' and its current (x, y) coordinates.
@@ -701,6 +709,7 @@ INSTRUCTIONS:
      * isInventoryAffected: true if any inventory/equipment/usage change occurs, false otherwise.
      * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop" | "consume_use" | "refill" | "set_usage"), item name, amount/uses, max uses, refillable status, container name, and target character.
    - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics) are NOT penalized like standard humans.
+   - HELD ITEMS & MAP ATTACHMENT: Verify that any item or weapon held in hand or equipped by a character is attached to that character. Ranged weapons (rifles, bows, blasters, etc.) define their firing range, NOT their map position. Never place a held weapon far away on the map; it moves with and is attached to the holding character at their coordinates.
 7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC CONTEXTUAL AI REASONING):
    - Dynamically analyze the character's physical and magical exertion based on the full scene context, character capabilities, and physical/magical requirements:
    - MENIAL & LOW-EXERTION ACTIONS: Menial, low-effort, casual, social, or everyday tasks (such as talking, speaking, conversing, standing, looking, observing, inspecting, reading, listening, waiting, idle moments, casual walking, sitting, eating, drinking, or light non-strenuous interactions) do NOT use any noticeable amount of energy or stamina.
@@ -1878,6 +1887,7 @@ private enforceSpatialConsistency(oldMapRaw: string, username?: string) {
 
           for (const area of areas) {
             if (!interactiveTypes.has(area.type?.toLowerCase())) continue;
+            if (area.isHeld || area.attachedTo) continue;
 
             const ax = Number(area.x ?? area.cx) || 0;
             const ay = Number(area.y ?? area.cy) || 0;
@@ -4963,6 +4973,9 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
 
       // Clean and deduplicate cloned or duplicate NPCs across map pages
       deduplicateNpcsOnMap(normalized.pages, allFileNames);
+
+      // Reconcile and snap any held items with range that were placed far away back to their holder
+      reconcileHeldItemsOnMap(normalized.pages, this.fs, playerRegistry);
     } catch (e) {
       console.error("Player reconciliation on map failed", e);
     }
