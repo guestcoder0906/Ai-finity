@@ -141,6 +141,16 @@ export function cleanAndRepairPlayerFiles(
           fileSystem.write(targetFilename, cleanedContent);
         }
         fileSystem.delete(f);
+      } else if (content) {
+        // Also check if an item, weapon, equipment, or vehicle was mistakenly renamed with -npc.txt
+        const isItemOrVehicle = /category\s*[:=]\s*(?:item|equipment|gear|weapon|vehicle|container|armor|clothing)|type\s*[:=]\s*(?:item|weapon|vehicle|equipment)|attached\s*to\s*[:=]|equipped\s*by\s*[:=]/i.test(content);
+        if (isItemOrVehicle) {
+          const cleanBase = base.replace(/[-_]npc$/i, '').trim();
+          const targetFilename = `${cleanBase}.txt`;
+          console.log(`[Entity Engine] Repairing item/vehicle mistakenly given -npc suffix: "${f}" -> "${targetFilename}"`);
+          fileSystem.write(targetFilename, content);
+          fileSystem.delete(f);
+        }
       }
     }
   }
@@ -864,59 +874,82 @@ export interface HeldItemInfo {
 }
 
 /**
- * Extracts held and equipped items (along with their ranges/reach) from a character sheet.
+ * Robustly extracts the clean item name from any equipment, holding, or inventory line.
+ * Completely strips limb/slot prefixes (both bracketed and unbracketed, e.g. [Main Hand], Main Hand:,
+ * Both Hands (Two-Handed):, Under Arm (Overflow):, etc.), dimensions, weights, and stat suffixes.
+ */
+export function extractCleanItemNameFromLine(rawLine: string): string {
+  if (!rawLine) return '';
+  let line = rawLine.replace(/^[-*•>\s\d.]+/, '').trim();
+  if (!line || line.startsWith('#')) return '';
+
+  // 1. Strip limb or slot bracket prefixes like [Main Hand], [Both Hands (Two-Handed)], [Equipped], [Worn], [Attached], etc.
+  line = line.replace(/^\[(?:Main Hand|Off Hand|Both Hands(?:\s*\([^)]*\))?|Two-Handed|Right Hand|Left Hand|Held in Jaws|Hands|Worn|Equipped|Attached|Container|Vehicle|Mount)[^\]]*\]\s*[:=-]?\s*/i, '').trim();
+
+  // 2. Strip limb, slot, inventory, or container subheaders with or without colons:
+  // e.g. "Main Hand:", "Both Hands (Two-Handed):", "Containers Equipped/Carried:", "Equipped Gear & Armor:", "Attached:", "Mount / Vehicle Link:"
+  line = line.replace(/^(?:(?:Main|Off|Both|Right|Left)\s+Hands?(?:\s*\([^)]*\))?|Two-Handed(?:\s*Grip)?|Held in Jaws|Mouth|Talons|Beak|Tentacles|Under Arm(?:\s*\(Overflow\))?|Overflow(?:\s*Hold)?|Worn Gear|Equipped Gear(?:\s*& Armor)?|Containers?(?:\s*Equipped(?:\/Carried)?)?|Carried Inventory(?:\s*\([^)]*\))?|Mount(?: \/ Vehicle Link)?|Mounting \/ Riding Status|Attached(?: Vehicle| Transport| Equipment| Gear)?|Worn|Equipped|Attached|Mount|Vehicle|Container)\s*[:=-]\s*/i, '').trim();
+
+  // Handle bracketed item links directly: e.g. "[Wooden Cart]" -> "Wooden Cart"
+  const bracketMatch = line.match(/^\[([^\]]+)\]/);
+  if (bracketMatch && bracketMatch[1] && !bracketMatch[1].toLowerCase().startsWith('location:')) {
+    line = bracketMatch[1].trim();
+  }
+
+  // 3. Take everything before the first colon, semicolon, or parenthesis with weight/dimensions/stats
+  const weightOrDimIndex = line.search(/[:|;]\s*(?:weight|dimensions?|dim|range|reach|capacity|damage|ac|status|equipped|attached|overflow|drop|qty|quantity)\b/i);
+  let namePart = weightOrDimIndex >= 0
+    ? line.substring(0, weightOrDimIndex).trim()
+    : line.split(/[:|;]|\s*\((?:weight|dimensions?|dim|range|reach|capacity|[0-9.]+\s*lbs?|[0-9.]+\s*kg)/i)[0].trim();
+
+  // Strip trailing parens like "(Attached to Player)", "(Riding)", or "(Two-Handed)"
+  namePart = namePart.replace(/\s*\([^)]*(?:attached|equipped|worn|two-handed|grip|overflow|lbs|kg|riding|mounted|driver|passenger|occupant)[^)]*\)/gi, '').trim();
+  // Strip outer brackets/quotes
+  namePart = namePart.replace(/^["'\[]+|["'\]]+$/g, '').trim();
+
+  // Filter out meta headers
+  if (!namePart || namePart.length < 2 || /^(none|n\/a|empty|slots?|capacity|hand slots|anatomy|items currently held|items?|containers?|equipped|worn)$/i.test(namePart)) {
+    return '';
+  }
+
+  return namePart;
+}
+
+/**
+ * Extracts items currently held in hands/limbs from a character sheet.
  */
 export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInfo[] {
   if (!content) return [];
   const heldItems: HeldItemInfo[] = [];
+
   const linesToParse: string[] = [];
 
   // 1. Look for [CURRENTLY HOLDING], [ITEMS CURRENTLY HELD], [HELD ITEMS]
-  const holdingSectionMatch = content.match(
-    /\[(?:CURRENTLY HOLDING|ITEMS CURRENTLY HELD|HELD ITEMS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
+  const holdingMatch = content.match(
+    /\[(?:CURRENTLY HOLDING|ITEMS CURRENTLY HELD|HELD ITEMS|HOLDING|CURRENT HOLDINGS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
   );
-
-  if (holdingSectionMatch && holdingSectionMatch[1]) {
-    const sectionText = holdingSectionMatch[1];
-    const lines = sectionText.split(/\r?\n/);
+  if (holdingMatch && holdingMatch[1]) {
+    const lines = holdingMatch[1].split(/\r?\n/);
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
       const lower = trimmed.toLowerCase();
-      // Skip headers / metadata lines
-      if (
-        lower.startsWith('holding anatomy') ||
-        lower.startsWith('- holding anatomy') ||
-        lower.startsWith('holding limbs') ||
-        lower.startsWith('hand slots') ||
-        lower.startsWith('- hand slots') ||
-        lower.startsWith('slots &') ||
-        lower.startsWith('- slots') ||
-        lower.startsWith('starting capacity') ||
-        lower.startsWith('holding capacity') ||
-        lower.startsWith('holding status') ||
-        lower.includes('overflow rule') ||
-        lower.includes('hands/appendages free') ||
-        lower.includes('(none') ||
-        lower.startsWith('• items currently held') ||
-        lower.startsWith('- items currently held')
-      ) {
+      if (!trimmed || trimmed.startsWith('#') || lower.startsWith('holding anatomy') || lower.startsWith('holding capacity') || lower.startsWith('hand slots') || lower.startsWith('dynamic overflow') || lower.startsWith('overflow hold drop chance') || lower.startsWith('items currently held:')) {
         continue;
       }
       linesToParse.push(trimmed);
     }
   }
 
-  // 2. Also look for equipped weapons in [Equipped Gear & Armor] or [INVENTORY & EQUIPMENT]
+  // 2. Also look for equipped weapons in [Equipped Gear & Armor], [CONTAINERS & CARRIED GEAR], or [INVENTORY & EQUIPMENT]
   const equippedMatch = content.match(
-    /\[(?:Equipped Gear & Armor|EQUIPPED GEAR|WORN GEAR|INVENTORY & EQUIPMENT)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
+    /\[(?:Equipped Gear & Armor|EQUIPPED GEAR|WORN GEAR|INVENTORY & EQUIPMENT|CONTAINERS & CARRIED GEAR|CARRIED GEAR|EQUIPMENT)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i
   );
   if (equippedMatch && equippedMatch[1]) {
     const lines = equippedMatch[1].split(/\r?\n/);
     for (const line of lines) {
       const trimmed = line.trim();
       const lower = trimmed.toLowerCase();
-      // Check if this equipped line is a weapon, shield, or tool with range/reach/handedness
+      // Check if this line is a weapon, shield, or tool with range/reach/handedness
       if (
         lower.includes('hand') ||
         lower.includes('range:') ||
@@ -941,26 +974,20 @@ export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInf
   }
 
   for (const rawLine of linesToParse) {
-    let clean = rawLine.replace(/^[-*•>\s\d.]+/, '').trim();
-    if (!clean) continue;
+    const namePart = extractCleanItemNameFromLine(rawLine);
+    if (!namePart) continue;
 
     // Detect limb
     let limb = 'Hands';
-    const limbMatch = clean.match(/^\[([^\]]+)\]/);
+    const limbMatch = rawLine.match(/\[(?:Main Hand|Off Hand|Both Hands(?:\s*\([^)]*\))?|Right Hand|Left Hand|Held in Jaws|Mouth|Talons|Beak|Tentacles)[^\]]*\]/i);
     if (limbMatch) {
-      limb = limbMatch[1].trim();
-      clean = clean.slice(limbMatch[0].length).trim();
+      limb = limbMatch[0].replace(/^\[|\]$/g, '').trim();
     } else {
-      const prefixLimb = clean.match(/^(?:Main Hand|Off Hand|Both Hands|Right Hand|Left Hand|Held in Jaws|Mouth|Talons|Beak|Tentacles)[:\s-]*/i);
+      const prefixLimb = rawLine.match(/(?:Main Hand|Off Hand|Both Hands(?:\s*\([^)]*\))?|Right Hand|Left Hand|Held in Jaws|Mouth|Talons|Beak|Tentacles)/i);
       if (prefixLimb) {
-        limb = prefixLimb[0].replace(/[:\s-]+$/, '').trim();
-        clean = clean.slice(prefixLimb[0].length).trim();
+        limb = prefixLimb[0].trim();
       }
     }
-
-    // Extract item name before first colon or parenthesis with weight/range
-    const namePart = clean.split(/[:|;]|\s*\(/)[0].trim();
-    if (!namePart || namePart.toLowerCase() === 'none') continue;
 
     // Extract range if present in line
     let range: number | undefined;
@@ -992,7 +1019,7 @@ export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInf
 
     heldItems.push({
       name: namePart,
-      cleanName: namePart.replace(/^\[|\]$/g, '').trim(),
+      cleanName: namePart,
       raw: rawLine,
       limb,
       range,
@@ -1005,20 +1032,49 @@ export function extractHeldItemsFromCharacterSheet(content: string): HeldItemInf
 
 /**
  * Extracts all items, gear, armor, containers, and attached equipment/vehicles
- * from a character sheet so they can never be erroneously rendered as loose ground items
+ * from a character sheet or item file so they can never be erroneously rendered as loose ground items
  * or cloned separate from the player.
  */
 export function extractAllPossessionsFromCharacterSheet(content: string): string[] {
   if (!content) return [];
   const possessions = new Set<string>();
 
+  const addPossession = (raw: string) => {
+    if (!raw) return;
+    const clean = raw.trim();
+    if (clean.length < 2) return;
+    const lower = clean.toLowerCase();
+    if (/^(none|n\/a|empty|slots?|capacity|anatomy|player|user|null|undefined)$/i.test(lower)) return;
+    possessions.add(lower);
+
+    // Simplified without common adjectives (e.g. "Iron Sword" -> "Sword", "Wooden Cart" -> "Cart")
+    const simple = lower.replace(/^(?:the|an?|heavy|light|wooden|iron|steel|leather|cloth|silver|gold|bronze|copper|sturdy|ancient|magic|magical|custom|reinforced|hardened)\s+/i, '').trim();
+    if (simple && simple.length >= 3) {
+      possessions.add(simple);
+    }
+
+    // Core weapon / vehicle / equipment token if present
+    const tokens = lower.split(/[\s_-]+/);
+    const keyTokens = [
+      'sword', 'dagger', 'bow', 'shortbow', 'longbow', 'rifle', 'crossbow', 'gun', 'pistol',
+      'musket', 'shotgun', 'spear', 'staff', 'wand', 'shield', 'lantern', 'torch',
+      'cart', 'wagon', 'mule', 'horse', 'steed', 'drone', 'trailer', 'sled', 'carriage', 'skateboard',
+      'backpack', 'satchel', 'pouch', 'wallet', 'boots', 'cloak', 'armor', 'breastplate',
+      'helmet', 'gloves', 'belt', 'quiver', 'cuirass', 'jacket', 'tunic', 'robe'
+    ];
+    for (const kt of keyTokens) {
+      if (tokens.includes(kt)) {
+        possessions.add(kt);
+      }
+    }
+  };
+
   // Look across all inventory, equipment, holding, containers, and vehicle sections
   const sectionsToScan = [
-    /\[(?:CURRENTLY HOLDING|HELD ITEMS|HOLDING)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
-    /\[(?:Equipped Gear & Armor|EQUIPPED GEAR|WORN GEAR|INVENTORY & EQUIPMENT|EQUIPMENT)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
-    /\[(?:CONTAINERS & STORAGE|CONTAINERS|STORAGE|EQUIPPED CONTAINERS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
-    /\[(?:CARRIED ITEMS|LOOSE CARRIED ITEMS|CARRIED LOOSE ITEMS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
-    /\[(?:VEHICLES & MOUNTS|ATTACHED EQUIPMENT|MOUNTS|VEHICLES)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
+    /\[(?:CURRENTLY HOLDING|HELD ITEMS|HOLDING|ITEMS CURRENTLY HELD|CURRENT HOLDINGS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
+    /\[(?:CONTAINERS & CARRIED GEAR|CONTAINERS & STORAGE|INVENTORY & EQUIPMENT|EQUIPMENT & GEAR|EQUIPPED GEAR & ARMOR|EQUIPPED GEAR|WORN GEAR|EQUIPMENT|INVENTORY|GEAR|CONTAINERS|STORAGE|CARRIED ITEMS|LOOSE CARRIED ITEMS|EQUIPPED CONTAINERS|ITEMS|BELONGINGS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
+    /\[(?:MOUNT, VEHICLE & TRANSPORT STATUS|VEHICLES & MOUNTS|ATTACHED EQUIPMENT|ATTACHED VEHICLES|TRANSPORT|MOUNTS|VEHICLES|CARTS & WAGONS|ATTACHMENTS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
+    /\[(?:OWNED \/ STORED ITEMS(?: \(NOT ON PERSON\))?|STORED ITEMS)\]([\s\S]*?)(?=\n\s*\[[A-Z0-9 &/_()-]+\]|$)/i,
   ];
 
   for (const regex of sectionsToScan) {
@@ -1026,33 +1082,42 @@ export function extractAllPossessionsFromCharacterSheet(content: string): string
     if (match && match[1]) {
       const lines = match[1].split(/\r?\n/);
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#') || trimmed.toLowerCase().startsWith('dynamic overflow') || trimmed.toLowerCase().startsWith('weight & capacity')) continue;
-        // Strip bullet / number / brackets
-        let clean = trimmed.replace(/^[-*•>\s\d.]+/, '').trim();
-        // Strip leading limb/holder brackets like [Main Hand], [Equipped], [Worn], [Attached]
-        clean = clean.replace(/^\[(?:Main Hand|Off Hand|Both Hands|Right Hand|Left Hand|Held in Jaws|Hands|Worn|Equipped|Attached|Container)[^\]]*\]\s*[:=-]?\s*/i, '').trim();
-        // Item name is everything before colon, weight, dimensions, or parenthesized stats
-        const namePart = clean.split(/[:|;]|\s*\(/)[0].trim().replace(/^\[|\]$/g, '').trim();
-        if (namePart && namePart.length >= 2 && !/^(none|n\/a|empty|slots?|capacity|hand slots|anatomy)$/i.test(namePart)) {
-          possessions.add(namePart.toLowerCase());
-          const simple = namePart.replace(/^(?:the|an?|heavy|light|wooden|iron|steel|leather|cloth|silver|gold|bronze|copper|sturdy|ancient|magic|magical)\s+/i, '').trim().toLowerCase();
-          if (simple && simple.length >= 3) {
-            possessions.add(simple);
+        // Direct bracket link in line: e.g. "- Mount / Vehicle Link: [Wooden Cart]"
+        const linkMatches = line.matchAll(/\[([^\]]+)\]/g);
+        for (const lm of linkMatches) {
+          const inner = lm[1].trim();
+          if (inner && !inner.toLowerCase().startsWith('location:') && !inner.toLowerCase().startsWith('container:') && inner.length >= 2) {
+            addPossession(inner);
           }
+        }
+
+        const namePart = extractCleanItemNameFromLine(line);
+        if (namePart) {
+          addPossession(namePart);
         }
       }
     }
   }
 
-  // Also check for explicit "Attached to:" or "Equipped by:" in the entire document
-  const attachLines = content.match(/[-*•]?\s*(?:attached|equipped|mounted|hitched)\s*(?:to|by|with)?\s*[:=]\s*([^\n\r]+)/gi);
-  if (attachLines) {
-    for (const al of attachLines) {
-      const val = al.split(/[:=]/).slice(1).join(':').trim().toLowerCase();
-      if (val && val.length >= 3) {
-        possessions.add(val);
-      }
+  // Check if content itself is an item / vehicle / equipment file schema
+  const isItemOrVehicleFile =
+    /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(content) ||
+    /category\s*[:=]\s*(?:item|equipment|gear|weapon|vehicle|mount|container|armor|clothing|tool|transport)/i.test(content);
+
+  if (isItemOrVehicleFile) {
+    const nameMatch = content.match(/[-*•]?\s*Name\s*[:=]\s*([^\n\r]+)/i);
+    if (nameMatch && nameMatch[1]) {
+      addPossession(nameMatch[1].replace(/\[[^\]]+\]/g, '').trim());
+    }
+  }
+
+  // Also check for explicit attachment / hitching lines across the entire document
+  // e.g. "- Attached to: Chloe", "- Hitched to: Pack Mule", "- Mount / Vehicle Link: [Chestnut Warhorse]"
+  const linkLines = content.matchAll(/[-*•]?\s*(?:attached|equipped|mounted|hitched|towed|carried|held|riding|link)\s*(?:to|by|with|on)?\s*[:=]\s*([^\n\r]+)/gi);
+  for (const ll of linkLines) {
+    const val = ll[1].replace(/\[([^\]]+)\]/g, '$1').trim();
+    if (val && val.length >= 2 && !val.toLowerCase().startsWith('location:')) {
+      addPossession(val);
     }
   }
 
@@ -1060,23 +1125,29 @@ export function extractAllPossessionsFromCharacterSheet(content: string): string
 }
 
 /**
- * Checks if two item names refer to the same item/weapon (e.g. "Hunting Rifle" vs "Rifle").
+ * Checks if two item names refer to the same item/weapon (e.g. "Hunting Rifle" vs "Rifle", "Wooden Cart" vs "Cart").
  */
 export function areItemNamesEquivalent(a: string, b: string): boolean {
   if (!a || !b) return false;
-  const normA = a.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
-  const normB = b.toLowerCase().replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+  const normA = a.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+  const normB = b.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
 
+  if (!normA || !normB) return false;
   if (normA === normB) return true;
   if (normA.includes(normB) || normB.includes(normA)) return true;
 
-  // Compare core weapon tokens (e.g. "rifle" in "hunting rifle", "shortbow" in "oak shortbow")
+  // Compare core tokens
   const tokensA = normA.split(/[\s_-]+/).filter(t => t.length > 2);
   const tokensB = normB.split(/[\s_-]+/).filter(t => t.length > 2);
 
-  const weaponTypes = ['rifle', 'bow', 'shortbow', 'longbow', 'crossbow', 'gun', 'pistol', 'musket', 'shotgun', 'spear', 'sword', 'dagger', 'wand', 'staff', 'blade', 'shield', 'lantern', 'torch'];
-  for (const wt of weaponTypes) {
-    if (normA.includes(wt) && normB.includes(wt)) {
+  const sharedCategories = [
+    'rifle', 'bow', 'shortbow', 'longbow', 'crossbow', 'gun', 'pistol', 'musket', 'shotgun',
+    'spear', 'sword', 'dagger', 'wand', 'staff', 'blade', 'shield', 'lantern', 'torch',
+    'cart', 'wagon', 'trailer', 'sled', 'carriage', 'mule', 'horse', 'steed', 'drone', 'skateboard',
+    'backpack', 'satchel', 'pouch', 'wallet', 'cuirass', 'armor', 'boots', 'cloak', 'helmet'
+  ];
+  for (const cat of sharedCategories) {
+    if (tokensA.includes(cat) && tokensB.includes(cat)) {
       return true;
     }
   }
@@ -1115,6 +1186,8 @@ export function reconcileHeldItemsOnMap(
       id: string;
       charName: string;
       username: string;
+      emailPrefix: string;
+      aliases: Set<string>;
       x: number;
       y: number;
       heldItems: HeldItemInfo[];
@@ -1125,6 +1198,10 @@ export function reconcileHeldItemsOnMap(
 
     // 1. Gather all players with their held items and coordinates
     if (Array.isArray(page.players)) {
+      const regList = (playerRegistry && playerRegistry.length > 0)
+        ? playerRegistry
+        : buildPlayerRegistry(allFiles, fileSystem);
+
       for (const pl of page.players) {
         if (!pl || typeof pl !== 'object') continue;
         const px = Number(pl.x) || 0;
@@ -1133,9 +1210,20 @@ export function reconcileHeldItemsOnMap(
         let charName = String(pl.characterName || pl.charName || '').trim();
         const username = String(pl.username || '').trim();
 
+        const res = resolvePlayerIdentity(pl, regList);
+        if (res.characterName && !charName) charName = res.characterName;
+
         // Resolve file
         let content: string | null = null;
-        if (charName && username) {
+        const matchedReg = regList.find(r =>
+          r.username.toLowerCase() === res.canonicalKey ||
+          r.charName.toLowerCase() === res.canonicalKey ||
+          r.aliases.has(res.canonicalKey)
+        );
+        if (matchedReg) {
+          content = fileSystem.read(matchedReg.filename);
+        }
+        if (!content && charName && username) {
           content = fileSystem.read(`${charName}-${username}.txt`);
         }
         if (!content && username) {
@@ -1152,6 +1240,10 @@ export function reconcileHeldItemsOnMap(
           });
           if (matchF) content = fileSystem.read(matchF);
         }
+        if (!content && regList.length === 1) {
+          content = fileSystem.read(regList[0].filename);
+          charName = regList[0].charName;
+        }
 
         const held = content ? extractHeldItemsFromCharacterSheet(content) : [];
         const allPossessions = content ? extractAllPossessionsFromCharacterSheet(content) : [];
@@ -1163,10 +1255,21 @@ export function reconcileHeldItemsOnMap(
         }
         pl.allPossessions = allPossessions;
 
+        const aliases = new Set<string>();
+        if (matchedReg) {
+          matchedReg.aliases.forEach(a => aliases.add(a.toLowerCase()));
+        }
+        if (username) aliases.add(username.toLowerCase());
+        if (charName) aliases.add(charName.toLowerCase());
+        const emailPrefix = username.includes('@') ? username.split('@')[0].toLowerCase() : username.toLowerCase();
+        if (emailPrefix) aliases.add(emailPrefix);
+
         activeHolders.push({
-          id: username.toLowerCase() || charName.toLowerCase(),
-          charName: charName || username,
+          id: username.toLowerCase() || charName.toLowerCase() || res.canonicalKey,
+          charName: charName || res.characterName || username,
           username,
+          emailPrefix,
+          aliases,
           x: px,
           y: py,
           heldItems: pl.heldItems || held,
@@ -1204,10 +1307,16 @@ export function reconcileHeldItemsOnMap(
         }
         npc.allPossessions = allPossessions;
 
+        const aliases = new Set<string>();
+        aliases.add(nName.toLowerCase());
+        aliases.add(nName.replace(/[-_]npc$/i, '').toLowerCase());
+
         activeHolders.push({
           id: nName.toLowerCase(),
           charName: nName.replace(/[-_]npc$/i, ''),
           username: nName,
+          emailPrefix: '',
+          aliases,
           x: nx,
           y: ny,
           heldItems: npc.heldItems || held,
@@ -1222,15 +1331,37 @@ export function reconcileHeldItemsOnMap(
       const cleanItem = String(itemName || '').trim().toLowerCase();
       if (!cleanItem) return null;
 
-      // Direct explicit attachment
-      const explicitAttach = String(itemObj?.attachedTo || itemObj?.holder || itemObj?.equippedBy || itemObj?.owner || '').trim().toLowerCase();
+      // Extract explicit attach target from item properties or description
+      let explicitAttach = String(itemObj?.attachedTo || itemObj?.holder || itemObj?.equippedBy || itemObj?.owner || itemObj?.hitchedTo || itemObj?.towedBy || itemObj?.carriedBy || '').trim().toLowerCase();
+      if (!explicitAttach && itemObj) {
+        const descText = String(itemObj.description || itemObj.notes || itemObj.status || '').toLowerCase();
+        const attachMatch = descText.match(/(?:attached|equipped|hitched|towed|held|carried)\s*(?:to|by)?\s*[:=\s]+([a-zA-Z0-9_.-]+)/i);
+        if (attachMatch && attachMatch[1]) {
+          explicitAttach = attachMatch[1].trim().toLowerCase();
+        }
+      }
+
+      // Check item's file content if available in fileSystem
+      if (!explicitAttach) {
+        const itemFile = fileSystem.read(`${itemName}.txt`) || fileSystem.read(`${cleanItem}.txt`);
+        if (itemFile) {
+          const fileAttachMatch = itemFile.match(/(?:attached|equipped|hitched|towed|held|carried)\s*(?:to|by)?\s*[:=\s]+([a-zA-Z0-9_.-]+)/i);
+          if (fileAttachMatch && fileAttachMatch[1]) {
+            explicitAttach = fileAttachMatch[1].trim().toLowerCase();
+          }
+        }
+      }
+
       if (explicitAttach) {
         const found = activeHolders.find(h =>
           h.id === explicitAttach ||
           h.username.toLowerCase() === explicitAttach ||
           h.charName.toLowerCase() === explicitAttach ||
+          h.emailPrefix === explicitAttach ||
+          h.aliases.has(explicitAttach) ||
           explicitAttach.includes(h.charName.toLowerCase()) ||
-          explicitAttach.includes(h.username.toLowerCase())
+          explicitAttach.includes(h.username.toLowerCase()) ||
+          (h.isPlayer && (explicitAttach === 'player' || explicitAttach === 'user'))
         );
         if (found) {
           const matchedHeld = found.heldItems.find(hi =>
@@ -1282,26 +1413,34 @@ export function reconcileHeldItemsOnMap(
       page.items = page.items.filter((item: any) => {
         if (!item || typeof item !== 'object') return false;
         const match = findHolderForItem(item.name, item);
-        if (match) {
-          const { holder, heldItem } = match;
-          const oldX = Number(item.x) || 0;
-          const oldY = Number(item.y) || 0;
-          const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
+        const itemNameLower = String(item.name || '').toLowerCase();
+        const isPossessed = activeHolders.some(h =>
+          h.heldItems.some(hi => areItemNamesEquivalent(itemNameLower, hi.cleanName)) ||
+          h.allPossessions.some(p => areItemNamesEquivalent(itemNameLower, p))
+        );
 
-          if (dist > 1.0) {
-            fixedFarAwayCount++;
-            console.log(`[Map Item Engine] Corrected held/attached item "${item.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
-          }
+        if (match || isPossessed || item.isHeld || item.attachedTo || (item.holder && item.holder !== 'ground')) {
+          if (match) {
+            const { holder, heldItem } = match;
+            const oldX = Number(item.x) || 0;
+            const oldY = Number(item.y) || 0;
+            const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
 
-          item.x = holder.x;
-          item.y = holder.y;
-          item.attachedTo = holder.charName || holder.username;
-          item.holder = holder.username || holder.charName;
-          item.isHeld = true;
-          if (heldItem.range && !item.range) {
-            item.range = heldItem.range;
+            if (dist > 1.0) {
+              fixedFarAwayCount++;
+              console.log(`[Map Item Engine] Corrected held/attached item "${item.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
+            }
+
+            item.x = holder.x;
+            item.y = holder.y;
+            item.attachedTo = holder.charName || holder.username;
+            item.holder = holder.username || holder.charName;
+            item.isHeld = true;
+            if (heldItem.range && !item.range) {
+              item.range = heldItem.range;
+            }
+            attachedCount++;
           }
-          attachedCount++;
           // An item held, equipped, or attached to a character is on their person, NOT loose on the ground!
           // Remove from loose page.items so it is not cloned or rendered as a separate loose ground item!
           return false;
@@ -1310,18 +1449,21 @@ export function reconcileHeldItemsOnMap(
       });
     }
 
-    // 4. Reconcile page.areas: catch held items, weapons, and range areas
+    // 4. Reconcile page.areas: catch held items, weapons, vehicles, and range areas
     if (Array.isArray(page.areas)) {
       page.areas = page.areas.filter((area: any) => {
         if (!area || typeof area !== 'object') return false;
         const aType = String(area.type || '').toLowerCase();
         const aName = String(area.name || '').toLowerCase();
 
-        // Check if area is an item, weapon, equipment, range indicator, or explicitly attached/held
+        // Check if area is an item, weapon, equipment, vehicle, transport, range indicator, or explicitly attached/held
         const shouldCheck =
           aType === 'item' ||
           aType === 'weapon' ||
           aType === 'equipment' ||
+          aType === 'vehicle' ||
+          aType === 'transport' ||
+          aType === 'mount' ||
           aType === 'loot' ||
           aType === 'treasure' ||
           aType === 'range' ||
@@ -1332,8 +1474,8 @@ export function reconcileHeldItemsOnMap(
           area.isHeld ||
           area.range !== undefined ||
           activeHolders.some(h =>
-            h.heldItems.some(hi => aName.includes(hi.cleanName.toLowerCase())) ||
-            h.allPossessions.some(pos => aName.includes(pos) || pos.includes(aName))
+            h.heldItems.some(hi => areItemNamesEquivalent(aName, hi.cleanName)) ||
+            h.allPossessions.some(pos => areItemNamesEquivalent(aName, pos))
           );
 
         if (shouldCheck) {
@@ -1343,36 +1485,52 @@ export function reconcileHeldItemsOnMap(
               : null
           );
 
-          if (match) {
-            const { holder, heldItem } = match;
-            const ax = Number(area.x ?? area.cx) || 0;
-            const ay = Number(area.y ?? area.cy) || 0;
-            const dist = Math.sqrt((ax - holder.x) ** 2 + (ay - holder.y) ** 2);
+          if (match || area.attachedTo || area.isHeld) {
+            if (match) {
+              const { holder, heldItem } = match;
+              const ax = Number(area.x ?? area.cx) || 0;
+              const ay = Number(area.y ?? area.cy) || 0;
+              const dist = Math.sqrt((ax - holder.x) ** 2 + (ay - holder.y) ** 2);
 
-            if (dist > 1.0) {
-              fixedFarAwayCount++;
-              console.log(`[Map Item Engine] Corrected held area "${area.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
+              if (dist > 1.0) {
+                fixedFarAwayCount++;
+                console.log(`[Map Item Engine] Corrected held area "${area.name}" placed far away (${dist.toFixed(1)}m) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
+              }
+
+              if (area.cx !== undefined) area.cx = holder.x;
+              if (area.cy !== undefined) area.cy = holder.y;
+              area.x = holder.x;
+              area.y = holder.y;
+              area.attachedTo = holder.charName || holder.username;
+              area.holder = holder.username || holder.charName;
+              area.isHeld = true;
+              if (heldItem.range && !area.range) {
+                area.range = heldItem.range;
+              }
+              attachedCount++;
             }
 
-            if (area.cx !== undefined) area.cx = holder.x;
-            if (area.cy !== undefined) area.cy = holder.y;
-            area.x = holder.x;
-            area.y = holder.y;
-            area.attachedTo = holder.charName || holder.username;
-            area.holder = holder.username || holder.charName;
-            area.isHeld = true;
-            if (heldItem.range && !area.range) {
-              area.range = heldItem.range;
-            }
-            attachedCount++;
-
-            // If the area represents an equipped/held item or weapon, remove it from loose ground areas
-            // so it is not cloned or rendered separate from the player!
-            const isLooseItemArea = aType === 'item' || aType === 'weapon' || aType === 'equipment' || aType === 'loot' || aType === 'treasure';
-            if (isLooseItemArea) {
-              return false;
-            }
+            // Remove any area that represents an item, weapon, gear, or vehicle in a character's possession
+            return false;
           }
+        }
+        return true;
+      });
+    }
+
+    // 4.5. Reconcile page.landmarks: purge any possessed/attached items mistakenly registered as landmarks
+    if (Array.isArray(page.landmarks)) {
+      page.landmarks = page.landmarks.filter((lm: any) => {
+        if (!lm || typeof lm !== 'object') return false;
+        const match = findHolderForItem(lm.name, lm);
+        const lmNameLower = String(lm.name || '').toLowerCase();
+        const isPossessed = activeHolders.some(h =>
+          h.heldItems.some(hi => areItemNamesEquivalent(lmNameLower, hi.cleanName)) ||
+          h.allPossessions.some(p => areItemNamesEquivalent(lmNameLower, p))
+        );
+        if (match || isPossessed || lm.attachedTo) {
+          console.log(`[Map Engine] Purged possessed item "${lm.name}" mistakenly listed as landmark`);
+          return false;
         }
         return true;
       });
@@ -1386,33 +1544,48 @@ export function reconcileHeldItemsOnMap(
         const nNameLower = nName.toLowerCase();
         const cleanNName = nNameLower.replace(/[-_]npc$/i, '').trim();
 
+        // Check if this entity is a vehicle or mount
+        const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(cleanNName) ||
+          npc.type === 'vehicle' || npc.type === 'mount';
+
         // Check if this NPC is actually an equipped or held gear/item of any player/NPC
         const isEquippedGear = activeHolders.some(h =>
-          h.allPossessions.some(p => p === cleanNName || cleanNName.includes(p) || p.includes(cleanNName))
-        );
-        if (isEquippedGear) {
+          h.allPossessions.some(p => areItemNamesEquivalent(cleanNName, p))
+        ) || !!findHolderForItem(npc.name, npc);
+
+        if (isEquippedGear && !isVehicle) {
           console.log(`[Map Engine] Purged equipped item "${nName}" mistakenly listed as an NPC on map`);
           return false;
         }
 
-        // Check if this NPC is explicitly attached to a player/NPC (e.g. attached cart, wagon, mount, drone)
-        const explicitAttach = String(npc.attachedTo || npc.holder || npc.owner || '').trim().toLowerCase();
-        if (explicitAttach) {
+        // If it is a vehicle or mount, check if it is attached to a player/NPC
+        const match = findHolderForItem(npc.name, npc);
+        if (match) {
+          const { holder } = match;
+          const oldX = Number(npc.x) || 0;
+          const oldY = Number(npc.y) || 0;
+          const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
+          if (dist > 1.5) {
+            fixedFarAwayCount++;
+            console.log(`[Map Engine] Snapped attached vehicle "${nName}" (${dist.toFixed(1)}m away) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
+          }
+          npc.x = holder.x;
+          npc.y = holder.y;
+          npc.attachedTo = holder.charName || holder.username;
+          attachedCount++;
+        } else if (npc.attachedTo) {
+          const target = String(npc.attachedTo).toLowerCase();
           const holder = activeHolders.find(h =>
-            h.id === explicitAttach ||
-            h.username.toLowerCase() === explicitAttach ||
-            h.charName.toLowerCase() === explicitAttach ||
-            explicitAttach.includes(h.charName.toLowerCase()) ||
-            explicitAttach.includes(h.username.toLowerCase())
-          );
+            h.id === target ||
+            h.username.toLowerCase() === target ||
+            h.charName.toLowerCase() === target ||
+            h.emailPrefix === target ||
+            h.aliases.has(target) ||
+            target.includes(h.charName.toLowerCase()) ||
+            target.includes(h.username.toLowerCase()) ||
+            (h.isPlayer && (target === 'player' || target === 'user'))
+          ) || activeHolders.find(h => h.isPlayer);
           if (holder) {
-            const oldX = Number(npc.x) || 0;
-            const oldY = Number(npc.y) || 0;
-            const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
-            if (dist > 1.5) {
-              fixedFarAwayCount++;
-              console.log(`[Map Engine] Snapped attached entity "${nName}" (${dist.toFixed(1)}m away) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
-            }
             npc.x = holder.x;
             npc.y = holder.y;
             npc.attachedTo = holder.charName || holder.username;

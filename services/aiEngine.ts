@@ -14,6 +14,7 @@ import {
   deduplicateNpcsOnMap,
   reconcileNpcFiles,
   reconcileHeldItemsOnMap,
+  extractAllPossessionsFromCharacterSheet,
   RegisteredPlayer
 } from "./mapPlayerEngine";
 import {
@@ -480,7 +481,8 @@ CRITICAL FILE MANAGEMENT RULES:
     - NEVER place a character's held or equipped weapon/item far away on the map (e.g. placing a 50m rifle at x=50, y=50 or 50 meters away from the player). The weapon is physically in the character's hands at their exact coordinates!
     - In "CurrentMap.json", the "items" array and "areas" (with type "item" or "weapon") are STRICTLY for unheld, loose objects lying on the ground, on tables, in chests, or dropped in the environment.
     - If you include an attached/held item or attached vehicle/mount on the map, its coordinates MUST match the holder's coordinates (x = holder.x, y = holder.y) with "attachedTo": "HolderName" and "isHeld": true.
-    - NEVER clone, duplicate, or separate an equipped, held, or attached thing (weapon, shield, armor, backpack, lantern, attached cart, vehicle, or mount) from the player! If an item or vehicle is equipped or attached to a character, it is ON/WITH that character. It MUST NEVER be added to "items" or "npcs" as a separate duplicate token on the ground or placed at separate coordinates.
+    - NEVER clone, duplicate, or separate an equipped, held, or attached thing (weapon, shield, armor, backpack, lantern, attached cart, vehicle, trailer, or mount) from the player! If an item or vehicle is equipped or attached to a character, it is ON/WITH that character. It MUST NEVER be added to "items" or "npcs" as a separate duplicate token on the ground or placed at separate coordinates.
+    - ATTACHMENT SYNCHRONIZATION: When a character moves, any item, gear, weapon, shield, attached cart, wagon, or towed equipment moves with them. Never leave an old token, ground item, or area behind at their prior coordinates!
   * ADVANCED, ACCURATE & FLEXIBLE SHAPES: Do NOT limit maps to just simple circles or squares. Use advanced, flexible, and accurate shapes:
     - Oblong / Elliptical shapes: for oblong forest groves, elongated clearings, oval glades, stretched ponds, or curved plazas, use shape: "ellipse" or shape: "oblong" with center (cx, cy or x, y), radii (rx, ry), and optional rotation in degrees.
     - Polygons: for irregular caverns, winding riverbanks, jagged rocky outcrops, angled street corners, or natural terrain, use shape: "polygon" with points: "x1,y1 x2,y2 x3,y3 ...".
@@ -4551,8 +4553,13 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
           continue;
         }
 
-        // Only add -npc.txt if this is genuinely a non-player entity/creature sheet
+        const isItemOrVehicle = typeof contentStr === 'string' && (
+          /category\s*[:=]\s*(?:item|equipment|gear|weapon|vehicle|container|armor|clothing)|type\s*[:=]\s*(?:item|weapon|vehicle|equipment)|attached\s*to\s*[:=]|equipped\s*by\s*[:=]/i.test(contentStr)
+        );
+
+        // Only add -npc.txt if this is genuinely a non-player entity/creature sheet, NOT an item, weapon, equipment, or vehicle!
         if (
+          !isItemOrVehicle &&
           typeof contentStr === 'string' &&
           (contentStr.includes('[NAME & DESCRIPTION]') || contentStr.includes('[STATS & MODIFIERS]') || contentStr.includes('[CURRENTLY HOLDING]'))
         ) {
@@ -4648,10 +4655,13 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
         }
       }
 
-      // Sort files so WorldTime.txt is processed first, followed by character sheets
+      // Sort files so WorldTime.txt is processed first, character sheets & entity files next,
+      // and CurrentMap.json is processed strictly LAST so all character inventories & attachments are fully up to date!
       const sortedFileEntries = Object.entries(data.files).sort(([a], [b]) => {
         if (a === 'WorldTime.txt') return -1;
         if (b === 'WorldTime.txt') return 1;
+        if (a === 'CurrentMap.json') return 1;
+        if (b === 'CurrentMap.json') return -1;
         return 0;
       });
       
@@ -4942,6 +4952,36 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       }
     }
 
+    // Gather all possessions of registered players and known item files to avoid normalizing items as NPCs or loose ground entities
+    const knownPossessions = new Set<string>();
+    if (playerRegistry) {
+      for (const reg of playerRegistry) {
+        const c = this.fs.read(reg.filename);
+        if (c) {
+          extractAllPossessionsFromCharacterSheet(c).forEach(p => knownPossessions.add(p.toLowerCase()));
+        }
+      }
+    }
+    for (const f of allFileNames) {
+      if (f.endsWith('.txt')) {
+        const c = this.fs.read(f);
+        if (c) {
+          extractAllPossessionsFromCharacterSheet(c).forEach(p => knownPossessions.add(p.toLowerCase()));
+        }
+      }
+    }
+
+    const isPossessionMatch = (name: string): boolean => {
+      if (!name) return false;
+      const clean = name.toLowerCase().replace(/[-_]npc$/i, '').trim();
+      if (!clean) return false;
+      if (knownPossessions.has(clean)) return true;
+      for (const p of knownPossessions) {
+        if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p)) return true;
+      }
+      return false;
+    };
+
     // Ensure all entities are initialized arrays and normalize NPC naming
     for (const page of normalized.pages) {
       if (!Array.isArray(page.areas)) page.areas = [];
@@ -4950,8 +4990,36 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       if (!Array.isArray(page.landmarks)) page.landmarks = [];
       if (!Array.isArray(page.npcs)) page.npcs = [];
 
-      page.npcs = page.npcs.map((n: any) => {
-        if (!n || typeof n !== 'object') return n;
+      // Purge any loose ground items or landmarks that match a player's possession
+      page.items = page.items.filter((it: any) => it && it.name && !isPossessionMatch(it.name) && !it.attachedTo && !it.isHeld);
+      page.landmarks = page.landmarks.filter((lm: any) => lm && lm.name && !isPossessionMatch(lm.name) && !lm.attachedTo);
+
+      // Purge any areas that represent items, weapons, equipment, or character possessions
+      page.areas = page.areas.filter((a: any) => {
+        if (!a || typeof a !== 'object') return false;
+        const aType = String(a.type || '').toLowerCase();
+        const aName = String(a.name || '');
+        if (aType === 'item' || aType === 'weapon' || aType === 'equipment' || aType === 'loot' || aType === 'treasure' || aType === 'vehicle') {
+          if (isPossessionMatch(aName) || a.attachedTo || a.isHeld) return false;
+        }
+        if (isPossessionMatch(aName) || a.attachedTo || a.isHeld) return false;
+        return true;
+      });
+
+      page.npcs = page.npcs.filter((n: any) => {
+        if (!n || typeof n !== 'object') return false;
+        const nName = String(n.name || '').trim();
+        // If entity matches an item or piece of equipment, purge it from NPCs!
+        if (isPossessionMatch(nName)) {
+          const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(nName) ||
+            n.type === 'vehicle' || n.type === 'mount';
+          // Non-vehicles are strictly equipped/held gear and must NEVER be on map as NPCs
+          if (!isVehicle) {
+            return false;
+          }
+        }
+        return true;
+      }).map((n: any) => {
         let nName = (n.name || '').trim();
         if (nName && !nName.toLowerCase().endsWith('-npc')) {
           nName = `${nName}-npc`;

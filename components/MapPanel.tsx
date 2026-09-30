@@ -12,6 +12,7 @@ import {
   reconcileHeldItemsOnMap,
   extractHeldItemsFromCharacterSheet,
   extractAllPossessionsFromCharacterSheet,
+  areItemNamesEquivalent,
   HeldItemInfo
 } from '../services/mapPlayerEngine';
 import {
@@ -166,6 +167,41 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     }
   }, [fileSystem, files, syncCount, username, playerRegistry]);
 
+  // Memoized set of all items, weapons, gear, containers, and vehicles in any character's sheet
+  const allKnownPossessions = useMemo(() => {
+    const possessions = new Set<string>();
+    const allTxt = (files || []).filter(f => f.endsWith('.txt'));
+    for (const f of allTxt) {
+      if (
+        f.startsWith('World') ||
+        f.startsWith('Guide') ||
+        f.startsWith('Log') ||
+        f.startsWith('History') ||
+        f.startsWith('Event') ||
+        f.startsWith('Combat') ||
+        f === 'CurrentMap.json'
+      ) continue;
+      const c = fileSystem.read(f);
+      if (c) {
+        extractAllPossessionsFromCharacterSheet(c).forEach(p => possessions.add(p.toLowerCase()));
+      }
+    }
+    return possessions;
+  }, [files, fileSystem, syncCount]);
+
+  const isPossessionOfAnyone = (rawName: string): boolean => {
+    if (!rawName) return false;
+    const clean = rawName.toLowerCase().replace(/[-_]npc$/i, '').trim();
+    if (!clean) return false;
+    if (allKnownPossessions.has(clean)) return true;
+    for (const p of allKnownPossessions) {
+      if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Robust multi-structure resolution for pages wrapped in useMemo to prevent massive lag during panning/zooming
   const pages = useMemo(() => {
     let rawPages: any[] = [];
@@ -250,14 +286,19 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       const cleanBase = base.replace(/[-_]npc$/i, '').trim().toLowerCase();
 
       // If file represents an equipped item or possession of a player, NEVER spawn it as an NPC!
-      if (allPlayerPossessions.has(base.toLowerCase()) || allPlayerPossessions.has(cleanBase)) {
+      if (isPossessionOfAnyone(base) || isPossessionOfAnyone(cleanBase)) {
         return;
       }
 
       const content = fileSystem.read(f);
       if (content) {
-        // If content indicates this is an item, equipment, or attached possession
-        if (/category[:=\s]*(?:item|equipment|gear|weapon|clothing)|attached\s*to\s*[:=]|equipped\s*by\s*[:=]/i.test(content)) {
+        // If content indicates this is an item, equipment, vehicle, or attached possession
+        if (
+          /category[:=\s]*(?:item|equipment|gear|weapon|clothing|vehicle|mount|container|armor|tool|transport)/i.test(content) ||
+          /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(content) ||
+          /(?:attached|equipped|hitched|towed|held|carried)\s*(?:to|by)?\s*[:=]/i.test(content) ||
+          /damage range:|container space capacity:|holding anatomy:/i.test(content)
+        ) {
           return;
         }
       }
@@ -290,7 +331,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     npcFiles.forEach(nf => {
       const checkKey = nf.charName.toLowerCase();
       const cleanKey = checkKey.replace(/[-_]npc$/i, '').trim();
-      if (allPlayerPossessions.has(checkKey) || allPlayerPossessions.has(cleanKey)) {
+      if (isPossessionOfAnyone(checkKey) || isPossessionOfAnyone(cleanKey) || isPossessionOfAnyone(nf.charName)) {
         return;
       }
       if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
@@ -373,9 +414,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       ...(Array.isArray(currentPage?.npcs) ? currentPage.npcs : []),
       ...(Array.isArray(currentPage?.creatures) ? currentPage.creatures : []),
       ...(Array.isArray(currentPage?.entities) ? currentPage.entities : []),
-      ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : []),
-      ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.npcs) ? mapData.npcs : []),
-      ...(pages.length === 1 && safePageIndex === 0 && Array.isArray(mapData?.creatures) ? mapData.creatures : [])
+      ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : [])
     ];
 
     const list: any[] = [];
@@ -397,7 +436,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       }
     }
     return list;
-  }, [currentPage, safePageIndex, pages.length, mapData]);
+  }, [currentPage, safePageIndex, pages.length]);
 
   // Calculate bounds to scale the map dynamically (memoized to prevent expensive geometry loop on pan/zoom)
   const { viewBox, mapWidth, mapHeight, padding, cx, cy } = useMemo(() => {
@@ -1019,11 +1058,11 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
             const areaTypeLower = String(area.type || '').toLowerCase();
             const areaNameLower = String(area.name || '').toLowerCase();
-            const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure' || areaTypeLower === 'equipment';
+            const isItemType = areaTypeLower === 'item' || areaTypeLower === 'loot' || areaTypeLower === 'weapon' || areaTypeLower === 'treasure' || areaTypeLower === 'equipment' || areaTypeLower === 'vehicle' || areaTypeLower === 'transport' || areaTypeLower === 'mount';
             const isItemOrWeaponType = isItemType || areaTypeLower === 'range' || areaTypeLower === 'weapon_range';
 
             // If area is marked held or attached to an entity, or belongs to a character's held/equipped gear, do not draw it loose on ground
-            if (area.isHeld || area.attachedTo || (area.holder && area.holder !== 'ground')) return null;
+            if (area.isHeld || area.attachedTo || (area.holder && area.holder !== 'ground') || isPossessionOfAnyone(area.name)) return null;
 
             // If area represents an item or weapon range that is currently held by any player or NPC, suppress loose rendering
             if (isItemOrWeaponType || areaNameLower.includes('range') || areaNameLower.includes('reach')) {
@@ -1168,7 +1207,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {currentPage.items?.map((item: any, i: number) => {
             if (isEntityHidden(item.name)) return null;
             // If item is held by a player or NPC, it is attached to them, not loose on ground!
-            if (item.isHeld || item.attachedTo || (item.holder && item.holder !== 'ground')) return null;
+            if (item.isHeld || item.attachedTo || (item.holder && item.holder !== 'ground') || isPossessionOfAnyone(item.name)) return null;
             const itemNameLower = String(item.name || '').toLowerCase();
             const matchesHeldItem = (currentPage.players || []).some((pl: any) =>
               (pl.heldItems || []).some((hi: any) => {
@@ -1238,6 +1277,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {/* Draw Top-Level Landmarks (if separately registered on page) */}
           {currentPage.landmarks?.map((lm: any, i: number) => {
             if (isEntityHidden(lm.name)) return null;
+            if (isPossessionOfAnyone(lm.name)) return null;
             const lx = Number(lm.x) || 0;
             const ly = Number(lm.y) || 0;
             const lName = parseName(lm.name || 'Landmark');
@@ -1288,24 +1328,33 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const cleanName = nName.replace(/-npc$/i, '').trim().toLowerCase();
 
             // Suppress NPCs that are actually equipped items or gear of a player/NPC
-            const isEquippedOfPlayer = (currentPage.players || []).some((pl: any) =>
-              (pl.allPossessions || []).some((pos: string) => cleanName === pos || cleanName.includes(pos) || pos.includes(cleanName))
-            );
-            if (isEquippedOfPlayer) return null;
+            const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(cleanName) ||
+              npc.type === 'vehicle' || npc.type === 'mount';
+
+            if (isPossessionOfAnyone(cleanName) || isPossessionOfAnyone(nName) || isPossessionOfAnyone(npc.name)) {
+              // Only keep if explicitly an attached vehicle/mount tracking a holder
+              if (!isVehicle || !npc.attachedTo) {
+                return null;
+              }
+            }
 
             // If NPC is attached to a player/NPC (e.g. attached cart, wagon, mount), ensure coordinates track holder!
             let nx = Number(npc.x) || 0;
             let ny = Number(npc.y) || 0;
             const attachedToTarget = String(npc.attachedTo || npc.holder || '').trim().toLowerCase();
-            if (attachedToTarget) {
+            if (attachedToTarget || npc.attachedTo) {
               const matchedHolder = (currentPage.players || []).find((pl: any) => {
                 const pUser = String(pl.username || '').toLowerCase();
                 const pChar = String(pl.characterName || pl.charName || '').toLowerCase();
-                return pUser === attachedToTarget || pChar === attachedToTarget || attachedToTarget.includes(pUser) || attachedToTarget.includes(pChar);
+                const pEmail = pUser.includes('@') ? pUser.split('@')[0] : '';
+                return pUser === attachedToTarget || pChar === attachedToTarget || pEmail === attachedToTarget ||
+                       attachedToTarget.includes(pUser) || attachedToTarget.includes(pChar) ||
+                       (attachedToTarget === 'player' || attachedToTarget === 'user');
               }) || (currentPage.npcs || []).find((otherNpc: any) => {
                 const otherName = String(otherNpc.name || otherNpc.charName || '').toLowerCase().replace(/[-_]npc$/i, '');
                 return otherName === attachedToTarget || attachedToTarget.includes(otherName);
-              });
+              }) || (primaryPlayer ? primaryPlayer : null);
+
               if (matchedHolder) {
                 nx = Number(matchedHolder.x) || 0;
                 ny = Number(matchedHolder.y) || 0;
