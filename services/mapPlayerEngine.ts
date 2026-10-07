@@ -907,8 +907,8 @@ export function extractCleanItemNameFromLine(rawLine: string): string {
   // Strip outer brackets/quotes
   namePart = namePart.replace(/^["'\[]+|["'\]]+$/g, '').trim();
 
-  // Filter out meta headers
-  if (!namePart || namePart.length < 2 || /^(none|n\/a|empty|slots?|capacity|hand slots|anatomy|items currently held|items?|containers?|equipped|worn)$/i.test(namePart)) {
+  // Filter out meta headers and non-item entries (e.g. empty hands, free hand)
+  if (!namePart || namePart.length < 2 || /^(none|n\/a|empty|slots?|capacity|hand slots|anatomy|items currently held|items?|containers?|equipped|worn|free\s*hands?|empty\s*hands?|bare\s*hands?|open\s*hands?|unarmed|hands?\s*free)$/i.test(namePart)) {
     return '';
   }
 
@@ -1044,13 +1044,27 @@ export function extractAllPossessionsFromCharacterSheet(content: string): string
     const clean = raw.trim();
     if (clean.length < 2) return;
     const lower = clean.toLowerCase();
-    if (/^(none|n\/a|empty|slots?|capacity|anatomy|player|user|null|undefined)$/i.test(lower)) return;
+    if (/^(none|n\/a|empty|slots?|capacity|anatomy|player|user|null|undefined|free\s*hands?|empty\s*hands?|bare\s*hands?|open\s*hands?|unarmed|hands?\s*free)$/i.test(lower)) return;
     possessions.add(lower);
+
+    // Also add unspaced variant (e.g. "wooden cart" -> "woodencart")
+    const unspaced = lower.replace(/[\s_-]+/g, '');
+    if (unspaced.length >= 2) possessions.add(unspaced);
+
+    // Also add PascalCase split (e.g. "WoodenCart" -> "wooden cart")
+    const pascalSplit = clean.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+    if (pascalSplit !== lower && pascalSplit.length >= 2) {
+      possessions.add(pascalSplit);
+      const pascalSimple = pascalSplit.replace(/^(?:the|an?|heavy|light|wooden|iron|steel|leather|cloth|silver|gold|bronze|copper|sturdy|ancient|magic|magical|custom|reinforced|hardened)\s+/i, '').trim();
+      if (pascalSimple.length >= 2) possessions.add(pascalSimple);
+    }
 
     // Simplified without common adjectives (e.g. "Iron Sword" -> "Sword", "Wooden Cart" -> "Cart")
     const simple = lower.replace(/^(?:the|an?|heavy|light|wooden|iron|steel|leather|cloth|silver|gold|bronze|copper|sturdy|ancient|magic|magical|custom|reinforced|hardened)\s+/i, '').trim();
-    if (simple && simple.length >= 3) {
+    if (simple && simple.length >= 2) {
       possessions.add(simple);
+      const simpleUnspaced = simple.replace(/[\s_-]+/g, '');
+      if (simpleUnspaced.length >= 2) possessions.add(simpleUnspaced);
     }
 
     // Core weapon / vehicle / equipment token if present
@@ -1112,11 +1126,11 @@ export function extractAllPossessionsFromCharacterSheet(content: string): string
   }
 
   // Also check for explicit attachment / hitching lines across the entire document
-  // e.g. "- Attached to: Chloe", "- Hitched to: Pack Mule", "- Mount / Vehicle Link: [Chestnut Warhorse]"
-  const linkLines = content.matchAll(/[-*•]?\s*(?:attached|equipped|mounted|hitched|towed|carried|held|riding|link)\s*(?:to|by|with|on)?\s*[:=]\s*([^\n\r]+)/gi);
+  // e.g. "- Attached: [Wooden Cart]", "- Hitched to: Pack Mule", "- Mount / Vehicle Link: [Chestnut Warhorse]"
+  const linkLines = content.matchAll(/[-*•]?\s*(?:attached|equipped|mounted|hitched|towed|carried|held|riding|link|wearing)\s*(?:to|by|with|on)?\s*[:=]\s*([^\n\r]+)/gi);
   for (const ll of linkLines) {
     const val = ll[1].replace(/\[([^\]]+)\]/g, '$1').trim();
-    if (val && val.length >= 2 && !val.toLowerCase().startsWith('location:')) {
+    if (val && val.length >= 2 && !val.toLowerCase().startsWith('location:') && !val.toLowerCase().startsWith('container:')) {
       addPossession(val);
     }
   }
@@ -1125,15 +1139,26 @@ export function extractAllPossessionsFromCharacterSheet(content: string): string
 }
 
 /**
- * Checks if two item names refer to the same item/weapon (e.g. "Hunting Rifle" vs "Rifle", "Wooden Cart" vs "Cart").
+ * Checks if two item names refer to the same item/weapon (e.g. "Hunting Rifle" vs "Rifle", "Wooden Cart" vs "Cart", "WoodenCart" vs "Wooden Cart").
  */
 export function areItemNamesEquivalent(a: string, b: string): boolean {
   if (!a || !b) return false;
-  const normA = a.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
-  const normB = b.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+  // Normalize PascalCase (e.g. "WoodenCart" -> "Wooden Cart")
+  const aSpaced = String(a).replace(/([a-z])([A-Z])/g, '$1 $2');
+  const bSpaced = String(b).replace(/([a-z])([A-Z])/g, '$1 $2');
+
+  const normA = aSpaced.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
+  const normB = bSpaced.toLowerCase().replace(/[-_]npc$/i, '').replace(/^[-*•>\s\d.]+/, '').replace(/\[[^\]]+\]/g, '').replace(/[()]/g, '').trim();
 
   if (!normA || !normB) return false;
   if (normA === normB) return true;
+
+  // Unspaced equivalence: "woodencart" === "woodencart"
+  const unspacedA = normA.replace(/[\s_-]+/g, '');
+  const unspacedB = normB.replace(/[\s_-]+/g, '');
+  if (unspacedA === unspacedB) return true;
+  if (unspacedA.includes(unspacedB) || unspacedB.includes(unspacedA)) return true;
+
   if (normA.includes(normB) || normB.includes(normA)) return true;
 
   // Compare core tokens
@@ -1536,7 +1561,7 @@ export function reconcileHeldItemsOnMap(
       });
     }
 
-    // 5. Reconcile page.npcs: catch attached vehicles/mounts and purge equipped gear mistakenly listed as NPCs
+    // 5. Reconcile page.npcs: purge any equipped gear, held items, or attached vehicles/mounts
     if (Array.isArray(page.npcs)) {
       page.npcs = page.npcs.filter((npc: any) => {
         if (!npc || typeof npc !== 'object') return false;
@@ -1544,55 +1569,54 @@ export function reconcileHeldItemsOnMap(
         const nNameLower = nName.toLowerCase();
         const cleanNName = nNameLower.replace(/[-_]npc$/i, '').trim();
 
-        // Check if this entity is a vehicle or mount
-        const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(cleanNName) ||
-          npc.type === 'vehicle' || npc.type === 'mount';
-
-        // Check if this NPC is actually an equipped or held gear/item of any player/NPC
-        const isEquippedGear = activeHolders.some(h =>
+        // Check if this NPC is actually an equipped or held gear/item/vehicle of any player/NPC
+        const isPossessed = activeHolders.some(h =>
+          h.heldItems.some(hi => areItemNamesEquivalent(cleanNName, hi.cleanName)) ||
           h.allPossessions.some(p => areItemNamesEquivalent(cleanNName, p))
-        ) || !!findHolderForItem(npc.name, npc);
+        );
+        const match = findHolderForItem(npc.name, npc);
 
-        if (isEquippedGear && !isVehicle) {
-          console.log(`[Map Engine] Purged equipped item "${nName}" mistakenly listed as an NPC on map`);
+        // If an item, weapon, gear, cart, vehicle, or mount is attached to or held by a character,
+        // it is WITH that character and MUST NOT exist as a separate NPC clone!
+        if (isPossessed || match || npc.attachedTo || (npc.holder && npc.holder !== 'ground') || npc.isHeld) {
+          console.log(`[Map Engine] Purged attached/held entity "${nName}" from loose NPCs`);
           return false;
         }
 
-        // If it is a vehicle or mount, check if it is attached to a player/NPC
-        const match = findHolderForItem(npc.name, npc);
-        if (match) {
-          const { holder } = match;
-          const oldX = Number(npc.x) || 0;
-          const oldY = Number(npc.y) || 0;
-          const dist = Math.sqrt((oldX - holder.x) ** 2 + (oldY - holder.y) ** 2);
-          if (dist > 1.5) {
-            fixedFarAwayCount++;
-            console.log(`[Map Engine] Snapped attached vehicle "${nName}" (${dist.toFixed(1)}m away) to holder ${holder.charName} at (${holder.x}, ${holder.y})`);
-          }
-          npc.x = holder.x;
-          npc.y = holder.y;
-          npc.attachedTo = holder.charName || holder.username;
-          attachedCount++;
-        } else if (npc.attachedTo) {
-          const target = String(npc.attachedTo).toLowerCase();
-          const holder = activeHolders.find(h =>
-            h.id === target ||
-            h.username.toLowerCase() === target ||
-            h.charName.toLowerCase() === target ||
-            h.emailPrefix === target ||
-            h.aliases.has(target) ||
-            target.includes(h.charName.toLowerCase()) ||
-            target.includes(h.username.toLowerCase()) ||
-            (h.isPlayer && (target === 'player' || target === 'user'))
-          ) || activeHolders.find(h => h.isPlayer);
-          if (holder) {
-            npc.x = holder.x;
-            npc.y = holder.y;
-            npc.attachedTo = holder.charName || holder.username;
-            attachedCount++;
-          }
-        }
+        return true;
+      });
+    }
 
+    // 6. Reconcile page.creatures: purge any possessed/attached creatures or mounts
+    if (Array.isArray(page.creatures)) {
+      page.creatures = page.creatures.filter((c: any) => {
+        if (!c || typeof c !== 'object') return false;
+        const cName = String(c.name || '').trim().toLowerCase().replace(/[-_]npc$/i, '');
+        const isPossessed = activeHolders.some(h =>
+          h.heldItems.some(hi => areItemNamesEquivalent(cName, hi.cleanName)) ||
+          h.allPossessions.some(p => areItemNamesEquivalent(cName, p))
+        );
+        const match = findHolderForItem(c.name, c);
+        if (isPossessed || match || c.attachedTo || c.isHeld) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // 7. Reconcile page.entities: purge any possessed/attached entities
+    if (Array.isArray(page.entities)) {
+      page.entities = page.entities.filter((e: any) => {
+        if (!e || typeof e !== 'object') return false;
+        const eName = String(e.name || '').trim().toLowerCase().replace(/[-_]npc$/i, '');
+        const isPossessed = activeHolders.some(h =>
+          h.heldItems.some(hi => areItemNamesEquivalent(eName, hi.cleanName)) ||
+          h.allPossessions.some(p => areItemNamesEquivalent(eName, p))
+        );
+        const match = findHolderForItem(e.name, e);
+        if (isPossessed || match || e.attachedTo || e.isHeld) {
+          return false;
+        }
         return true;
       });
     }

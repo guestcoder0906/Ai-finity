@@ -6,6 +6,7 @@ interface InputAreaProps {
   disabled: boolean;
   isProcessing?: boolean;
   onCancelProcessing?: () => void;
+  canUnlock?: boolean;
   isMyTurnReady?: boolean;
   recommendations?: string[];
   placeholder?: string;
@@ -16,6 +17,7 @@ const InputArea: React.FC<InputAreaProps> = ({
   disabled,
   isProcessing = false,
   onCancelProcessing,
+  canUnlock = true,
   isMyTurnReady = false,
   recommendations,
   placeholder
@@ -45,13 +47,15 @@ const InputArea: React.FC<InputAreaProps> = ({
     setInput('');
   };
 
+  const allowUnlock = canUnlock && Boolean(onCancelProcessing);
+
   const placeholderText = placeholder || (
     isProcessing
       ? `Processing action (${processingSeconds}s)...`
       : isMyTurnReady
         ? "Action submitted. Waiting for other players..."
         : disabled
-          ? "Input paused. Click Unlock to resume action input."
+          ? (allowUnlock ? "Input paused. Click Unlock to resume action input." : "Input locked.")
           : "Enter action (e.g. explore the forest, check inventory, cast spell)..."
   );
 
@@ -101,7 +105,7 @@ const InputArea: React.FC<InputAreaProps> = ({
             </div>
           )}
         </div>
-        {((isProcessing && processingSeconds >= 3) || (disabled && !isProcessing)) && onCancelProcessing ? (
+        {allowUnlock && ((isProcessing && processingSeconds >= 3) || (disabled && !isProcessing)) ? (
           <button
             type="button"
             onClick={onCancelProcessing}

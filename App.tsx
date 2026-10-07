@@ -1174,7 +1174,15 @@ function App() {
     }
   };
 
+  const isHost = roomState?.hostUsername === username;
+  const isMyTurnReady = roomState?.players?.find((p: any) => p.username === username)?.isReady;
+  const isMultiplayerBeforeCharacterPrompts = gameMode === 'multiplayer' && (roomState?.gameState === 'waiting_for_world' || (!roomState?.gameState && !isInitialized));
+
   const handleForceUnlock = () => {
+    // Only locked inputs in multiplayer before character prompts are not unlockable because only host can set up world first
+    if (isMultiplayerBeforeCharacterPrompts) {
+      return;
+    }
     if (watchdogTimerRef.current) {
       clearTimeout(watchdogTimerRef.current);
       watchdogTimerRef.current = null;
@@ -1204,9 +1212,6 @@ function App() {
       }
     ]);
   };
-
-  const isHost = roomState?.hostUsername === username;
-  const isMyTurnReady = roomState?.players?.find((p: any) => p.username === username)?.isReady;
 
   // Persist narrative and updates
   useEffect(() => {
@@ -1383,6 +1388,7 @@ DYNAMIC SETTING-APPROPRIATE STARTING CURRENCY & WEALTH (CRITICAL):
 - CARRIED VS STORED / REMOTE MANDATE: If the character carries a wallet, chit wallet, coin pouch, or cardholder, all money, cash, coins, or digital credits meant to be on them MUST be listed under Carried Balance (On Person) referencing that container. NEVER mark Carried Balance as 0 and put funds in Stored / Remote Balance when they carry a wallet or pouch!
 - CONTAINER CONTENTS INTEGRITY: Never output container names or subheaders (e.g. "• (Inside Leather Bifold Wallet: ...)") as item entries inside a container!
 - RANGED WEAPONS HANDEDNESS: Ranged weapons are NOT always two-handed; when carried or not actively in use, they are held in 1 hand slot under [CURRENTLY HOLDING].
+- HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names with weight and dimensions. Don't add an item as things like free hand because it should just be empty instead etc for example (an unoccupied hand or slot is simply empty—never treat or add "Free Hand" or "Empty Hand" as an item, and never create an item file for it).
 - HELD ITEMS & MAP ATTACHMENT: Weapons, tools, or items held in hands ([CURRENTLY HOLDING]) or equipped ([Equipped Gear & Armor]) are attached to the character at their exact coordinates. A weapon's range (e.g. 50m) is its attack reach, NEVER its physical map coordinates! DO NOT place a held weapon far away as a loose item on CurrentMap.json.
 - In the 'updates' array, include an update acknowledging their starting currency.
 
@@ -3380,10 +3386,19 @@ Write an immersive, multi-paragraph narrative (2-3 paragraphs) welcoming and est
           onSend={handleAction}
           disabled={isProcessing || gameOver || isMyTurnReady || showCharacterCreation || (gameMode === 'multiplayer' && roomState?.gameState !== 'playing' && !(roomState?.gameState === 'waiting_for_world' && isHost))}
           isProcessing={isProcessing}
-          onCancelProcessing={handleForceUnlock}
+          onCancelProcessing={isMultiplayerBeforeCharacterPrompts ? undefined : handleForceUnlock}
+          canUnlock={!isMultiplayerBeforeCharacterPrompts}
           isMyTurnReady={Boolean(isMyTurnReady)}
           recommendations={effectiveRecommendations}
-          placeholder={gameOver ? "Character has fallen. Click 'Continue with New Character' in corner to resume..." : undefined}
+          placeholder={
+            gameOver
+              ? "Character has fallen. Click 'Continue with New Character' in corner to resume..."
+              : isMultiplayerBeforeCharacterPrompts
+                ? (isHost
+                    ? (isProcessing ? "Host setting up world... Please wait..." : "Enter starting world prompt to set up the adventure for all players...")
+                    : "Only host can set up world first. Waiting for host to create world...")
+                : undefined
+          }
         />
       </div>
 

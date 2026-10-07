@@ -272,6 +272,7 @@ All character/NPC/Entity files MUST follow this structured format for consistenc
     - Both Hands (Two-Handed): Greatsword: 6 lbs, 48x4 inches. (Occupies both hands; 0 free hands remaining)
     - Held in Jaws: Healing Herb: 0.1 lbs, 4x1 inches. (Held in mouth/teeth)
     - Overflow Hold: Rolled Map: 0.3 lbs, 12x2 inches. (Overflow: Yes - awkwardly clutched under arm while hands are occupied; risks dropping or getting knocked down))
+  * DO NOT ADD "FREE HAND" AS AN ITEM (CRITICAL): Don't add an item as things like free hand because it should just be empty instead etc for example. An unoccupied hand or limb is simply empty—never list "Free Hand", "Empty Hand", "Bare Hands", or "Open Hand" as an item entry under Items Currently Held or in inventory, never give it weight or dimensions, and never create an item file for it!
   * RANGED WEAPONS HANDEDNESS RULE (DYNAMIC CONTEXTUAL REASONING): Ranged weapons (bows, crossbows, rifles, carbines, muskets, shotguns, blasters, slings, etc.) are NOT always two-handed! While they CAN be used with two hands, if a ranged weapon is not currently being actively fired, aimed, or braced, it is usually held in ONE HAND (1 hand slot under [CURRENTLY HOLDING], e.g. "Right Hand: Oak Shortbow: 2 lbs, 48x4x1.5 inches" or "Right Hand: Hunting Rifle: 7 lbs, 40x6x2 inches") because the character is just holding or carrying it by the grip, stock, or riser. This leaves their other hand completely free to draw an arrow or magazine, hold a torch, carry a shield or secondary weapon, cast spells, or interact with objects. It ONLY requires or occupies [Both Hands (Two-Handed)] dynamically when actively nocking/drawing, aiming down sights, shouldering to fire, bracing against recoil, or cocking/reloading, UNLESS other genuine situational context is detected by the AI (evaluated through realistic physical context and narrative intent, NOT simplistic keyword matching—such as holding in a braced high-ready tactical stance, sweeping corners, or tense standoff) that dictates both hands are currently gripping the weapon. When the shooting/aiming action concludes and the character returns to normal activity, it naturally returns to a 1-hand hold unless situational context dictates otherwise.
   * If holding a weapon, tool, shield, or item: list it above under Items Currently Held with the limb name (e.g. "Right Hand: Scrap Arc Wrench: 4 lbs, 14x3x2 inches").
   * If holding nothing: "- (None - Hands/Appendages free)". NEVER mark hands free if the character starts with or holds a primary weapon/tool in hand!
@@ -480,8 +481,7 @@ CRITICAL FILE MANAGEMENT RULES:
     - A weapon's firing range or reach (e.g. 'Range: 50m', 'Reach: 2m', 'Range: 100m') defines how far its projectile or attack can reach when used. It is NEVER the item's physical coordinates or distance on the map!
     - NEVER place a character's held or equipped weapon/item far away on the map (e.g. placing a 50m rifle at x=50, y=50 or 50 meters away from the player). The weapon is physically in the character's hands at their exact coordinates!
     - In "CurrentMap.json", the "items" array and "areas" (with type "item" or "weapon") are STRICTLY for unheld, loose objects lying on the ground, on tables, in chests, or dropped in the environment.
-    - If you include an attached/held item or attached vehicle/mount on the map, its coordinates MUST match the holder's coordinates (x = holder.x, y = holder.y) with "attachedTo": "HolderName" and "isHeld": true.
-    - NEVER clone, duplicate, or separate an equipped, held, or attached thing (weapon, shield, armor, backpack, lantern, attached cart, vehicle, trailer, or mount) from the player! If an item or vehicle is equipped or attached to a character, it is ON/WITH that character. It MUST NEVER be added to "items" or "npcs" as a separate duplicate token on the ground or placed at separate coordinates.
+    - NEVER clone, duplicate, or separate an equipped, held, or attached thing (weapon, shield, armor, backpack, lantern, attached cart, wagon, vehicle, trailer, or mount) from the player! If an item, weapon, or vehicle is equipped, held, hauled, or attached to a character, it is ON/WITH that character. It MUST NEVER be added to "items", "npcs", "creatures", or "areas" as a separate duplicate token on the map or placed at separate coordinates.
     - ATTACHMENT SYNCHRONIZATION: When a character moves, any item, gear, weapon, shield, attached cart, wagon, or towed equipment moves with them. Never leave an old token, ground item, or area behind at their prior coordinates!
   * ADVANCED, ACCURATE & FLEXIBLE SHAPES: Do NOT limit maps to just simple circles or squares. Use advanced, flexible, and accurate shapes:
     - Oblong / Elliptical shapes: for oblong forest groves, elongated clearings, oval glades, stretched ponds, or curved plazas, use shape: "ellipse" or shape: "oblong" with center (cx, cy or x, y), radii (rx, ry), and optional rotation in degrees.
@@ -644,7 +644,7 @@ CONTEXT-APPROPRIATE NPC & CREATURE POPULATION:
   * Create their individual character/entity files with complete stats, physical dimensions, body weight, speed, and inventory.
   * PERSISTENCE & MAP NAMING: Plot present NPCs, creatures, and mounts directly on "CurrentMap.json" under "npcs" (or on the appropriate page) with coordinates, distinct icon/type, and facing. Their name in CurrentMap.json MUST match their canonical name with "-npc" appended (e.g., "Maeve-npc", "Garrick-npc"). NEVER forget, drop, or clone previously established NPCs from CurrentMap.json across turns!
   * Integrate them into the narrative with exact clickable references (e.g. [Maeve-npc] or [Maeve], [Garrick-npc] or [Garrick]).
-  * HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Steel Broadsword", "Iron Shield", "Oak Staff", "Torch") with their weight and dimensions. Never list limbs, grips, anatomy labels, or duplicate lines as item names (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name!). Limbs belong in brackets: e.g. "• [Both Hands (Two-Handed)] Steel Greatsword - 8.5 lbs".
+  * HOLDING INTEGRITY: Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Steel Broadsword", "Iron Shield", "Oak Staff", "Torch") with their weight and dimensions. Never list limbs, grips, anatomy labels, or duplicate lines as item names (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name!). Limbs belong in brackets: e.g. "• [Both Hands (Two-Handed)] Steel Greatsword - 8.5 lbs". Don't add an item as things like free hand because it should just be empty instead etc for example (an unoccupied hand or slot is simply empty—never create an item, inventory item, or item file for "Free Hand" or "Empty Hand").
 
 CONTEXT-AWARE AUTO ACTION RECOMMENDATIONS & MULTIPLAYER UNIQUE RECOMMENDATIONS (CRITICAL):
 - The "recommendations" array MUST contain 2 to 4 dynamic, immersive, highly relevant action options SPECIFICALLY FOR THE ACTIVE PLAYER CHARACTER (the character controlled by the player submitting the action).
@@ -712,7 +712,7 @@ INSTRUCTIONS:
      * isInventoryAffected: true if any inventory/equipment/usage change occurs, false otherwise.
      * items: list of items with operation ("add" | "remove" | "equip" | "unequip" | "transfer" | "drop" | "consume_use" | "refill" | "set_usage"), item name, amount/uses, max uses, refillable status, container name, and target character.
    - Verify container space dimensions for overflow (e.g. staff sticking out of backpack risking dropping). AUTO-EQUIP OVERSIZED WEARABLE ITEMS: If items are bigger than container capacity or would overflow, such as clothes, armor, cloaks, footwear, belts, worn jewelry, or held tools/weapons, characters must automatically equip or wear them if sensible in context to avoid overflowing containers. Calculate carried weight vs body weight threshold and max lift strength. Encumbrance effects are DYNAMIC per entity — creatures with special biologies (e.g., Slimes absorbing items without slowdown, Incorporeal ghosts, telekinetics) are NOT penalized like standard humans.
-   - HELD ITEMS & MAP ATTACHMENT: Verify that any item or weapon held in hand or equipped by a character is attached to that character. Ranged weapons (rifles, bows, blasters, etc.) define their firing range, NOT their map position. Never place a held weapon far away on the map; it moves with and is attached to the holding character at their coordinates.
+   - HELD ITEMS & MAP ATTACHMENT: Verify that any item or weapon held in hand or equipped by a character is attached to that character. Ranged weapons (rifles, bows, blasters, etc.) define their firing range, NOT their map position. Never place a held weapon far away on the map; it moves with and is attached to the holding character at their coordinates. Don't add an item as things like free hand because it should just be empty instead etc for example (never audit or treat "Free Hand" or "Empty Hand" as items; unoccupied hands are simply empty).
 7. AUDIT FOR ENERGY & STAMINA EXPENDITURE/RECOVERY (DYNAMIC CONTEXTUAL AI REASONING):
    - Dynamically analyze the character's physical and magical exertion based on the full scene context, character capabilities, and physical/magical requirements:
    - MENIAL & LOW-EXERTION ACTIONS: Menial, low-effort, casual, social, or everyday tasks (such as talking, speaking, conversing, standing, looking, observing, inspecting, reading, listening, waiting, idle moments, casual walking, sitting, eating, drinking, or light non-strenuous interactions) do NOT use any noticeable amount of energy or stamina.
@@ -975,7 +975,7 @@ export class AIEngine {
           ? `CRITICAL CHARACTER CREATION RULE: You MUST also create a highly detailed, extensive character file for player "${username}" during this initialization. The character's in-world Name MUST be a distinct, authentic, fictional name (e.g. "Kaelen Thorne", "Lyra Whisperwind", "Valerius") fitting the world setting. The character's name MUST NOT be the account username "${username}" and MUST NOT be a generic label like "Adventurer" or "Player". The file MUST be named EXACTLY "[CharacterName]-${username}.txt" (e.g. "Kaelen-${username}.txt"). Inside the file under [NAME & DESCRIPTION], specify '- Name: [CharacterName]' and '- Player: ${username}'. On CurrentMap.json, place this character in "players" with username: "${username}" and characterName: "[CharacterName]". PLAYER CHARACTERS ARE NEVER NPCS: DO NOT put this player character in "npcs" on CurrentMap.json!`
           : "CRITICAL: DO NOT create any player character files during this initialization phase. Players will provide their character descriptions separately later. You MUST NOT return any file named with \"CharacterName-USERNAME.txt\" format during this world generation phase. Wait for the explicit character prompt next.";
 
-        const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items; when containers stretch, only multiply/expand their physical size and dimensions instead of their weight—never multiply the container's own empty weight with it), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. (Wallets, chit wallets, cardholders, and coin pouches are EQUIPPED CONTAINERS, NEVER currency items! Do NOT list wallets as money, and never generate placeholder tags like "(Worth: Credits)" or compliance/accounting header lines in inventory lists). If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY & RANGED WEAPONS HANDEDNESS (CRITICAL): Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Oak Shortbow", "Hunting Rifle", "Heavy Crossbow", "Iron Broadsword", "Wooden Shield", "Torch"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Main Hand] or [Both Hands (Two-Handed)]. RANGED WEAPONS HANDEDNESS RULE (DYNAMIC CONTEXTUAL REASONING): Ranged weapons (bows, crossbows, rifles, muskets, shotguns, carbines, blasters, slings, etc.) are NOT always two-handed! Yes, they CAN be used with two hands, but if a ranged weapon is not currently being actively fired, aimed, or braced, it is usually held in ONE HAND (1 hand slot under [CURRENTLY HOLDING], e.g. "[Main Hand] Oak Shortbow: Weight: 2 lbs. Dimensions: 48x4x1.5 inches" or "[Main Hand] Hunting Rifle: Weight: 7 lbs. Dimensions: 40x6x2 inches") because the character is just holding or carrying it by the grip, stock, or riser. This leaves their other hand completely free to draw an arrow or magazine, hold a torch, carry a shield or secondary weapon, cast spells, or interact with objects. It ONLY requires or occupies [Both Hands (Two-Handed)] dynamically when actively nocking/drawing, aiming down sights, shouldering to fire, bracing against recoil, or cocking/reloading, UNLESS other genuine situational context is detected by the AI (evaluated through realistic physical context and narrative intent, NOT simplistic keyword matching—such as holding in a braced high-ready tactical stance, sweeping corners, or tense standoff) that dictates both hands are currently gripping the weapon. CONTAINERS & GEAR INTEGRITY: Wallets, chit wallets, cardholders, coin pouches, money belts, quivers, and backpacks are EQUIPPED CONTAINERS, NEVER unequipped loose items or currency pieces! Consolidate all carried coins/funds inside their primary equipped container (never split across phantom unequipped pouches). Never output compliance/accounting header lines or meta entries like "Initialized Starting Gear" inside inventory lists or quivers. Ensure all secret locations use clean balanced hide[...] tags (e.g. "[Location: hide[Buried inside hollow oak tree]]").\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
+        const prompt = `Initialize world: ${startingPrompt}\n\nRemember: PROBABILITY ENGINE RULE (CRITICAL). Create highly detailed, extensive, and long files for the starting world (CurrentMap.json, WorldRules.txt, Guide.txt, WorldTime.txt, and initial locations/NPCs). ${charRequirement} Ensure all stats use the new dynamic probability engine modifier format (e.g., "agility: base probability engine + 5%(1000) + effects") and armor uses thresholds. WorldRules.txt MUST define the physics, weights, dimensions, containers (max space dimensions like 18x12 inches, overflow risking dropping items; when containers stretch, only multiply/expand their physical size and dimensions instead of their weight—never multiply the container's own empty weight with it), the dynamic overflow rule (the more items added to overflow and the heavier and bigger each item, the bigger chance of dropping by accident based on context and scaled random chance; heavier/bigger items have a higher chance of dropping than smaller/lighter ones), starting carrying item limits (characters can start with at most 2x their hand slots in carried items, though during adventure they can carry more than limit), auto-equip rule (items bigger than container space like clothes/armor automatically equip under [Equipped Gear & Armor] if contextually sensible to prevent container overflow), max lift strength (100% of body weight for baseline human with 1.0x strength), encumbrance rules (<= 20% good, 21%+ slower speed effect), and temporary effect reversions (e.g. lightweight spell on boulder reverting upon expiration). If creating starting character(s), their starting carried items (equipped + carried in containers) MUST BE <= 2x their hand slots (e.g., max 4 items for 2 hands); place any extra items under [OWNED / STORED ITEMS (NOT ON PERSON)]. DYNAMIC STARTING CURRENCY & WEALTH (CRITICAL): Never be lazy with character wealth, economy, or inventory. If creating starting character(s) or NPCs, dynamically reason about their social status, background, profession, and world setting to determine an authentic, setting-appropriate starting currency and net worth. Under [CURRENCY & FINANCIAL BALANCE], specify their Currency Type and Carried Balance (On Person) itemized with denominations, placed inside an equipped container (such as a coin pouch, wallet, purse, or pocket) under [CONTAINERS & CARRIED GEAR]. (Wallets, chit wallets, cardholders, and coin pouches are EQUIPPED CONTAINERS, NEVER currency items! Do NOT list wallets as money, and never generate placeholder tags like "(Worth: Credits)" or compliance/accounting header lines in inventory lists). If they own property, savings, or bank deposits, list them under Stored Balance. CurrentMap.json MUST have nothing missing within all players' observable and known areas, landmarks, items, npcs, structures, terrain, with flexible shapes (oblong areas like forests using ellipse shape with cx, cy, rx, ry, polygons for irregular terrain, and detailed buildings like market stalls/shops). If the initialization involves any uncertain event, return "checks".\nCONTEXT-APPROPRIATE INHABITANTS & NPCS: If the starting context naturally makes sense to have other characters, creatures, companions, mounts, or inhabitants (e.g. in a town, tavern, outpost, traveling caravan, bustling street, or populated wilderness), you are strongly encouraged to add fitting NPCs, creatures, or mounts with their own complete character files, map coordinates on CurrentMap.json, and narrative references [Name]. NPC FILE & MAP CONVENTION: All NPC files MUST be named with "-npc.txt" (e.g. "Maeve-npc.txt", "TownGuard-npc.txt"). On CurrentMap.json, their names MUST have "-npc" appended (e.g. "Maeve-npc") and they MUST NEVER be omitted or forgotten from the map.\nHOLDING INTEGRITY & RANGED WEAPONS HANDEDNESS (CRITICAL): Under [CURRENTLY HOLDING], list only the actual item names (e.g. "Oak Shortbow", "Hunting Rifle", "Heavy Crossbow", "Iron Broadsword", "Wooden Shield", "Torch"), with their weight and dimensions. Never use limbs or grip tags as item names (e.g. do not write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Main Hand] or [Both Hands (Two-Handed)]. Don't add an item as things like free hand because it should just be empty instead etc for example (never create an item or inventory/held entry for things like "Free Hand" or "Empty Hand"; an unoccupied hand or slot is simply empty). RANGED WEAPONS HANDEDNESS RULE (DYNAMIC CONTEXTUAL REASONING): Ranged weapons (bows, crossbows, rifles, muskets, shotguns, carbines, blasters, slings, etc.) are NOT always two-handed! Yes, they CAN be used with two hands, but if a ranged weapon is not currently being actively fired, aimed, or braced, it is usually held in ONE HAND (1 hand slot under [CURRENTLY HOLDING], e.g. "[Main Hand] Oak Shortbow: Weight: 2 lbs. Dimensions: 48x4x1.5 inches" or "[Main Hand] Hunting Rifle: Weight: 7 lbs. Dimensions: 40x6x2 inches") because the character is just holding or carrying it by the grip, stock, or riser. This leaves their other hand completely free to draw an arrow or magazine, hold a torch, carry a shield or secondary weapon, cast spells, or interact with objects. It ONLY requires or occupies [Both Hands (Two-Handed)] dynamically when actively nocking/drawing, aiming down sights, shouldering to fire, bracing against recoil, or cocking/reloading, UNLESS other genuine situational context is detected by the AI (evaluated through realistic physical context and narrative intent, NOT simplistic keyword matching—such as holding in a braced high-ready tactical stance, sweeping corners, or tense standoff) that dictates both hands are currently gripping the weapon. CONTAINERS & GEAR INTEGRITY: Wallets, chit wallets, cardholders, coin pouches, money belts, quivers, and backpacks are EQUIPPED CONTAINERS, NEVER unequipped loose items or currency pieces! Consolidate all carried coins/funds inside their primary equipped container (never split across phantom unequipped pouches). Never output compliance/accounting header lines or meta entries like "Initialized Starting Gear" inside inventory lists or quivers. Ensure all secret locations use clean balanced hide[...] tags (e.g. "[Location: hide[Buried inside hollow oak tree]]").\nIf the starting context calls for solitude or isolation (e.g. waking alone in a cave, stranded on a deserted island, a solitary dungeon cell, or an abandoned derelict ship), it is completely valid and appropriate to start with no other characters.\nMOUNTS & VEHICLES: If mounts, riding beasts, carriages, or vehicles exist in the scene, ensure their files reflect their physical stats, speed, body weight, and any riding/passenger relationships with rider weight included in carried weight!\nAUTO ACTION RECOMMENDATIONS: Provide 2 to 4 rich, diverse, context-aware suggestions for the player's next move.\nCRITICAL: Any magic, abilities, or spells MUST be highly specific with strict limits, energy costs, ranges, and target caps. Vague "magic" is completely unacceptable. Initialize WorldTime.txt containing both [CURRENT ACTIVE TIME] and [ANCHOR / ORIGIN TIMELINE] with identical starting timestamps and Anchor Flow Mode set to Frozen.`;
         const res = await this.handleRequest(prompt, undefined, username, 'gemini-3.8-flash');
         if (res && this.lastActionUsage) {
           res.usage = { ...this.lastActionUsage };
@@ -1213,7 +1213,7 @@ CRITICAL REMINDERS:
    - FLEXIBLE SHAPES & HIGH DETAIL: Generate flexible shapes (not just circles/squares): use oblong ellipses (shape: "ellipse" with cx, cy, rx, ry, rotation) for oblong forests/groves/clearings, polygons for irregular terrain/rivers, and high-detail architectural buildings (such as individual market stalls, shops, and taverns in a market).
    - Every entity, NPC, obstacle, item, and player within the scale bounds of each page MUST be plotted with valid (x, y) coordinates and facing angles.
 4. INVENTORY, CONTAINERS & WEAPONS: Use ITEM & WEAPON TECHNICAL SCHEMA for any equipment created.
-   - HOLDING INTEGRITY & RANGED WEAPONS HANDEDNESS (CRITICAL): Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Oak Shortbow", "Hunting Rifle", "Heavy Crossbow", "Iron Broadsword", "Torch") with weight and dimensions. Never use limbs or grip phrasing as the item name (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Main Hand] or [Both Hands (Two-Handed)].
+   - HOLDING INTEGRITY & RANGED WEAPONS HANDEDNESS (CRITICAL): Under [CURRENTLY HOLDING], specify only actual item names (e.g. "Oak Shortbow", "Hunting Rifle", "Heavy Crossbow", "Iron Broadsword", "Torch") with weight and dimensions. Never use limbs or grip phrasing as the item name (e.g. do NOT write "Both Hands (Two-Handed Grip)" as the item name). Limbs belong in brackets like [Main Hand] or [Both Hands (Two-Handed)]. Don't add an item as things like free hand because it should just be empty instead etc for example (an unoccupied hand or slot is simply empty—never treat or add "Free Hand" or "Empty Hand" as an item, and never create an item file for it).
      * RANGED WEAPONS HANDEDNESS RULE (DYNAMIC CONTEXTUAL REASONING): Ranged weapons (bows, crossbows, rifles, carbines, muskets, shotguns, blasters, slings, etc.) are NOT always two-handed! While they CAN be used with two hands, if a ranged weapon is not currently being actively used (e.g. when just equipped, held casually at the hip or side, carried while walking, traveling, conversing, or exploring), it is usually held in ONE HAND (1 hand slot under [CURRENTLY HOLDING], e.g. "[Main Hand] Oak Shortbow: Weight: 2 lbs. Dimensions: 48x4x1.5 inches" or "[Main Hand] Hunting Rifle: Weight: 7 lbs. Dimensions: 40x6x2 inches") because the character is simply holding or carrying it. This leaves the other hand free to hold a torch, draw an arrow/magazine from a quiver/pouch, hold a shield/dagger, cast spells, or manipulate items and doors until the moment of firing.
      * DYNAMIC TWO-HANDED EVALUATION (CONTEXT OVER KEYWORDS): A ranged weapon only dynamically shifts to occupy [Both Hands (Two-Handed)] when actively in use (nocking and drawing an arrow, aiming down sights, shouldering to shoot, bracing against recoil, or cocking/reloading a heavy mechanism) OR when the AI detects genuine situational context (evaluated through realistic physical context and character intent, NOT simplistic keyword matching—such as holding in an active high-ready two-handed stance during a breach or standoff, or when explicitly narrated by the player) that both hands are currently engaged on the weapon. When the shooting/aiming action concludes and the character returns to normal activity, it naturally returns to a 1-hand hold unless situational context dictates otherwise.
    - CONTAINER & CURRENCY INTEGRITY (CRITICAL): If the player picks up, finds, loots, or places an item in a container (e.g. backpack, satchel, pouch), you MUST update the player's character file ("CharacterName-USERNAME.txt").
@@ -4954,11 +4954,22 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
 
     // Gather all possessions of registered players and known item files to avoid normalizing items as NPCs or loose ground entities
     const knownPossessions = new Set<string>();
+    const registerPossession = (str: string) => {
+      if (!str) return;
+      const lower = str.trim().toLowerCase();
+      if (!lower || lower.length < 2) return;
+      knownPossessions.add(lower);
+      const unspaced = lower.replace(/[\s_-]+/g, '');
+      if (unspaced.length >= 2) knownPossessions.add(unspaced);
+      const pascal = str.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+      if (pascal !== lower && pascal.length >= 2) knownPossessions.add(pascal);
+    };
+
     if (playerRegistry) {
       for (const reg of playerRegistry) {
         const c = this.fs.read(reg.filename);
         if (c) {
-          extractAllPossessionsFromCharacterSheet(c).forEach(p => knownPossessions.add(p.toLowerCase()));
+          extractAllPossessionsFromCharacterSheet(c).forEach(p => registerPossession(p));
         }
       }
     }
@@ -4966,7 +4977,20 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       if (f.endsWith('.txt')) {
         const c = this.fs.read(f);
         if (c) {
-          extractAllPossessionsFromCharacterSheet(c).forEach(p => knownPossessions.add(p.toLowerCase()));
+          extractAllPossessionsFromCharacterSheet(c).forEach(p => registerPossession(p));
+          // If the file represents an item, vehicle, or equipment attached to someone
+          if (
+            /category\s*[:=]\s*(?:item|equipment|gear|weapon|vehicle|mount|container|armor|tool|transport)/i.test(c) ||
+            /(?:attached|equipped|hitched|towed|held|carried|riding)\s*(?:to|by)?\s*[:=]/i.test(c) ||
+            /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(c)
+          ) {
+            const base = f.replace(/\.txt$/, '');
+            registerPossession(base);
+            const nameMatch = c.match(/[-*•]?\s*Name\s*[:=]\s*([^\n\r]+)/i);
+            if (nameMatch && nameMatch[1]) {
+              registerPossession(nameMatch[1].replace(/\[[^\]]+\]/g, ''));
+            }
+          }
         }
       }
     }
@@ -4976,8 +5000,12 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       const clean = name.toLowerCase().replace(/[-_]npc$/i, '').trim();
       if (!clean) return false;
       if (knownPossessions.has(clean)) return true;
+      const unspaced = clean.replace(/[\s_-]+/g, '');
+      if (knownPossessions.has(unspaced)) return true;
+      const pascal = name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[-_]npc$/i, '').trim();
+      if (knownPossessions.has(pascal)) return true;
       for (const p of knownPossessions) {
-        if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p)) return true;
+        if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p) || areItemNamesEquivalent(pascal, p)) return true;
       }
       return false;
     };
@@ -4990,33 +5018,25 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       if (!Array.isArray(page.landmarks)) page.landmarks = [];
       if (!Array.isArray(page.npcs)) page.npcs = [];
 
-      // Purge any loose ground items or landmarks that match a player's possession
-      page.items = page.items.filter((it: any) => it && it.name && !isPossessionMatch(it.name) && !it.attachedTo && !it.isHeld);
+      // Purge any loose ground items or landmarks that match a player's possession or are attached
+      page.items = page.items.filter((it: any) => it && it.name && !isPossessionMatch(it.name) && !it.attachedTo && !it.isHeld && (!it.holder || it.holder === 'ground'));
       page.landmarks = page.landmarks.filter((lm: any) => lm && lm.name && !isPossessionMatch(lm.name) && !lm.attachedTo);
 
       // Purge any areas that represent items, weapons, equipment, or character possessions
       page.areas = page.areas.filter((a: any) => {
         if (!a || typeof a !== 'object') return false;
-        const aType = String(a.type || '').toLowerCase();
         const aName = String(a.name || '');
-        if (aType === 'item' || aType === 'weapon' || aType === 'equipment' || aType === 'loot' || aType === 'treasure' || aType === 'vehicle') {
-          if (isPossessionMatch(aName) || a.attachedTo || a.isHeld) return false;
-        }
-        if (isPossessionMatch(aName) || a.attachedTo || a.isHeld) return false;
+        if (isPossessionMatch(aName) || a.attachedTo || a.isHeld || (a.holder && a.holder !== 'ground')) return false;
         return true;
       });
 
+      // Purge any NPCs that match a possessed, held, or attached item/vehicle
       page.npcs = page.npcs.filter((n: any) => {
         if (!n || typeof n !== 'object') return false;
         const nName = String(n.name || '').trim();
-        // If entity matches an item or piece of equipment, purge it from NPCs!
-        if (isPossessionMatch(nName)) {
-          const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(nName) ||
-            n.type === 'vehicle' || n.type === 'mount';
-          // Non-vehicles are strictly equipped/held gear and must NEVER be on map as NPCs
-          if (!isVehicle) {
-            return false;
-          }
+        // If entity matches an item, piece of equipment, attached cart, or vehicle, purge it from NPCs!
+        if (isPossessionMatch(nName) || n.attachedTo || n.isHeld || (n.holder && n.holder !== 'ground')) {
+          return false;
         }
         return true;
       }).map((n: any) => {
@@ -5026,6 +5046,24 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
         }
         return { ...n, name: nName };
       });
+
+      // Also purge creatures and entities if present on page
+      if (Array.isArray(page.creatures)) {
+        page.creatures = page.creatures.filter((c: any) => {
+          if (!c || typeof c !== 'object') return false;
+          const cName = String(c.name || '').trim();
+          if (isPossessionMatch(cName) || c.attachedTo || c.isHeld) return false;
+          return true;
+        });
+      }
+      if (Array.isArray(page.entities)) {
+        page.entities = page.entities.filter((e: any) => {
+          if (!e || typeof e !== 'object') return false;
+          const eName = String(e.name || '').trim();
+          if (isPossessionMatch(eName) || e.attachedTo || e.isHeld) return false;
+          return true;
+        });
+      }
     }
 
     // Clean duplicate players across and within pages (removes player's stale last position)

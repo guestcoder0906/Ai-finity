@@ -170,6 +170,17 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
   // Memoized set of all items, weapons, gear, containers, and vehicles in any character's sheet
   const allKnownPossessions = useMemo(() => {
     const possessions = new Set<string>();
+    const registerPossession = (str: string) => {
+      if (!str) return;
+      const lower = str.trim().toLowerCase();
+      if (!lower || lower.length < 2) return;
+      possessions.add(lower);
+      const unspaced = lower.replace(/[\s_-]+/g, '');
+      if (unspaced.length >= 2) possessions.add(unspaced);
+      const pascal = str.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+      if (pascal !== lower && pascal.length >= 2) possessions.add(pascal);
+    };
+
     const allTxt = (files || []).filter(f => f.endsWith('.txt'));
     for (const f of allTxt) {
       if (
@@ -183,7 +194,19 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       ) continue;
       const c = fileSystem.read(f);
       if (c) {
-        extractAllPossessionsFromCharacterSheet(c).forEach(p => possessions.add(p.toLowerCase()));
+        extractAllPossessionsFromCharacterSheet(c).forEach(p => registerPossession(p));
+        if (
+          /category\s*[:=]\s*(?:item|equipment|gear|weapon|vehicle|mount|container|armor|tool|transport)/i.test(c) ||
+          /(?:attached|equipped|hitched|towed|held|carried|riding)\s*(?:to|by)?\s*[:=]/i.test(c) ||
+          /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(c)
+        ) {
+          const base = f.replace(/\.txt$/, '');
+          registerPossession(base);
+          const nameMatch = c.match(/[-*•]?\s*Name\s*[:=]\s*([^\n\r]+)/i);
+          if (nameMatch && nameMatch[1]) {
+            registerPossession(nameMatch[1].replace(/\[[^\]]+\]/g, ''));
+          }
+        }
       }
     }
     return possessions;
@@ -194,8 +217,12 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     const clean = rawName.toLowerCase().replace(/[-_]npc$/i, '').trim();
     if (!clean) return false;
     if (allKnownPossessions.has(clean)) return true;
+    const unspaced = clean.replace(/[\s_-]+/g, '');
+    if (allKnownPossessions.has(unspaced)) return true;
+    const pascal = rawName.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[-_]npc$/i, '').trim();
+    if (allKnownPossessions.has(pascal)) return true;
     for (const p of allKnownPossessions) {
-      if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p)) {
+      if (clean === p || clean.includes(p) || p.includes(clean) || areItemNamesEquivalent(clean, p) || areItemNamesEquivalent(pascal, p)) {
         return true;
       }
     }
@@ -286,7 +313,12 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       const cleanBase = base.replace(/[-_]npc$/i, '').trim().toLowerCase();
 
       // If file represents an equipped item or possession of a player, NEVER spawn it as an NPC!
-      if (isPossessionOfAnyone(base) || isPossessionOfAnyone(cleanBase)) {
+      if (
+        isPossessionOfAnyone(base) ||
+        isPossessionOfAnyone(cleanBase) ||
+        isPossessionOfAnyone(base.replace(/([a-z])([A-Z])/g, '$1 $2')) ||
+        isPossessionOfAnyone(base.replace(/[\s_-]+/g, ''))
+      ) {
         return;
       }
 
@@ -296,7 +328,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
         if (
           /category[:=\s]*(?:item|equipment|gear|weapon|clothing|vehicle|mount|container|armor|tool|transport)/i.test(content) ||
           /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(content) ||
-          /(?:attached|equipped|hitched|towed|held|carried)\s*(?:to|by)?\s*[:=]/i.test(content) ||
+          /(?:attached|equipped|hitched|towed|held|carried|riding)\s*(?:to|by)?\s*[:=]/i.test(content) ||
           /damage range:|container space capacity:|holding anatomy:/i.test(content)
         ) {
           return;
@@ -422,7 +454,18 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
     for (const n of rawNpcList) {
       if (!n) continue;
-      let name = (n.name || n.id || 'NPC').trim();
+      const rawName = (n.name || n.id || 'NPC').trim();
+      const cleanName = rawName.replace(/[-_]npc$/i, '').trim();
+      if (
+        isPossessionOfAnyone(rawName) ||
+        isPossessionOfAnyone(cleanName) ||
+        n.attachedTo ||
+        n.isHeld ||
+        (n.holder && n.holder !== 'ground')
+      ) {
+        continue;
+      }
+      let name = rawName;
       if (!name.toLowerCase().endsWith('-npc')) {
         name = `${name}-npc`;
       }
@@ -1206,8 +1249,15 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {/* Draw Top-Level Items (if separately registered on page) */}
           {currentPage.items?.map((item: any, i: number) => {
             if (isEntityHidden(item.name)) return null;
-            // If item is held by a player or NPC, it is attached to them, not loose on ground!
-            if (item.isHeld || item.attachedTo || (item.holder && item.holder !== 'ground') || isPossessionOfAnyone(item.name)) return null;
+            // If item is held by a player or NPC, or attached, it is on their person, not loose on ground!
+            if (
+              item.isHeld ||
+              item.attachedTo ||
+              (item.holder && item.holder !== 'ground') ||
+              isPossessionOfAnyone(item.name) ||
+              isPossessionOfAnyone(String(item.name).replace(/([a-z])([A-Z])/g, '$1 $2')) ||
+              isPossessionOfAnyone(String(item.name).replace(/[\s_-]+/g, ''))
+            ) return null;
             const itemNameLower = String(item.name || '').toLowerCase();
             const matchesHeldItem = (currentPage.players || []).some((pl: any) =>
               (pl.heldItems || []).some((hi: any) => {
@@ -1327,15 +1377,16 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
             const nName = parseNpcName(npc.name || 'NPC');
             const cleanName = nName.replace(/-npc$/i, '').trim().toLowerCase();
 
-            // Suppress NPCs that are actually equipped items or gear of a player/NPC
-            const isVehicle = /cart|wagon|mule|horse|steed|drone|trailer|sled|carriage|skateboard/i.test(cleanName) ||
-              npc.type === 'vehicle' || npc.type === 'mount';
-
-            if (isPossessionOfAnyone(cleanName) || isPossessionOfAnyone(nName) || isPossessionOfAnyone(npc.name)) {
-              // Only keep if explicitly an attached vehicle/mount tracking a holder
-              if (!isVehicle || !npc.attachedTo) {
-                return null;
-              }
+            // Suppress NPCs that are actually equipped items, gear, or attached things of a player/NPC
+            if (
+              isPossessionOfAnyone(cleanName) ||
+              isPossessionOfAnyone(nName) ||
+              isPossessionOfAnyone(npc.name) ||
+              npc.attachedTo ||
+              npc.isHeld ||
+              (npc.holder && npc.holder !== 'ground')
+            ) {
+              return null;
             }
 
             // If NPC is attached to a player/NPC (e.g. attached cart, wagon, mount), ensure coordinates track holder!
