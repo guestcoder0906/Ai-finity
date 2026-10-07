@@ -55,6 +55,23 @@ export function isPlayerCharacterFile(
   let charName = '';
 
   if (content) {
+    // If character is deceased or corpse in content, not an active player character
+    if (
+      /[-*•]?\s*status\s*[:=]\s*(?:dead|deceased|corpse|fallen|slain)/i.test(content) ||
+      /\[(?:STATUS EFFECTS & LORE)\][\s\S]*?(?:Status:\s*Dead|Status:\s*Deceased)/i.test(content)
+    ) {
+      return { isPlayer: false, username: '', charName: cleanBase, canonicalName: cleanBase };
+    }
+
+    // If file represents an item, weapon, equipment, container, location, landmark, area, or spell
+    if (
+      /category\s*[:=]\s*(?:item|equipment|gear|weapon|clothing|vehicle|mount|container|armor|tool|transport|location|landmark|area|spell|note|event)/i.test(content) ||
+      /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS|LOCATION DETAILS|TECHNICAL SCHEMA)\]/i.test(content) ||
+      /damage range:|container space capacity:|holding anatomy:/i.test(content)
+    ) {
+      return { isPlayer: false, username: '', charName: cleanBase, canonicalName: cleanBase };
+    }
+
     const playerMatch = content.match(/[-*•]?\s*Player\s*[:=]\s*([^\n\r]+)/i);
     if (playerMatch && playerMatch[1]) {
       const pVal = playerMatch[1].replace(/^[*-•\s]+/, '').trim();
@@ -72,12 +89,20 @@ export function isPlayerCharacterFile(
     }
   }
 
-  if (!isPlayer && cleanBase.includes('-')) {
+  // Only consider filename pattern fallback if content is absent AND it's not a known item/location/non-player keyword
+  if (!isPlayer && !content && cleanBase.includes('-')) {
     const parts = cleanBase.split('-');
     const suffix = parts[parts.length - 1].trim();
     const prefix = parts.slice(0, -1).join('-').trim();
     const suffixLower = suffix.toLowerCase();
-    if (suffix && !['npc', 'dead', 'corpse', 'deceased', 'bot', 'ai', 'boss', 'monster', 'creature', 'enemy', 'ally', 'guard', 'merchant'].includes(suffixLower)) {
+    const NON_PLAYER_SUFFIXES = new Set([
+      'npc', 'dead', 'corpse', 'deceased', 'bot', 'ai', 'boss', 'monster', 'creature', 'enemy', 'ally',
+      'guard', 'merchant', 'item', 'weapon', 'sword', 'shield', 'armor', 'bow', 'potion', 'herb',
+      'scroll', 'key', 'ring', 'amulet', 'staff', 'wand', 'dagger', 'axe', 'spear', 'helmet', 'boots',
+      'gloves', 'cloak', 'pouch', 'bag', 'backpack', 'chest', 'box', 'camp', 'room', 'door', 'gate',
+      'cave', 'tower', 'bridge', 'river', 'forest', 'shop', 'inn', 'tavern', 'hall', 'shrine', 'altar'
+    ]);
+    if (suffix && !NON_PLAYER_SUFFIXES.has(suffixLower)) {
       isPlayer = true;
       if (!username) username = suffix;
       if (!charName) charName = prefix || suffix;

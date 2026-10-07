@@ -4878,25 +4878,25 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
     const allFileNames = this.getFileNamesList();
     const playerRegistry = buildPlayerRegistry(allFileNames, this.fs);
 
-    // Distribute root-level entities to page 0 if present (only if pages don't already have players)
+    // Distribute root-level entities to page 0 only if undefined on page 0
     const hasAnyPagePlayers = normalized.pages.some((p: any) => Array.isArray(p.players) && p.players.length > 0);
     if (!hasAnyPagePlayers && Array.isArray((incomingParsed as any)?.players) && (incomingParsed as any).players.length > 0) {
-      if (!Array.isArray(normalized.pages[0].players) || normalized.pages[0].players.length === 0) {
+      if (normalized.pages[0].players === undefined) {
         normalized.pages[0].players = (incomingParsed as any).players;
       }
     }
     if (Array.isArray((incomingParsed as any)?.items) && (incomingParsed as any).items.length > 0) {
-      if (!Array.isArray(normalized.pages[0].items) || normalized.pages[0].items.length === 0) {
+      if (normalized.pages[0].items === undefined) {
         normalized.pages[0].items = (incomingParsed as any).items;
       }
     }
     if (Array.isArray((incomingParsed as any)?.landmarks) && (incomingParsed as any).landmarks.length > 0) {
-      if (!Array.isArray(normalized.pages[0].landmarks) || normalized.pages[0].landmarks.length === 0) {
+      if (normalized.pages[0].landmarks === undefined) {
         normalized.pages[0].landmarks = (incomingParsed as any).landmarks;
       }
     }
     if (Array.isArray((incomingParsed as any)?.npcs) && (incomingParsed as any).npcs.length > 0) {
-      if (!Array.isArray(normalized.pages[0].npcs) || normalized.pages[0].npcs.length === 0) {
+      if (normalized.pages[0].npcs === undefined) {
         normalized.pages[0].npcs = (incomingParsed as any).npcs;
       }
     }
@@ -5018,24 +5018,29 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
       if (!Array.isArray(page.landmarks)) page.landmarks = [];
       if (!Array.isArray(page.npcs)) page.npcs = [];
 
-      // Purge any loose ground items or landmarks that match a player's possession or are attached
-      page.items = page.items.filter((it: any) => it && it.name && !isPossessionMatch(it.name) && !it.attachedTo && !it.isHeld && (!it.holder || it.holder === 'ground'));
-      page.landmarks = page.landmarks.filter((lm: any) => lm && lm.name && !isPossessionMatch(lm.name) && !lm.attachedTo);
+      const isFreeHandTag = (name: string): boolean => {
+        const clean = String(name || '').toLowerCase().replace(/[-_]npc$/i, '').trim();
+        return !clean || clean === 'free hand' || clean === 'empty hand' || clean === 'bare hand' || clean === 'open hand';
+      };
 
-      // Purge any areas that represent items, weapons, equipment, or character possessions
+      // Purge any loose ground items or landmarks that match a player's possession, free hand tags, or are attached
+      page.items = page.items.filter((it: any) => it && it.name && !isFreeHandTag(it.name) && !isPossessionMatch(it.name) && !it.attachedTo && !it.isHeld && (!it.holder || it.holder === 'ground'));
+      page.landmarks = page.landmarks.filter((lm: any) => lm && lm.name && !isFreeHandTag(lm.name) && !isPossessionMatch(lm.name) && !lm.attachedTo);
+
+      // Purge any areas that represent items, weapons, equipment, free hand tags, or character possessions
       page.areas = page.areas.filter((a: any) => {
         if (!a || typeof a !== 'object') return false;
         const aName = String(a.name || '');
-        if (isPossessionMatch(aName) || a.attachedTo || a.isHeld || (a.holder && a.holder !== 'ground')) return false;
+        if (isFreeHandTag(aName) || isPossessionMatch(aName) || a.attachedTo || a.isHeld || (a.holder && a.holder !== 'ground')) return false;
         return true;
       });
 
-      // Purge any NPCs that match a possessed, held, or attached item/vehicle
+      // Purge any NPCs that match a possessed, held, attached item/vehicle, or free hand tags
       page.npcs = page.npcs.filter((n: any) => {
         if (!n || typeof n !== 'object') return false;
         const nName = String(n.name || '').trim();
-        // If entity matches an item, piece of equipment, attached cart, or vehicle, purge it from NPCs!
-        if (isPossessionMatch(nName) || n.attachedTo || n.isHeld || (n.holder && n.holder !== 'ground')) {
+        // If entity matches an item, piece of equipment, attached cart, vehicle, or free hand tag, purge it from NPCs!
+        if (isFreeHandTag(nName) || isPossessionMatch(nName) || n.attachedTo || n.isHeld || (n.holder && n.holder !== 'ground')) {
           return false;
         }
         return true;
@@ -5052,7 +5057,7 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
         page.creatures = page.creatures.filter((c: any) => {
           if (!c || typeof c !== 'object') return false;
           const cName = String(c.name || '').trim();
-          if (isPossessionMatch(cName) || c.attachedTo || c.isHeld) return false;
+          if (isFreeHandTag(cName) || isPossessionMatch(cName) || c.attachedTo || c.isHeld) return false;
           return true;
         });
       }
@@ -5060,7 +5065,7 @@ Return ONLY a strict JSON array: [ { ... } ]. If no currency was transacted, ret
         page.entities = page.entities.filter((e: any) => {
           if (!e || typeof e !== 'object') return false;
           const eName = String(e.name || '').trim();
-          if (isPossessionMatch(eName) || e.attachedTo || e.isHeld) return false;
+          if (isFreeHandTag(eName) || isPossessionMatch(eName) || e.attachedTo || e.isHeld) return false;
           return true;
         });
       }

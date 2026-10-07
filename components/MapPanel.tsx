@@ -255,136 +255,24 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
     reconcileRegisteredPlayersOnMap(pList, playerRegistry);
     deduplicatePlayersOnMap(pList, playerRegistry, { activeUsername: username });
 
-    // Inherit root-level entities to page 0 if it is a single-page map
+    // Inherit root-level entities to page 0 only if undefined on the page
     if (pList.length === 1) {
       const firstPage = pList[0];
-      if ((!firstPage.players || firstPage.players.length === 0) && Array.isArray(mapData?.players) && mapData.players.length > 0) {
+      if (firstPage.players === undefined && Array.isArray(mapData?.players) && mapData.players.length > 0) {
         firstPage.players = mapData.players;
       }
-      if ((!firstPage.items || firstPage.items.length === 0) && Array.isArray(mapData?.items) && mapData.items.length > 0) {
+      if (firstPage.items === undefined && Array.isArray(mapData?.items) && mapData.items.length > 0) {
         firstPage.items = mapData.items;
       }
-      if ((!firstPage.landmarks || firstPage.landmarks.length === 0) && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
+      if (firstPage.landmarks === undefined && Array.isArray(mapData?.landmarks) && mapData.landmarks.length > 0) {
         firstPage.landmarks = mapData.landmarks;
+      }
+      if (firstPage.npcs === undefined && Array.isArray(mapData?.npcs) && mapData.npcs.length > 0) {
+        firstPage.npcs = mapData.npcs;
       }
     }
 
-    // Ensure every NPC with a character file is represented on the map
-    purgePlayerDuplicatesFromNpcs(pList, playerRegistry);
-
-    const allNpcNamesOnMap = new Set<string>();
-    const registeredPlayerFiles = new Set(playerRegistry.map(r => r.filename.toLowerCase()));
-    const registeredPlayerNames = new Set<string>();
-    playerRegistry.forEach(r => {
-      if (r.username) registeredPlayerNames.add(r.username.toLowerCase());
-      if (r.charName) registeredPlayerNames.add(r.charName.toLowerCase());
-      if (r.fullName) registeredPlayerNames.add(r.fullName.toLowerCase());
-      r.aliases.forEach(a => registeredPlayerNames.add(a.toLowerCase()));
-    });
-
-    pList.forEach(p => {
-      (p.npcs || []).forEach((n: any) => {
-        const nName = (n.name || '').trim().toLowerCase();
-        if (nName) {
-          allNpcNamesOnMap.add(nName);
-          allNpcNamesOnMap.add(nName.replace(/-npc$/, ''));
-        }
-      });
-    });
-
-    // Gather all possessions of registered players to prevent creating rogue NPC tokens for equipped/attached items
-    const allPlayerPossessions = new Set<string>();
-    registeredPlayerFiles.forEach(f => {
-      const c = fileSystem.read(f);
-      if (c) {
-        extractAllPossessionsFromCharacterSheet(c).forEach(p => allPlayerPossessions.add(p.toLowerCase()));
-      }
-    });
-
-    const npcFiles: { filename: string; charName: string }[] = [];
-
-    (files || []).forEach(f => {
-      if (!f.endsWith('.txt')) return;
-      if (f.startsWith('World') || f.startsWith('Guide') || f.startsWith('Log') || f.startsWith('History') || f.startsWith('Event') || f.startsWith('Combat') || f === 'CurrentMap.json') return;
-      if (registeredPlayerFiles.has(f.toLowerCase())) return;
-
-      const base = f.replace(/\.txt$/, '');
-      const lower = f.toLowerCase();
-      const cleanBase = base.replace(/[-_]npc$/i, '').trim().toLowerCase();
-
-      // If file represents an equipped item or possession of a player, NEVER spawn it as an NPC!
-      if (
-        isPossessionOfAnyone(base) ||
-        isPossessionOfAnyone(cleanBase) ||
-        isPossessionOfAnyone(base.replace(/([a-z])([A-Z])/g, '$1 $2')) ||
-        isPossessionOfAnyone(base.replace(/[\s_-]+/g, ''))
-      ) {
-        return;
-      }
-
-      const content = fileSystem.read(f);
-      if (content) {
-        // If content indicates this is an item, equipment, vehicle, or attached possession
-        if (
-          /category[:=\s]*(?:item|equipment|gear|weapon|clothing|vehicle|mount|container|armor|tool|transport)/i.test(content) ||
-          /\[(?:IDENTIFICATION|TECHNICAL RULES|SPECIAL PROPERTIES|CONDITION & ACTIVE EFFECTS)\]/i.test(content) ||
-          /(?:attached|equipped|hitched|towed|held|carried|riding)\s*(?:to|by)?\s*[:=]/i.test(content) ||
-          /damage range:|container space capacity:|holding anatomy:/i.test(content)
-        ) {
-          return;
-        }
-      }
-
-      if (lower.endsWith('-npc') || lower.endsWith('_npc') || lower.includes(' npc')) {
-        const charName = base.replace(/[-_]npc$/i, '').trim();
-        if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
-          npcFiles.push({ filename: f, charName: charName || base });
-        }
-      } else if (f.includes('-')) {
-        const parts = base.split('-');
-        const suffix = parts[parts.length - 1].trim();
-        const charName = parts.slice(0, -1).join('-').trim();
-        if (suffix.toLowerCase() === 'npc' || suffix.toLowerCase() === 'bot' || suffix.toLowerCase() === 'ai') {
-          if (!registeredPlayerNames.has(charName.toLowerCase()) && !registeredPlayerNames.has(base.toLowerCase())) {
-            npcFiles.push({ filename: f, charName: charName || base });
-          }
-        }
-      } else {
-        if (content && (content.includes('[NAME & DESCRIPTION]') || content.includes('[STATS & MODIFIERS]'))) {
-          if (/is_npc[:=\s]*true|category[:=\s]*npc|\(npc\)|status:\s*npc/i.test(content)) {
-            if (!registeredPlayerNames.has(base.toLowerCase())) {
-              npcFiles.push({ filename: f, charName: base });
-            }
-          }
-        }
-      }
-    });
-
-    npcFiles.forEach(nf => {
-      const checkKey = nf.charName.toLowerCase();
-      const cleanKey = checkKey.replace(/[-_]npc$/i, '').trim();
-      if (isPossessionOfAnyone(checkKey) || isPossessionOfAnyone(cleanKey) || isPossessionOfAnyone(nf.charName)) {
-        return;
-      }
-      if (!allNpcNamesOnMap.has(checkKey) && !allNpcNamesOnMap.has(`${checkKey}-npc`) && !registeredPlayerNames.has(checkKey)) {
-        if (!pList[0].npcs) pList[0].npcs = [];
-        const offset = pList[0].npcs.length;
-        const displayName = nf.charName.toLowerCase().endsWith('-npc') ? nf.charName : `${nf.charName}-npc`;
-        const npcVision = resolveEntityVision(null, fileSystem.read(nf.filename), false);
-        pList[0].npcs.push({
-          name: displayName,
-          type: 'npc',
-          x: 15 + (offset * 7) % 60,
-          y: 18 + (offset * 5) % 60,
-          facing: 0,
-          vision: npcVision,
-          description: `NPC from ${nf.filename}`
-        });
-        allNpcNamesOnMap.add(checkKey);
-        allNpcNamesOnMap.add(`${checkKey}-npc`);
-      }
-    });
-
+    // Purge any player duplicates from NPCs list
     purgePlayerDuplicatesFromNpcs(pList, playerRegistry);
 
     // Reconcile and snap any held items with range that were placed far away back to their holder
@@ -439,14 +327,13 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
 
   const currentPage = pages.length > 0 ? pages[safePageIndex] : null;
 
-  // Aggregate all NPCs across pages, creatures, entities, and NPC-type areas
+  // Aggregate all NPCs across pages, creatures, and entities (never duplicating area shapes as NPCs)
   const activeNpcs = useMemo(() => {
     if (!currentPage) return [];
     const rawNpcList = [
       ...(Array.isArray(currentPage?.npcs) ? currentPage.npcs : []),
       ...(Array.isArray(currentPage?.creatures) ? currentPage.creatures : []),
-      ...(Array.isArray(currentPage?.entities) ? currentPage.entities : []),
-      ...(Array.isArray(currentPage?.areas) ? currentPage.areas.filter((a: any) => a && /npc|enemy|ally|creature|boss/i.test(a.type || '')) : [])
+      ...(Array.isArray(currentPage?.entities) ? currentPage.entities : [])
     ];
 
     const list: any[] = [];
@@ -456,7 +343,13 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
       if (!n) continue;
       const rawName = (n.name || n.id || 'NPC').trim();
       const cleanName = rawName.replace(/[-_]npc$/i, '').trim();
+      const cleanLower = cleanName.toLowerCase();
       if (
+        !cleanLower ||
+        cleanLower === 'free hand' ||
+        cleanLower === 'empty hand' ||
+        cleanLower === 'bare hand' ||
+        cleanLower === 'open hand' ||
         isPossessionOfAnyone(rawName) ||
         isPossessionOfAnyone(cleanName) ||
         n.attachedTo ||
@@ -1249,6 +1142,15 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {/* Draw Top-Level Items (if separately registered on page) */}
           {currentPage.items?.map((item: any, i: number) => {
             if (isEntityHidden(item.name)) return null;
+            const rawItemName = String(item.name || '').trim();
+            const itemNameLower = rawItemName.toLowerCase();
+            if (
+              !itemNameLower ||
+              itemNameLower === 'free hand' ||
+              itemNameLower === 'empty hand' ||
+              itemNameLower === 'bare hand' ||
+              itemNameLower === 'open hand'
+            ) return null;
             // If item is held by a player or NPC, or attached, it is on their person, not loose on ground!
             if (
               item.isHeld ||
@@ -1258,7 +1160,6 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
               isPossessionOfAnyone(String(item.name).replace(/([a-z])([A-Z])/g, '$1 $2')) ||
               isPossessionOfAnyone(String(item.name).replace(/[\s_-]+/g, ''))
             ) return null;
-            const itemNameLower = String(item.name || '').toLowerCase();
             const matchesHeldItem = (currentPage.players || []).some((pl: any) =>
               (pl.heldItems || []).some((hi: any) => {
                 const hiClean = (hi.cleanName || hi.name || '').toLowerCase();
@@ -1327,6 +1228,14 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({ fileSystem, files,
           {/* Draw Top-Level Landmarks (if separately registered on page) */}
           {currentPage.landmarks?.map((lm: any, i: number) => {
             if (isEntityHidden(lm.name)) return null;
+            const rawLmName = String(lm.name || '').trim();
+            const lmNameLower = rawLmName.toLowerCase();
+            if (
+              !lmNameLower ||
+              lmNameLower === 'free hand' ||
+              lmNameLower === 'empty hand' ||
+              lmNameLower === 'bare hand'
+            ) return null;
             if (isPossessionOfAnyone(lm.name)) return null;
             const lx = Number(lm.x) || 0;
             const ly = Number(lm.y) || 0;
